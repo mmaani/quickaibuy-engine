@@ -1,13 +1,8 @@
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
+import { getBullConnection } from "./bullConnection";
 
-const redisUrl = process.env.REDIS_URL;
-if (!redisUrl) throw new Error("Missing REDIS_URL");
+export const ENGINE_QUEUE_NAME = "engine";
 
-export const connection = new IORedis(redisUrl, {
-  // BullMQ/ioredis recommended defaults vary; keep it minimal first.
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
+export const engineQueue = new Queue(ENGINE_QUEUE_NAME, {
+  connection: getBullConnection(),
 });
-
-export const engineQueue = new Queue("engine", { connection });

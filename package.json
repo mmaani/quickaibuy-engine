@@ -1,5 +1,5 @@
 {
-  "name": "temp-next",
+  "name": "quickaibuy-engine",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "bullmq": "^5.70.2",
-    "ioredis": "^5.10.0",
     "next": "16.1.6",
     "postgres": "^3.4.8",
     "react": "19.2.3",
