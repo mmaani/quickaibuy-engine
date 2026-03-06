@@ -16,6 +16,11 @@ type ProductSeed = {
   price: string;
 };
 
+export type ProductDiscoverOptions = {
+  marketplace?: string;
+  keywordOverride?: string;
+};
+
 export type ProductDiscoverResult = {
   candidateId: string;
   keyword: string;
@@ -33,10 +38,16 @@ function hashToInt(input: string): number {
   return Math.abs(h);
 }
 
-function buildSeeds(candidateId: string, keyword: string): ProductSeed[] {
+function normalizeMarketplace(input?: string): string | null {
+  if (!input) return null;
+  const value = String(input).trim().toLowerCase();
+  return MARKETPLACES.includes(value) ? value : null;
+}
+
+function buildSeeds(candidateId: string, keyword: string, marketplaces: string[]): ProductSeed[] {
   const compactKeyword = keyword.replace(/\s+/g, " ").trim();
 
-  return MARKETPLACES.map((marketplace, idx) => {
+  return marketplaces.map((marketplace, idx) => {
     const seed = hashToInt(`${candidateId}:${marketplace}:${compactKeyword}`);
     const dollars = 14 + (seed % 50) + idx;
     const cents = (seed % 100).toString().padStart(2, "0");
@@ -65,19 +76,25 @@ async function getTrendCandidate(candidateId: string): Promise<TrendCandidateRow
   return rows[0] ?? null;
 }
 
-export async function discoverProductsForCandidate(candidateId: string): Promise<ProductDiscoverResult> {
+export async function discoverProductsForCandidate(
+  candidateId: string,
+  options: ProductDiscoverOptions = {}
+): Promise<ProductDiscoverResult> {
   const row = await getTrendCandidate(candidateId);
 
   if (!row) {
     throw new Error(`trend_candidate not found: ${candidateId}`);
   }
 
-  const keyword = String(row.candidate_value ?? "").trim();
+  const keyword = String(options.keywordOverride ?? row.candidate_value ?? "").trim();
   if (!keyword) {
     throw new Error(`trend_candidate ${candidateId} has empty candidate_value`);
   }
 
-  const seeds = buildSeeds(candidateId, keyword);
+  const oneMarketplace = normalizeMarketplace(options.marketplace);
+  const markets = oneMarketplace ? [oneMarketplace] : MARKETPLACES;
+
+  const seeds = buildSeeds(candidateId, keyword, markets);
   let insertedCount = 0;
 
   for (const seed of seeds) {

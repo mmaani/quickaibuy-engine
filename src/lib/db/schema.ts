@@ -133,6 +133,7 @@ export const trendCandidates = pgTable("trend_candidates", {
   candidateType: text("candidate_type").notNull(),
   candidateValue: text("candidate_value").notNull(),
   region: text("region"),
+  priorityScore: numeric("priority_score", { precision: 6, scale: 4 }).notNull().default("0"),
   status: text("status").notNull().default("NEW"),
   createdTs: timestamp("created_ts").notNull().defaultNow(),
   meta: jsonb("meta").$type<unknown>(),
@@ -162,5 +163,63 @@ export const productCandidates = pgTable(
       t.marketplace,
       t.marketplaceListingId
     ),
+  })
+);
+
+export const queryBudgets = pgTable(
+  "query_budgets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    source: text("source").notNull(),
+    period: text("period").notNull(), // daily/hourly
+    maxQueries: integer("max_queries").notNull(),
+    usedQueries: integer("used_queries").notNull().default(0),
+    resetAt: timestamp("reset_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    queryBudgetsSourcePeriodUnique: uniqueIndex("query_budgets_source_period_unique").on(t.source, t.period),
+  })
+);
+
+export const queryTasks = pgTable(
+  "query_tasks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id").notNull(),
+    marketplace: text("marketplace").notNull(),
+    priorityScore: numeric("priority_score", { precision: 6, scale: 4 }).notNull(),
+    status: text("status").notNull().default("NEW"), // NEW|QUEUED|RUNNING|DONE|FAILED
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    queuedAt: timestamp("queued_at"),
+    startedAt: timestamp("started_at"),
+    finishedAt: timestamp("finished_at"),
+    lastError: text("last_error"),
+  },
+  (t) => ({
+    queryTasksStatusPriorityIdx: index("query_tasks_status_priority_idx").on(t.status, t.priorityScore),
+    queryTasksMarketplaceStatusIdx: index("query_tasks_marketplace_status_idx").on(t.marketplace, t.status),
+    queryTasksUniqueCandidateMarketplace: uniqueIndex("query_tasks_unique_candidate_marketplace").on(
+      t.candidateId,
+      t.marketplace
+    ),
+  })
+);
+
+export const queryCache = pgTable(
+  "query_cache",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    keyword: text("keyword").notNull(),
+    marketplace: text("marketplace").notNull(),
+    lastRunAt: timestamp("last_run_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    queryCacheUniqueKeywordMarketplace: uniqueIndex("query_cache_unique_keyword_marketplace").on(
+      t.keyword,
+      t.marketplace
+    ),
+    queryCacheMarketplaceLastRunIdx: index("query_cache_marketplace_last_run_idx").on(t.marketplace, t.lastRunAt),
   })
 );

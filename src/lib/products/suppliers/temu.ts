@@ -7,7 +7,7 @@ export async function searchTemuByKeyword(
   const capped = Math.min(Math.max(limit, 1), 20);
   const snapshotTs = new Date().toISOString();
 
-  return [
+  const rows: SupplierProduct[] = [
     {
       title: `${keyword} sample from Temu`,
       price: "7.45",
@@ -26,5 +26,7 @@ export async function searchTemuByKeyword(
         platform: "Temu",
       },
     },
-  ].slice(0, capped);
+  ];
+
+  return rows.slice(0, capped);
 }

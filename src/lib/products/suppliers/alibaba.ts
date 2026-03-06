@@ -7,7 +7,7 @@ export async function searchAlibabaByKeyword(
   const capped = Math.min(Math.max(limit, 1), 20);
   const snapshotTs = new Date().toISOString();
 
-  return [
+  const rows: SupplierProduct[] = [
     {
       title: `${keyword} sample from Alibaba`,
       price: "12.50",
@@ -26,5 +26,7 @@ export async function searchAlibabaByKeyword(
         platform: "Alibaba",
       },
     },
-  ].slice(0, capped);
+  ];
+
+  return rows.slice(0, capped);
 }

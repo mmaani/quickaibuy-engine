@@ -41,3 +41,31 @@ export async function enqueueProductDiscover(candidateId: string) {
     }
   );
 }
+
+export async function enqueueProductDiscoverTask(input: {
+  candidateId: string;
+  marketplace: string;
+  keyword: string;
+  queryTaskId: string;
+}) {
+  const candidateId = String(input.candidateId).trim();
+  const marketplace = String(input.marketplace).trim().toLowerCase();
+  const keyword = String(input.keyword).trim();
+  const queryTaskId = String(input.queryTaskId).trim();
+  const jobId = `product-discover-${queryTaskId}`;
+
+  return jobsQueue.add(
+    JOB_NAMES.PRODUCT_DISCOVER,
+    { candidateId, marketplace, keyword, queryTaskId },
+    {
+      jobId,
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 2000,
+      },
+      removeOnComplete: 1000,
+      removeOnFail: 5000,
+    }
+  );
+}

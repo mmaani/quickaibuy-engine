@@ -11,6 +11,7 @@
     "worker:jobs": "tsx src/workers/jobs.worker.ts",
     "trend:expand:test": "node --import tsx scripts/test_trend_expand.mjs",
     "product:discover:test": "node --import tsx scripts/test_product_discover.mjs",
+    "query:allocate:test": "node --import tsx scripts/test_query_budget_allocator.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push"

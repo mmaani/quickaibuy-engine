@@ -251,6 +251,7 @@ export async function expandTrendSignal(trendSignalId: string): Promise<ExpandTr
         candidate_type,
         candidate_value,
         region,
+        priority_score,
         status,
         created_ts,
         meta
@@ -261,6 +262,7 @@ export async function expandTrendSignal(trendSignalId: string): Promise<ExpandTr
         'keyword',
         ${candidate.keyword},
         ${region},
+        ${candidate.score},
         'NEW',
         NOW(),
         ${JSON.stringify({

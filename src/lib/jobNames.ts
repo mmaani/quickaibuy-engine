@@ -11,4 +11,6 @@ export const JOB_NAMES = {
   ORDER_SYNC: "ORDER_SYNC",
 } as const;
 
+export const JOBS = JOB_NAMES;
+
 export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];
