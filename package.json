@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "worker:engine": "tsx src/workers/engine.bootstrap.ts",
+    "trend:expand:test": "node --import tsx scripts/test_trend_expand.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push"
