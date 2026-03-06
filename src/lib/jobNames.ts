@@ -1,4 +1,8 @@
-export const JOBS = {
+export const JOB_NAMES = {
+  TREND_EXPAND: "trend:expand",
+  PRODUCT_DISCOVER: "product:discover",
+  SUPPLIER_DISCOVER: "supplier:discover",
+
   SCAN_SUPPLIER: "SCAN_SUPPLIER",
   SCAN_MARKETPLACE_PRICE: "SCAN_MARKETPLACE_PRICE",
   MATCH_PRODUCT: "MATCH_PRODUCT",
@@ -7,4 +11,4 @@ export const JOBS = {
   ORDER_SYNC: "ORDER_SYNC",
 } as const;
 
-export type JobName = (typeof JOBS)[keyof typeof JOBS];
+export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];

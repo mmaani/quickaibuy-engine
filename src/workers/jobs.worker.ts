@@ -1,9 +1,10 @@
 import { Worker } from "bullmq";
 import { bullConnection } from "../lib/bull";
-import { JOB_NAMES } from "../lib/jobs/jobNames";
+import { JOB_NAMES } from "../lib/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 import { discoverProductsForCandidate } from "../lib/products/discoverProducts";
+import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
 
 export const jobsWorker = new Worker(
   "jobs",
@@ -72,6 +73,32 @@ export const jobsWorker = new Worker(
           candidateId,
           insertedCount: result.insertedCount,
           markets: result.markets,
+        };
+      }
+
+      case JOB_NAMES.SUPPLIER_DISCOVER: {
+        const limitPerKeyword = Number(job.data?.limitPerKeyword ?? 20);
+        const result = await runSupplierDiscover(limitPerKeyword);
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.SUPPLIER_DISCOVER,
+          entityType: "TREND_CANDIDATE",
+          entityId: "batch",
+          eventType: "SUPPLIER_PRODUCTS_DISCOVERED",
+          details: {
+            source: "supplier-discover",
+            jobId: String(job.id ?? ""),
+            processedCandidates: result.processedCandidates,
+            insertedCount: result.insertedCount,
+            keywords: result.keywords,
+            sources: result.sources,
+          },
+        });
+
+        return {
+          ok: true,
+          ...result,
         };
       }
 
