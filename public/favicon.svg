@@ -1,0 +1,20 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="quickBg" x1="28" y1="24" x2="220" y2="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67E8F9"/>
+      <stop offset="0.58" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#34D399"/>
+    </linearGradient>
+    <linearGradient id="quickQ" x1="78" y1="70" x2="175" y2="180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F0FDFF"/>
+      <stop offset="1" stop-color="#D9FBFF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="20" y="20" width="216" height="216" rx="56" fill="url(#quickBg)"/>
+  <rect x="28" y="28" width="200" height="200" rx="48" fill="black" fill-opacity="0.12"/>
+  <path d="M128 70C95.4152 70 69 96.4152 69 129C69 161.585 95.4152 188 128 188C160.585 188 187 161.585 187 129V120.5C187 114.149 181.851 109 175.5 109C169.149 109 164 114.149 164 120.5V129C164 148.33 148.33 164 129 164C109.67 164 94 148.33 94 129C94 109.67 109.67 94 129 94H149" stroke="url(#quickQ)" stroke-width="20" stroke-linecap="round"/>
+  <path d="M137 118L178 77" stroke="url(#quickQ)" stroke-width="18" stroke-linecap="round"/>
+  <path d="M158 77H178V97" stroke="url(#quickQ)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="176" cy="78" r="12" fill="#D9FBFF"/>
+</svg>

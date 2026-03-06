@@ -1,0 +1,16 @@
+<svg width="420" height="96" viewBox="0 0 420 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="qaiGradient" x1="16" y1="12" x2="84" y2="84" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="80" height="80" rx="22" fill="url(#qaiGradient)" fill-opacity="0.18" stroke="rgba(255,255,255,0.18)"/>
+  <path d="M33 59C33 45.1929 44.1929 34 58 34H66.5C69.5376 34 72 36.4624 72 39.5C72 42.5376 69.5376 45 66.5 45H58C50.268 45 44 51.268 44 59C44 66.732 50.268 73 58 73C65.732 73 72 66.732 72 59V56" stroke="url(#qaiGradient)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M60 52L72 40" stroke="url(#qaiGradient)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M65.5 40H72V46.5" stroke="url(#qaiGradient)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <text x="108" y="46" fill="white" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="700" letter-spacing="0.5">QuickAIBuy</text>
+  <text x="108" y="70" fill="rgba(255,255,255,0.62)" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="500" letter-spacing="1.8">AI PRODUCT DISCOVERY INTELLIGENCE</text>
+</svg>

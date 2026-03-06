@@ -1,20 +1,23 @@
 {
-  "name": "temp-next",
+  "name": "quickaibuy-engine",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "worker:engine": "tsx src/workers/engine.bootstrap.ts",
-    "worker:jobs": "tsx src/workers/jobs.worker.ts",
-    "trend:expand:test": "node --import tsx scripts/test_trend_expand.mjs",
-    "product:discover:test": "node --import tsx scripts/test_product_discover.mjs",
-    "query:allocate:test": "node --import tsx scripts/test_query_budget_allocator.mjs",
+    "lint": "eslint .",
+    "worker:engine": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx src/workers/engine.bootstrap.ts",
+    "worker:jobs": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx src/workers/jobs.worker.ts",
+    "trend:expand:test": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/test_trend_expand.mjs",
+    "product:discover:test": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/test_product_discover.mjs",
+    "query:allocate:test": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/test_query_budget_allocator.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "enqueue:supplier-discover": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/enqueue_supplier_discover.ts",
+    "worker:jobs:run": "pnpm worker:jobs",
+    "supplier:discover:run": "pnpm enqueue:supplier-discover"
   },
   "dependencies": {
     "bullmq": "^5.70.2",
