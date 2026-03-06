@@ -7,6 +7,8 @@ import {
   numeric,
   boolean,
   integer,
+  index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const productsRaw = pgTable("products_raw", {
@@ -87,31 +89,43 @@ export const auditLog = pgTable("audit_log", {
   details: jsonb("details").$type<unknown>(),
 });
 
-export const jobs = pgTable("jobs", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  jobType: text("job_type").notNull(),
-  idempotencyKey: text("idempotency_key").notNull(),
-  payload: jsonb("payload").notNull(),
-  status: text("status").notNull(),
-  priority: integer("priority").default(0),
-  attempt: integer("attempt").default(0),
-  maxAttempts: integer("max_attempts").default(5),
-  scheduledTs: timestamp("scheduled_ts").defaultNow(),
-  startedTs: timestamp("started_ts"),
-  finishedTs: timestamp("finished_ts"),
-  lastError: text("last_error"),
-});
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobType: text("job_type").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status").notNull(),
+    priority: integer("priority").default(0),
+    attempt: integer("attempt").default(0),
+    maxAttempts: integer("max_attempts").default(5),
+    scheduledTs: timestamp("scheduled_ts").defaultNow(),
+    startedTs: timestamp("started_ts"),
+    finishedTs: timestamp("finished_ts"),
+    lastError: text("last_error"),
+  },
+  (t) => ({
+    jobsUniqueTypeKey: uniqueIndex("jobs_unique_type_key").on(t.jobType, t.idempotencyKey),
+  })
+);
 
-export const trendSignals = pgTable("trend_signals", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  source: text("source").notNull(),
-  signalType: text("signal_type").notNull(),
-  signalValue: text("signal_value").notNull(),
-  region: text("region"),
-  score: numeric("score"),
-  rawPayload: jsonb("raw_payload").$type<unknown>(),
-  capturedTs: timestamp("captured_ts").notNull().defaultNow(),
-});
+export const trendSignals = pgTable(
+  "trend_signals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    source: text("source").notNull(),
+    signalType: text("signal_type").notNull(),
+    signalValue: text("signal_value").notNull(),
+    region: text("region"),
+    score: numeric("score"),
+    rawPayload: jsonb("raw_payload").$type<unknown>(),
+    capturedTs: timestamp("captured_ts").notNull().defaultNow(),
+  },
+  (t) => ({
+    trendSignalsSourceTs: index("trend_signals_source_ts").on(t.source, t.capturedTs),
+  })
+);
 
 export const trendCandidates = pgTable("trend_candidates", {
   id: uuid("id").defaultRandom().primaryKey(),

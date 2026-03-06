@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "jobs_unique_type_key" ON "jobs" USING btree ("job_type","idempotency_key");--> statement-breakpoint
+CREATE INDEX "trend_signals_source_ts" ON "trend_signals" USING btree ("source","captured_ts");

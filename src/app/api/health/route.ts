@@ -23,6 +23,6 @@ export async function GET() {
     db: true,
     redis: pong === "PONG",
     ms: Date.now() - t0,
-    env: process.env.APP_ENV ?? "unknown",
+    env: process.env.APP_ENV ?? process.env.VERCEL_ENV ?? "unknown",
   });
 }
