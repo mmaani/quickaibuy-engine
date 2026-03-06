@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { queues } from "@/src/lib/bull";
 import { jobNameFromUnknown } from "@/src/lib/bull";
 import { JOBS } from "@/src/lib/jobNames";
-import { sql } from "@/src/db/client";
+import { pool } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -20,10 +20,20 @@ export async function POST(req: Request) {
   const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
 
   // Basic audit log
-  await sql`
-    INSERT INTO audit_log (actor, action, entity, entity_id, detail)
-    VALUES ('api', 'ENQUEUE', 'job', ${idempotencyKey ?? null}, ${JSON.stringify({ name, payload })})
-  `;
+  await pool.query(
+    `
+      INSERT INTO audit_log (actor_type, actor_id, entity_type, entity_id, event_type, details)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `,
+    [
+      "api",
+      "queue.enqueue",
+      "job",
+      idempotencyKey ?? `job:${Date.now()}`,
+      "ENQUEUE",
+      JSON.stringify({ name, payload }),
+    ]
+  );
 
   const job = await queues.engine.add(
     name,

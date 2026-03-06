@@ -1,16 +1,18 @@
 import IORedis from "ioredis";
 
-const redisUrl = process.env.REDIS_URL;
-if (!redisUrl) throw new Error("Missing REDIS_URL");
+function getRedisUrl(): string {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) throw new Error("Missing REDIS_URL");
+  return redisUrl;
+}
 
 declare global {
-  // eslint-disable-next-line no-var
   var __qaib_redis: IORedis | undefined;
 }
 
 export function getRedis(): IORedis {
   if (!global.__qaib_redis) {
-    global.__qaib_redis = new IORedis(redisUrl, {
+    global.__qaib_redis = new IORedis(getRedisUrl(), {
       // Upstash + serverless friendly defaults
       maxRetriesPerRequest: null,
       enableReadyCheck: false,

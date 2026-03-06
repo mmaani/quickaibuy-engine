@@ -3,14 +3,11 @@ import {
   serial,
   text,
   integer,
-  boolean,
   timestamp,
   jsonb,
   numeric,
   index,
 } from "drizzle-orm/pg-core";
-
-const now = () => new Date();
 
 export const productsRaw = pgTable(
   "products_raw",

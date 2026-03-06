@@ -1,5 +1,5 @@
 {
-  "name": "quickaibuy-engine",
+  "name": "temp-next",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -7,16 +7,17 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "worker:engine": "tsx src/workers/engine.worker.ts",
+    "worker:engine": "tsx src/workers/engine.bootstrap.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "bullmq": "^5.70.2",
-    "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.1",
+    "ioredis": "^5.10.0",
     "next": "16.1.6",
+    "pg": "^8.20.0",
     "postgres": "^3.4.8",
     "react": "19.2.3",
     "react-dom": "19.2.3"
@@ -24,8 +25,10 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.18.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^16.4.5",
     "drizzle-kit": "^0.31.9",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",

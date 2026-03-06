@@ -1,4 +1,4 @@
-import { Queue, Worker, type ConnectionOptions, QueueEvents } from "bullmq";
+import { Queue, type ConnectionOptions, QueueEvents } from "bullmq";
 import { JOBS, type JobName } from "@/src/lib/jobNames";
 
 const redisUrl = process.env.REDIS_URL;
