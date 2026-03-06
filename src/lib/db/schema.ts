@@ -137,3 +137,30 @@ export const trendCandidates = pgTable("trend_candidates", {
   createdTs: timestamp("created_ts").notNull().defaultNow(),
   meta: jsonb("meta").$type<unknown>(),
 });
+
+export const productCandidates = pgTable(
+  "product_candidates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id").notNull(),
+    productTitle: text("product_title").notNull(),
+    marketplace: text("marketplace").notNull(),
+    marketplaceListingId: text("marketplace_listing_id").notNull(),
+    price: numeric("price", { precision: 12, scale: 2 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+    productUrl: text("product_url"),
+    source: text("source").notNull().default("stub"),
+    status: text("status").notNull().default("DISCOVERED"),
+    discoveredTs: timestamp("discovered_ts").notNull().defaultNow(),
+    meta: jsonb("meta").$type<unknown>(),
+  },
+  (t) => ({
+    productCandidatesCandidateIdx: index("product_candidates_candidate_idx").on(t.candidateId),
+    productCandidatesMarketplaceIdx: index("product_candidates_marketplace_idx").on(t.marketplace),
+    productCandidatesUniqueListing: uniqueIndex("product_candidates_unique_listing").on(
+      t.candidateId,
+      t.marketplace,
+      t.marketplaceListingId
+    ),
+  })
+);

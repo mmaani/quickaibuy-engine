@@ -21,3 +21,23 @@ export async function enqueueTrendExpand(trendSignalId: string) {
     }
   );
 }
+
+export async function enqueueProductDiscover(candidateId: string) {
+  const normalizedCandidateId = String(candidateId).trim();
+  const jobId = `product-discover-${normalizedCandidateId}`;
+
+  return jobsQueue.add(
+    JOB_NAMES.PRODUCT_DISCOVER,
+    { candidateId: normalizedCandidateId },
+    {
+      jobId,
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 2000,
+      },
+      removeOnComplete: 1000,
+      removeOnFail: 5000,
+    }
+  );
+}
