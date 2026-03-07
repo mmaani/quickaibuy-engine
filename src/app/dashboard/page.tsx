@@ -12,16 +12,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 16,
-        padding: 20,
-        background: "#ffffff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-      }}
-    >
-      <h2 style={{ margin: "0 0 16px 0", fontSize: 20 }}>{title}</h2>
+    <section className="glass-panel rounded-3xl border border-white/10 p-5 sm:p-6">
+      <h2 className="mb-4 text-xl font-semibold text-white">{title}</h2>
       {children}
     </section>
   );
@@ -36,26 +28,17 @@ function StatCard({
   value: React.ReactNode;
   tone?: "default" | "ok" | "error" | "unknown";
 }) {
-  const colors = {
-    default: { bg: "#f9fafb", border: "#e5e7eb", text: "#111827" },
-    ok: { bg: "#ecfdf5", border: "#a7f3d0", text: "#065f46" },
-    error: { bg: "#fef2f2", border: "#fecaca", text: "#991b1b" },
-    unknown: { bg: "#fffbeb", border: "#fde68a", text: "#92400e" },
+  const tones = {
+    default: "border-white/10 bg-white/[0.04] text-white",
+    ok: "border-emerald-300/30 bg-emerald-400/10 text-emerald-100",
+    error: "border-rose-300/30 bg-rose-400/10 text-rose-100",
+    unknown: "border-amber-300/30 bg-amber-400/10 text-amber-100",
   } as const;
 
-  const c = colors[tone];
-
   return (
-    <div
-      style={{
-        padding: 16,
-        borderRadius: 14,
-        border: `1px solid ${c.border}`,
-        background: c.bg,
-      }}
-    >
-      <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: c.text }}>{value}</div>
+    <div className={`rounded-2xl border p-4 ${tones[tone]}`}>
+      <div className="mb-2 text-xs uppercase tracking-[0.2em] text-white/55">{label}</div>
+      <div className="text-2xl font-bold">{value}</div>
     </div>
   );
 }
@@ -74,7 +57,7 @@ function DataTable({
   empty?: string;
 }) {
   if (!rows.length) {
-    return <div style={{ color: "#6b7280" }}>{empty}</div>;
+    return <div className="text-sm text-white/55">{empty}</div>;
   }
 
   const columns = Array.from(
@@ -85,25 +68,14 @@ function DataTable({
   );
 
   return (
-    <div style={{ overflowX: "auto" }}>
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          fontSize: 14,
-        }}
-      >
+    <div className="overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+      <table className="w-full border-collapse text-sm text-white/90">
         <thead>
           <tr>
             {columns.map((col) => (
               <th
                 key={col}
-                style={{
-                  textAlign: "left",
-                  borderBottom: "1px solid #e5e7eb",
-                  padding: "10px 8px",
-                  background: "#f9fafb",
-                }}
+                className="border-b border-white/10 bg-white/[0.04] px-3 py-2 text-left text-xs uppercase tracking-[0.14em] text-white/60"
               >
                 {col}
               </th>
@@ -112,19 +84,11 @@ function DataTable({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i}>
+            <tr key={i} className="odd:bg-transparent even:bg-white/[0.02]">
               {columns.map((col) => (
                 <td
                   key={col}
-                  style={{
-                    borderBottom: "1px solid #f1f5f9",
-                    padding: "10px 8px",
-                    verticalAlign: "top",
-                    whiteSpace: "nowrap",
-                    maxWidth: 260,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
+                  className="max-w-64 truncate border-b border-white/5 px-3 py-2 align-top"
                   title={formatCell(row[col])}
                 >
                   {formatCell(row[col])}
@@ -145,82 +109,55 @@ export default async function DashboardPage() {
     data.infrastructure.db.status === "ok"
       ? "ok"
       : data.infrastructure.db.status === "error"
-      ? "error"
-      : "unknown";
+        ? "error"
+        : "unknown";
 
   const redisTone =
     data.infrastructure.redis.status === "ok"
       ? "ok"
       : data.infrastructure.redis.status === "error"
-      ? "error"
-      : "unknown";
+        ? "error"
+        : "unknown";
 
   return (
-    <main
-      style={{
-        padding: 24,
-        background: "#f5f7fb",
-        minHeight: "100vh",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 1500,
-          margin: "0 auto",
-          display: "grid",
-          gap: 20,
-        }}
-      >
-        <header
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: 16,
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <h1 style={{ margin: 0, fontSize: 32 }}>Monitoring Dashboard</h1>
-            <p style={{ margin: "8px 0 0 0", color: "#6b7280" }}>
-              AI Arbitrage Engine v1 — Milestone 1 pipeline visibility
-            </p>
-            <p style={{ margin: "8px 0 0 0", color: "#6b7280", fontSize: 13 }}>
-              Generated at: {data.generatedAt}
-            </p>
-          </div>
+    <main className="relative min-h-screen overflow-hidden bg-app text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="hero-orb hero-orb-a" />
+        <div className="hero-orb hero-orb-b" />
+        <div className="hero-orb hero-orb-c" />
+        <div className="grid-overlay opacity-[0.1]" />
+      </div>
 
-          <RefreshButton />
+      <div className="relative mx-auto grid min-h-screen max-w-[1500px] gap-5 px-4 py-6 sm:px-6 lg:px-8">
+        <header className="glass-card rounded-3xl border border-white/10 px-5 py-4 sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="m-0 text-3xl font-bold text-white">Monitoring Dashboard</h1>
+              <p className="mt-2 text-sm text-white/65">
+                AI Arbitrage Engine v1 — Milestone 1 pipeline visibility
+              </p>
+              <p className="mt-2 text-xs text-white/45">Generated at: {data.generatedAt}</p>
+            </div>
+            <RefreshButton />
+          </div>
         </header>
 
         <Section title="1) Infrastructure health">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 16,
-            }}
-          >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard label="DB health" value={data.infrastructure.db.status} tone={dbTone} />
             <StatCard label="Redis health" value={data.infrastructure.redis.status} tone={redisTone} />
             <StatCard label="NODE_ENV" value={data.infrastructure.environment.nodeEnv} />
             <StatCard label="VERCEL_ENV" value={data.infrastructure.environment.vercelEnv} />
           </div>
 
-          <div style={{ marginTop: 16, color: "#6b7280", fontSize: 14 }}>
+          <div className="mt-4 text-sm text-white/60">
             <div>DB detail: {data.infrastructure.db.detail ?? "-"}</div>
             <div>Redis detail: {data.infrastructure.redis.detail ?? "-"}</div>
           </div>
         </Section>
 
         <Section title="2) Pipeline counts">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 16,
-            }}
-          >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {data.pipelineCounts.map((item) => (
               <StatCard
                 key={item.table}
@@ -233,20 +170,12 @@ export default async function DashboardPage() {
         </Section>
 
         <Section title="3) Fresh activity">
-          <div style={{ display: "grid", gap: 20 }}>
+          <div className="grid gap-5">
             {data.latestActivity.map((block) => (
-              <div
-                key={block.table}
-                style={{
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 12,
-                  padding: 16,
-                  background: "#fafafa",
-                }}
-              >
-                <div style={{ marginBottom: 12 }}>
+              <div key={block.table} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="mb-3 text-sm">
                   <strong>{block.table}</strong>{" "}
-                  <span style={{ color: "#6b7280" }}>
+                  <span className="text-white/55">
                     {block.exists
                       ? block.orderBy
                         ? `(ordered by ${block.orderBy})`
@@ -255,9 +184,7 @@ export default async function DashboardPage() {
                   </span>
                 </div>
 
-                {block.error ? (
-                  <div style={{ color: "#991b1b", marginBottom: 8 }}>{block.error}</div>
-                ) : null}
+                {block.error ? <div className="mb-2 text-sm text-rose-300">{block.error}</div> : null}
 
                 <DataTable rows={block.rows} empty="No recent rows found" />
               </div>
@@ -266,14 +193,7 @@ export default async function DashboardPage() {
         </Section>
 
         <Section title="4) Quality metrics">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 16,
-              marginBottom: 20,
-            }}
-          >
+          <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
               label="Average match confidence"
               value={
@@ -284,15 +204,9 @@ export default async function DashboardPage() {
             />
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 20,
-            }}
-          >
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <div>
-              <h3 style={{ marginTop: 0 }}>Candidates by marketplace</h3>
+              <h3 className="mb-3 text-lg font-semibold text-white">Candidates by marketplace</h3>
               <DataTable
                 rows={data.quality.candidatesByMarketplace}
                 empty="No marketplace candidate data"
@@ -300,16 +214,13 @@ export default async function DashboardPage() {
             </div>
 
             <div>
-              <h3 style={{ marginTop: 0 }}>Candidates by supplier</h3>
-              <DataTable
-                rows={data.quality.candidatesBySupplier}
-                empty="No supplier candidate data"
-              />
+              <h3 className="mb-3 text-lg font-semibold text-white">Candidates by supplier</h3>
+              <DataTable rows={data.quality.candidatesBySupplier} empty="No supplier candidate data" />
             </div>
           </div>
 
-          <div style={{ marginTop: 20 }}>
-            <h3 style={{ marginTop: 0 }}>Top profitable opportunities</h3>
+          <div className="mt-5">
+            <h3 className="mb-3 text-lg font-semibold text-white">Top profitable opportunities</h3>
             <DataTable
               rows={data.quality.topProfitableOpportunities}
               empty="No profitable opportunities yet"
@@ -318,52 +229,30 @@ export default async function DashboardPage() {
         </Section>
 
         <Section title="5) Job visibility">
-          <div style={{ marginBottom: 16, color: "#6b7280" }}>
-            Queue: <strong>{data.jobs.queueName}</strong>
+          <div className="mb-4 text-sm text-white/65">
+            Queue: <strong className="text-white">{data.jobs.queueName}</strong>
           </div>
 
           {data.jobs.error ? (
-            <div
-              style={{
-                marginBottom: 16,
-                padding: 12,
-                borderRadius: 10,
-                border: "1px solid #fecaca",
-                background: "#fef2f2",
-                color: "#991b1b",
-              }}
-            >
+            <div className="mb-4 rounded-xl border border-rose-300/35 bg-rose-400/10 p-3 text-sm text-rose-100">
               {data.jobs.error}
             </div>
           ) : null}
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 16,
-              marginBottom: 20,
-            }}
-          >
+          <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
             {Object.entries(data.jobs.counts).map(([key, value]) => (
               <StatCard key={key} label={key} value={value} />
             ))}
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 20,
-            }}
-          >
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <div>
-              <h3 style={{ marginTop: 0 }}>Recent failed jobs</h3>
+              <h3 className="mb-3 text-lg font-semibold text-white">Recent failed jobs</h3>
               <DataTable rows={data.jobs.recentFailed} empty="No failed jobs found" />
             </div>
 
             <div>
-              <h3 style={{ marginTop: 0 }}>Recent succeeded jobs</h3>
+              <h3 className="mb-3 text-lg font-semibold text-white">Recent succeeded jobs</h3>
               <DataTable rows={data.jobs.recentSucceeded} empty="No completed jobs found" />
             </div>
           </div>
