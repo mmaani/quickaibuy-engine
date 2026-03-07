@@ -1,10 +1,18 @@
 import { Worker } from "bullmq";
 import { bullConnection } from "../lib/bull";
-import { JOBS_QUEUE_NAME, JOB_NAMES } from "../lib/jobs/jobNames";
+import { JOB_NAMES } from "../lib/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
 import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
+import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
+import { runProfitEngine } from "../lib/profit/profitEngine";
+
+const JOBS_QUEUE_NAME = "jobs";
+
+// Legacy queued names already in Redis
+const LEGACY_MARKETPLACE_SCAN = "marketplace:scan";
+const LEGACY_MATCH_PRODUCT = "match:product";
 
 export const jobsWorker = new Worker(
   JOBS_QUEUE_NAME,
@@ -76,7 +84,42 @@ export const jobsWorker = new Worker(
         };
       }
 
-      case JOB_NAMES.MATCH_PRODUCT: {
+      case JOB_NAMES.SCAN_MARKETPLACE_PRICE:
+      case LEGACY_MARKETPLACE_SCAN: {
+        const result = await handleMarketplaceScanJob({
+          limit: Number(job.data?.limit ?? 100),
+          productRawId: job.data?.productRawId
+            ? String(job.data.productRawId).trim()
+            : undefined,
+          platform: (job.data?.platform ?? "all") as "amazon" | "ebay" | "all",
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: String(job.name),
+          entityType: "JOB",
+          entityId: String(job.id ?? "marketplace-scan"),
+          eventType: "COMPLETED",
+          details: {
+            source: "marketplace-scan",
+            jobId: String(job.id ?? ""),
+            limit: Number(job.data?.limit ?? 100),
+            productRawId: job.data?.productRawId
+              ? String(job.data.productRawId).trim()
+              : null,
+            platform: (job.data?.platform ?? "all"),
+            result,
+          },
+        });
+
+        return {
+          ok: true,
+          ...result,
+        };
+      }
+
+      case JOB_NAMES.MATCH_PRODUCT:
+      case LEGACY_MATCH_PRODUCT: {
         const result = await matchSupplierProductsToMarketplaceListings({
           supplierLimit: Number(job.data?.supplierLimit ?? 250),
           marketplaceLimit: Number(job.data?.marketplaceLimit ?? 1000),
@@ -86,14 +129,16 @@ export const jobsWorker = new Worker(
         for (const match of result.accepted) {
           await writeAuditLog({
             actorType: "WORKER",
-            actorId: JOB_NAMES.MATCH_PRODUCT,
+            actorId: String(job.name),
             entityType: "MATCH",
-            entityId: match.matchId || [
-              match.supplierKey,
-              match.supplierProductId,
-              match.marketplaceKey,
-              match.marketplaceListingId
-            ].join(":"),
+            entityId:
+              match.matchId ||
+              [
+                match.supplierKey,
+                match.supplierProductId,
+                match.marketplaceKey,
+                match.marketplaceListingId,
+              ].join(":"),
             eventType: "ACCEPTED",
             details: {
               supplierKey: match.supplierKey,
@@ -115,6 +160,28 @@ export const jobsWorker = new Worker(
           scannedMarketplaceListings: result.scannedMarketplaceListings,
           evaluatedPairs: result.evaluatedPairs,
           acceptedCount: result.acceptedCount,
+        };
+      }
+
+      case JOB_NAMES.EVAL_PROFIT: {
+        const result = await runProfitEngine();
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.EVAL_PROFIT,
+          entityType: "PROFIT_ENGINE",
+          entityId: String(job.id ?? "profit"),
+          eventType: "COMPLETED",
+          details: {
+            scannedMatches: result.scannedMatches,
+            profitable: result.profitable,
+            jobId: String(job.id ?? ""),
+          },
+        });
+
+        return {
+          ok: true,
+          ...result,
         };
       }
 

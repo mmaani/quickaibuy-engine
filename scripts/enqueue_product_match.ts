@@ -26,22 +26,29 @@ loadEnvFile(".env.development.local");
 loadEnvFile(".env");
 loadEnvFile(".env.development");
 
-const supplierLimit = Number(process.argv[2] ?? 250);
-const marketplaceLimit = Number(process.argv[3] ?? 1000);
-const minConfidence = Number(process.argv[4] ?? 0.75);
+async function main() {
+  const supplierLimit = Number(process.argv[2] ?? 250);
+  const marketplaceLimit = Number(process.argv[3] ?? 1000);
+  const minConfidence = Number(process.argv[4] ?? 0.75);
 
-const { enqueueProductMatch } = await import("../src/lib/jobs/enqueueProductMatch");
+  const { enqueueProductMatch } = await import("../src/lib/jobs/enqueueProductMatch");
 
-const job = await enqueueProductMatch({
-  supplierLimit,
-  marketplaceLimit,
-  minConfidence,
-});
+  const job = await enqueueProductMatch({
+    supplierLimit,
+    marketplaceLimit,
+    minConfidence,
+  });
 
-console.log({
-  ok: true,
-  jobId: job.id,
-  supplierLimit,
-  marketplaceLimit,
-  minConfidence,
+  console.log({
+    ok: true,
+    jobId: job.id,
+    supplierLimit,
+    marketplaceLimit,
+    minConfidence,
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });

@@ -34,3 +34,6 @@ export function getBullConnection(): ConnectionOptions {
     tls: isTls ? {} : undefined,
   };
 }
+
+// Shared BullMQ connection options export for modules that need a singleton config.
+export const bullConnection: ConnectionOptions = getBullConnection();

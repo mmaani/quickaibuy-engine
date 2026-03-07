@@ -295,7 +295,7 @@ async function getJobVisibility(): Promise<JobVisibility> {
 
   try {
     const bullmq = await import("bullmq");
-    const connMod = await import("@/lib/bullConnection");
+    const connMod = await import("@/lib/bull");
 
     const connection =
       (connMod as Record<string, unknown>).bullConnection ??
@@ -308,7 +308,7 @@ async function getJobVisibility(): Promise<JobVisibility> {
         counts: {},
         recentFailed: [],
         recentSucceeded: [],
-        error: "Could not find BullMQ connection export in src/lib/bullConnection.ts",
+        error: "Could not find BullMQ connection export in src/lib/bull.ts",
       };
     }
 
