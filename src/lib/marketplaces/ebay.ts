@@ -19,6 +19,32 @@ export type MarketplaceCandidate = {
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
+type EbayItemSummary = {
+  itemId?: string;
+  legacyItemId?: string;
+  title?: string;
+  price?: {
+    value?: string;
+    currency?: string;
+  };
+  shippingOptions?: Array<{
+    shippingCost?: {
+      value?: string;
+    };
+  }>;
+  seller?: {
+    username?: string;
+  };
+  estimatedAvailabilities?: Array<{
+    estimatedAvailabilityStatus?: string;
+  }>;
+  itemWebUrl?: string;
+};
+
+type EbaySearchResponse = {
+  itemSummaries?: EbayItemSummary[];
+};
+
 async function getEbayAccessToken(): Promise<string> {
   const clientId = process.env.EBAY_CLIENT_ID;
   const clientSecret = process.env.EBAY_CLIENT_SECRET;
@@ -80,10 +106,10 @@ export async function searchEbay(query: string, limit = 10): Promise<Marketplace
     throw new Error(`eBay search failed: ${res.status} ${await res.text()}`);
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as EbaySearchResponse;
   const items = Array.isArray(data?.itemSummaries) ? data.itemSummaries : [];
 
-  return items.map((item: any) => {
+  return items.map((item) => {
     const shipping = Array.isArray(item?.shippingOptions) ? item.shippingOptions[0] : null;
 
     return {
