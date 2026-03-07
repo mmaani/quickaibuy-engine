@@ -2,7 +2,11 @@ import { Queue, type ConnectionOptions, QueueEvents } from "bullmq";
 import { JOBS, type JobName } from "@/src/lib/jobNames";
 
 const redisUrl = process.env.REDIS_URL;
-if (!redisUrl) throw new Error("Missing REDIS_URL");
+if (!redisUrl) {
+  throw new Error(
+    "Missing REDIS_URL. Set it in .env.local (for local dev) or your runtime environment."
+  );
+}
 
 export const bullConnection: ConnectionOptions = {
   url: redisUrl,
