@@ -1,6 +1,7 @@
 import {
   pgTable,
   serial,
+  uuid,
   text,
   integer,
   timestamp,
@@ -104,8 +105,8 @@ export const trendSignals = pgTable(
 export const trendCandidates = pgTable(
   "trend_candidates",
   {
-    id: text("id").primaryKey(),
-    trendSignalId: text("trend_signal_id").notNull(),
+    id: uuid("id").primaryKey(),
+    trendSignalId: uuid("trend_signal_id").notNull(),
     candidateType: text("candidate_type").notNull(),
     candidateValue: text("candidate_value").notNull(),
     region: text("region"),

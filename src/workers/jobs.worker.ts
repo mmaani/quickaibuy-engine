@@ -3,11 +3,18 @@ import { bullConnection } from "../lib/bull";
 import { JOB_NAMES } from "../lib/jobs/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
+import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 
 export const jobsWorker = new Worker(
   "jobs",
   async (job) => {
+    console.log("[jobs.worker] starting job", {
+      id: String(job.id ?? ""),
+      name: job.name,
+      data: job.data,
+    });
+
     switch (job.name) {
       case JOB_NAMES.TREND_EXPAND: {
         const trendSignalId = String(job.data?.trendSignalId ?? "").trim();
@@ -39,6 +46,33 @@ export const jobsWorker = new Worker(
           trendSignalId,
           generatedCount: result.generatedCount,
           insertedCount: result.insertedCount,
+        };
+      }
+
+      case JOB_NAMES.SUPPLIER_DISCOVER: {
+        const limitPerKeyword = Number(job.data?.limitPerKeyword ?? 20);
+        const result = await runSupplierDiscover(limitPerKeyword);
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.SUPPLIER_DISCOVER,
+          entityType: "JOB",
+          entityId: String(job.id ?? "supplier:discover"),
+          eventType: "COMPLETED",
+          details: {
+            source: "supplier-discover",
+            jobId: String(job.id ?? ""),
+            limitPerKeyword,
+            processedCandidates: result.processedCandidates,
+            insertedCount: result.insertedCount,
+            keywords: result.keywords,
+            sources: result.sources,
+          },
+        });
+
+        return {
+          ok: true,
+          ...result,
         };
       }
 
@@ -93,3 +127,19 @@ export const jobsWorker = new Worker(
     concurrency: 10,
   }
 );
+
+jobsWorker.on("completed", (job, result) => {
+  console.log("[jobs.worker] completed job", {
+    id: String(job?.id ?? ""),
+    name: job?.name,
+    result,
+  });
+});
+
+jobsWorker.on("failed", (job, err) => {
+  console.error("[jobs.worker] failed job", {
+    id: String(job?.id ?? ""),
+    name: job?.name,
+    error: err?.message ?? String(err),
+  });
+});

@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Queue } from "bullmq";
 import { bullConnection } from "../src/lib/bull";
-import { JOB_NAMES } from "../src/lib/jobNames";
+import { JOB_NAMES } from "../src/lib/jobs/jobNames";
 
 async function main() {
   const queue = new Queue("jobs", { connection: bullConnection });

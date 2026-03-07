@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { trendCandidates } from "@/db/schema";
+import { trendCandidates } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
 
 export type TrendCandidateRow = {
