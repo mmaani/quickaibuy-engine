@@ -104,15 +104,20 @@ export const trendSignals = pgTable(
 export const trendCandidates = pgTable(
   "trend_candidates",
   {
-    id: serial("id").primaryKey(),
-    trendSignalId: integer("trend_signal_id").notNull(), // trend_signals.id
-    candidate: text("candidate").notNull(), // keyword/product idea
-    confidence: numeric("confidence", { precision: 5, scale: 2 }).notNull(),
-    meta: jsonb("meta").notNull().default({}),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    id: text("id").primaryKey(),
+    trendSignalId: text("trend_signal_id").notNull(),
+    candidateType: text("candidate_type").notNull(),
+    candidateValue: text("candidate_value").notNull(),
+    region: text("region"),
+    status: text("status").notNull(),
+    createdTs: timestamp("created_ts", { withTimezone: false }).notNull(),
+    meta: jsonb("meta"),
+    priorityScore: numeric("priority_score", { precision: 12, scale: 4 }).notNull(),
   },
   (t) => ({
     signalIdx: index("trend_candidates_trend_signal_id_idx").on(t.trendSignalId),
+    typeIdx: index("trend_candidates_candidate_type_idx").on(t.candidateType),
+    statusIdx: index("trend_candidates_status_idx").on(t.status),
   })
 );
 

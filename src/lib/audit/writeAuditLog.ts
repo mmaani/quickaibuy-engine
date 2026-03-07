@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../db/index";
+import { db } from "../db";
 
 export async function writeAuditLog(params: {
   actorType: string;

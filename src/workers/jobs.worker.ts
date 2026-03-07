@@ -1,11 +1,9 @@
 import { Worker } from "bullmq";
 import { bullConnection } from "../lib/bull";
-import { JOB_NAMES } from "../lib/jobNames";
+import { JOB_NAMES } from "../lib/jobs/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
+import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
-import { discoverProductsForCandidate } from "../lib/products/discoverProducts";
-import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
-import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 
 export const jobsWorker = new Worker(
   "jobs",
@@ -33,7 +31,6 @@ export const jobsWorker = new Worker(
             region: result.region,
             generatedCount: result.generatedCount,
             insertedCount: result.insertedCount,
-            candidates: result.candidates,
           },
         });
 
@@ -45,85 +42,46 @@ export const jobsWorker = new Worker(
         };
       }
 
-      case JOB_NAMES.PRODUCT_DISCOVER: {
-        const candidateId = String(job.data?.candidateId ?? "").trim();
+      case JOB_NAMES.MATCH_PRODUCT: {
+        const result = await matchSupplierProductsToMarketplaceListings({
+          supplierLimit: Number(job.data?.supplierLimit ?? 250),
+          marketplaceLimit: Number(job.data?.marketplaceLimit ?? 1000),
+          minConfidence: Number(job.data?.minConfidence ?? 0.75),
+        });
 
-        if (!candidateId) {
-          throw new Error("product:discover missing candidateId");
+        for (const match of result.accepted) {
+          await writeAuditLog({
+            actorType: "WORKER",
+            actorId: JOB_NAMES.MATCH_PRODUCT,
+            entityType: "MATCH",
+            entityId: match.matchId || [
+              match.supplierKey,
+              match.supplierProductId,
+              match.marketplaceKey,
+              match.marketplaceListingId
+            ].join(":"),
+            eventType: "ACCEPTED",
+            details: {
+              supplierKey: match.supplierKey,
+              supplierProductId: match.supplierProductId,
+              marketplaceKey: match.marketplaceKey,
+              marketplaceListingId: match.marketplaceListingId,
+              matchType: match.matchType,
+              confidence: match.confidence,
+              evidence: match.evidence,
+              status: match.status,
+              jobId: String(job.id ?? ""),
+            },
+          });
         }
 
-        const result = await discoverProductsForCandidate(candidateId);
-
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: JOB_NAMES.PRODUCT_DISCOVER,
-          entityType: "TREND_CANDIDATE",
-          entityId: candidateId,
-          eventType: "PRODUCTS_DISCOVERED",
-          details: {
-            source: "product-discover-stub",
-            jobId: String(job.id ?? ""),
-            keyword: result.keyword,
-            insertedCount: result.insertedCount,
-            markets: result.markets,
-          },
-        });
-
         return {
           ok: true,
-          candidateId,
-          insertedCount: result.insertedCount,
-          markets: result.markets,
+          scannedSuppliers: result.scannedSuppliers,
+          scannedMarketplaceListings: result.scannedMarketplaceListings,
+          evaluatedPairs: result.evaluatedPairs,
+          acceptedCount: result.acceptedCount,
         };
-      }
-
-      case JOB_NAMES.SUPPLIER_DISCOVER: {
-        const limitPerKeyword = Number(job.data?.limitPerKeyword ?? 20);
-        const result = await runSupplierDiscover(limitPerKeyword);
-
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: JOB_NAMES.SUPPLIER_DISCOVER,
-          entityType: "TREND_CANDIDATE",
-          entityId: "batch",
-          eventType: "SUPPLIER_PRODUCTS_DISCOVERED",
-          details: {
-            source: "supplier-discover",
-            jobId: String(job.id ?? ""),
-            processedCandidates: result.processedCandidates,
-            insertedCount: result.insertedCount,
-            keywords: result.keywords,
-            sources: result.sources,
-          },
-        });
-
-        return {
-          ok: true,
-          ...result,
-        };
-      }
-
-      case JOB_NAMES.SCAN_MARKETPLACE_PRICE: {
-        const result = await handleMarketplaceScanJob({
-          limit: Number(job.data?.limit ?? 100),
-          productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
-          platform: (job.data?.platform ?? "all") as "amazon" | "ebay" | "all",
-        });
-
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: JOB_NAMES.SCAN_MARKETPLACE_PRICE,
-          entityType: "MARKETPLACE_PRICE",
-          entityId: String(job.data?.productRawId ?? "batch"),
-          eventType: "MARKETPLACE_PRICES_SCANNED",
-          details: {
-            source: "trend-marketplace-scanner",
-            jobId: String(job.id ?? ""),
-            ...result,
-          },
-        });
-
-        return result;
       }
 
       default:
