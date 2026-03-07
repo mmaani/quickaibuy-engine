@@ -108,7 +108,8 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.MATCH_PRODUCT:
-      case LEGACY_JOB_NAMES.MATCH_PRODUCT: {
+      case LEGACY_JOB_NAMES.MATCH_PRODUCT:
+      case LEGACY_JOB_NAMES.PRODUCT_MATCH: {
         const result = await matchSupplierProductsToMarketplaceListings({
           supplierLimit: Number(job.data?.supplierLimit ?? 250),
           marketplaceLimit: Number(job.data?.marketplaceLimit ?? 1000),

@@ -40,6 +40,35 @@ const LOW_CONFIDENCE_THRESHOLD = 0.75;
 const PREFERRED_MARGIN_PCT = 20;
 const PREFERRED_ROI_PCT = 25;
 
+function normalizeRows<T>(result: unknown): T[] {
+  if (result && typeof result === "object" && "rows" in result) {
+    const rows = (result as { rows?: unknown }).rows;
+    return Array.isArray(rows) ? (rows as T[]) : [];
+  }
+  return [];
+}
+
+async function resolveOrderColumn(
+  tableName: "products_raw" | "marketplace_prices",
+  candidates: readonly string[]
+): Promise<string> {
+  const result = await db.execute(sql`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = ${tableName}
+  `);
+
+  const rows = normalizeRows<{ column_name: string }>(result);
+  const set = new Set(rows.map((row) => String(row.column_name)));
+
+  for (const candidate of candidates) {
+    if (set.has(candidate)) return candidate;
+  }
+
+  return "id";
+}
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -166,6 +195,20 @@ function computeRiskFlags(input: {
 }
 
 export async function runProfitEngine(limit = 500): Promise<ProfitResult> {
+  const supplierOrderColumn = await resolveOrderColumn("products_raw", [
+    "snapshot_ts",
+    "created_ts",
+    "created_at",
+    "id",
+  ]);
+
+  const marketplaceOrderColumn = await resolveOrderColumn("marketplace_prices", [
+    "snapshot_ts",
+    "observed_at",
+    "created_at",
+    "id",
+  ]);
+
   const matchesRes = await db.execute(sql`
     SELECT
       supplier_key,
@@ -183,12 +226,30 @@ export async function runProfitEngine(limit = 500): Promise<ProfitResult> {
   let profitable = 0;
 
   for (const match of matches) {
+    const supplierOrderBy =
+      supplierOrderColumn === "created_at"
+        ? sql`created_at DESC NULLS LAST, id DESC`
+        : supplierOrderColumn === "created_ts"
+          ? sql`created_ts DESC NULLS LAST, id DESC`
+          : supplierOrderColumn === "id"
+            ? sql`id DESC`
+            : sql`snapshot_ts DESC NULLS LAST, id DESC`;
+
+    const marketplaceOrderBy =
+      marketplaceOrderColumn === "observed_at"
+        ? sql`observed_at DESC NULLS LAST, id DESC`
+        : marketplaceOrderColumn === "created_at"
+          ? sql`created_at DESC NULLS LAST, id DESC`
+          : marketplaceOrderColumn === "id"
+            ? sql`id DESC`
+            : sql`snapshot_ts DESC NULLS LAST, id DESC`;
+
     const supplierRes = await db.execute(sql`
       SELECT id, title, price_min, price_max, shipping_estimates
       FROM products_raw
       WHERE supplier_key = ${match.supplier_key}
         AND supplier_product_id = ${match.supplier_product_id}
-      ORDER BY snapshot_ts DESC
+      ORDER BY ${supplierOrderBy}
       LIMIT 1
     `);
 
@@ -197,7 +258,7 @@ export async function runProfitEngine(limit = 500): Promise<ProfitResult> {
       FROM marketplace_prices
       WHERE marketplace_key = ${match.marketplace_key}
         AND marketplace_listing_id = ${match.marketplace_listing_id}
-      ORDER BY snapshot_ts DESC
+      ORDER BY ${marketplaceOrderBy}
       LIMIT 1
     `);
 

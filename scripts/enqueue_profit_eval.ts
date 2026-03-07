@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { Queue } from "bullmq";
 import { bullConnection } from "../src/lib/bull";
 import { JOB_NAMES, JOBS_QUEUE_NAME } from "../src/lib/jobNames";

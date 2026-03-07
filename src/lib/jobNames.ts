@@ -16,6 +16,7 @@ export const JOB_NAMES = {
 export const LEGACY_JOB_NAMES = {
   SCAN_MARKETPLACE_PRICE: "marketplace:scan",
   MATCH_PRODUCT: "match:product",
+  PRODUCT_MATCH: "product:match",
 } as const;
 
 export const JOBS = JOB_NAMES;
