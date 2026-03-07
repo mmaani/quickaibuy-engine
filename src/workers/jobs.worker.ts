@@ -1,14 +1,13 @@
 import { Worker } from "bullmq";
 import { bullConnection } from "../lib/bull";
 import { JOB_NAMES } from "../lib/jobNames";
+import { JOBS_QUEUE_NAME } from "../lib/jobs/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
 import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
 import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 import { runProfitEngine } from "../lib/profit/profitEngine";
-
-const JOBS_QUEUE_NAME = "jobs";
 
 // Legacy queued names already in Redis
 const LEGACY_MARKETPLACE_SCAN = "marketplace:scan";

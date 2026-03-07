@@ -31,7 +31,7 @@ async function main() {
   const marketplaceLimit = Number(process.argv[3] ?? 1000);
   const minConfidence = Number(process.argv[4] ?? 0.75);
 
-  const { enqueueProductMatch } = await import("../src/lib/jobs/enqueueProductMatch");
+  const { enqueueProductMatch, jobsQueue } = await import("../src/lib/jobs/enqueueProductMatch");
 
   const job = await enqueueProductMatch({
     supplierLimit,
@@ -46,6 +46,9 @@ async function main() {
     marketplaceLimit,
     minConfidence,
   });
+
+  await jobsQueue.close();
+  process.exit(0);
 }
 
 main().catch((err) => {

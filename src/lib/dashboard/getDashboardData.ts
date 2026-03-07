@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
+import { bullConnection } from "@/lib/bull";
 
 type Row = Record<string, unknown>;
 
@@ -271,10 +272,13 @@ async function getDbHealth(): Promise<{ status: HealthState; detail?: string }> 
 async function getRedisHealth(): Promise<{ status: HealthState; detail?: string }> {
   try {
     const redisMod = await import("@/lib/redis");
+    const getRedis = (redisMod as Record<string, unknown>).getRedis;
     const redisClient =
-      (redisMod as Record<string, unknown>).redis ??
-      (redisMod as Record<string, unknown>).default ??
-      (redisMod as Record<string, unknown>).client;
+      typeof getRedis === "function"
+        ? (getRedis as () => { ping?: unknown })()
+        : (redisMod as Record<string, unknown>).redis ??
+          (redisMod as Record<string, unknown>).default ??
+          (redisMod as Record<string, unknown>).client;
 
     if (!redisClient || typeof (redisClient as { ping?: unknown }).ping !== "function") {
       return { status: "unknown", detail: "Redis client export not found in src/lib/redis.ts" };
@@ -295,24 +299,7 @@ async function getJobVisibility(): Promise<JobVisibility> {
 
   try {
     const bullmq = await import("bullmq");
-    const connMod = await import("@/lib/bull");
-
-    const connection =
-      (connMod as Record<string, unknown>).bullConnection ??
-      (connMod as Record<string, unknown>).connection ??
-      (connMod as Record<string, unknown>).default;
-
-    if (!connection) {
-      return {
-        queueName,
-        counts: {},
-        recentFailed: [],
-        recentSucceeded: [],
-        error: "Could not find BullMQ connection export in src/lib/bull.ts",
-      };
-    }
-
-    const queue = new bullmq.Queue(queueName, { connection });
+    const queue = new bullmq.Queue(queueName, { connection: bullConnection });
 
     const counts = await queue.getJobCounts(
       "waiting",
