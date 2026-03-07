@@ -1,3 +1,5 @@
+export const JOBS_QUEUE_NAME = "jobs";
+
 export const JOB_NAMES = {
   TREND_EXPAND: "trend:expand",
   PRODUCT_DISCOVER: "product:discover",

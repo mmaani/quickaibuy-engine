@@ -1,13 +1,13 @@
 import { Worker } from "bullmq";
 import { bullConnection } from "../lib/bull";
-import { JOB_NAMES } from "../lib/jobs/jobNames";
+import { JOBS_QUEUE_NAME, JOB_NAMES } from "../lib/jobs/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
 import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 
 export const jobsWorker = new Worker(
-  "jobs",
+  JOBS_QUEUE_NAME,
   async (job) => {
     console.log("[jobs.worker] starting job", {
       id: String(job.id ?? ""),

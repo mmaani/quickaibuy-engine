@@ -1,8 +1,8 @@
 import { Queue } from "bullmq";
-import { JOB_NAMES } from "./jobNames";
+import { JOBS_QUEUE_NAME, JOB_NAMES } from "./jobNames";
 import { bullConnection } from "../bull";
 
-export const jobsQueue = new Queue("jobs", {
+export const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
 });
 

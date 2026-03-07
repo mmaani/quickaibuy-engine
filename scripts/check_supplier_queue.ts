@@ -1,9 +1,10 @@
 import "dotenv/config";
 import { Queue } from "bullmq";
 import { bullConnection } from "../src/lib/bull";
+import { JOBS_QUEUE_NAME } from "../src/lib/jobs/jobNames";
 
 async function main() {
-  const queue = new Queue("jobs", { connection: bullConnection });
+  const queue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection });
 
   const waiting = await queue.getWaiting();
   const active = await queue.getActive();
