@@ -15,17 +15,9 @@ export default function RefreshButton() {
         });
       }}
       disabled={isPending}
-      style={{
-        padding: "10px 14px",
-        borderRadius: 10,
-        border: "1px solid #d0d7de",
-        background: isPending ? "#f6f8fa" : "#111827",
-        color: isPending ? "#6b7280" : "#ffffff",
-        cursor: isPending ? "not-allowed" : "pointer",
-        fontWeight: 600,
-      }}
+      className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
     >
-      {isPending ? "Refreshing..." : "Refresh"}
+      {isPending ? "Refreshing..." : "Refresh Dashboard"}
     </button>
   );
 }
