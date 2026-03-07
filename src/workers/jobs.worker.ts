@@ -1,6 +1,6 @@
 import { Worker } from "bullmq";
 import { bullConnection } from "../lib/bull";
-import { JOB_NAMES } from "../lib/jobNames";
+import { BULL_PREFIX, JOB_NAMES } from "../lib/jobNames";
 import { JOBS_QUEUE_NAME, LEGACY_JOB_NAMES } from "../lib/jobs/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
@@ -201,6 +201,7 @@ export const jobsWorker = new Worker(
   {
     connection: bullConnection,
     concurrency: 10,
+    prefix: BULL_PREFIX,
   }
 );
 

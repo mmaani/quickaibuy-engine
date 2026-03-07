@@ -6,6 +6,7 @@ dotenv.config({ path: ".env.local" });
 import { Worker } from "bullmq";
 import { bullConnection } from "@/src/lib/bull";
 import { JOBS } from "@/src/lib/jobNames";
+import { BULL_PREFIX, ENGINE_QUEUE_NAME } from "@/src/lib/queue";
 import { pool } from "@/lib/db";
 
 function nowIso() {
@@ -77,7 +78,7 @@ export async function main() {
   });
 
   const worker = new Worker(
-    "engine",
+    ENGINE_QUEUE_NAME,
     async (job) => {
       const started = Date.now();
       await logRun({ status: "STARTED", jobName: job.name, jobId: String(job.id) });
@@ -120,6 +121,7 @@ export async function main() {
     {
       connection: bullConnection,
       concurrency: 5,
+      prefix: BULL_PREFIX,
     }
   );
 

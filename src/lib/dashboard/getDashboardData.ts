@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
+import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
 import { bullConnection } from "@/lib/bull";
 
 type Row = Record<string, unknown>;
@@ -299,7 +299,10 @@ async function getJobVisibility(): Promise<JobVisibility> {
 
   try {
     const bullmq = await import("bullmq");
-    const queue = new bullmq.Queue(queueName, { connection: bullConnection });
+    const queue = new bullmq.Queue(queueName, {
+      connection: bullConnection,
+      prefix: BULL_PREFIX,
+    });
 
     const counts = await queue.getJobCounts(
       "waiting",

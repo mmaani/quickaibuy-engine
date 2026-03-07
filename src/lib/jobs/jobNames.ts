@@ -1,6 +1,7 @@
-import { JOB_NAMES as ROOT_JOB_NAMES, JOBS_QUEUE_NAME } from "../jobNames";
+import { BULL_PREFIX, JOB_NAMES as ROOT_JOB_NAMES, JOBS_QUEUE_NAME } from "../jobNames";
 
 export { JOBS_QUEUE_NAME };
+export { BULL_PREFIX };
 
 export const JOB_NAMES = ROOT_JOB_NAMES;
 

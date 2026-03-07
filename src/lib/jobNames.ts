@@ -1,4 +1,5 @@
-export const JOBS_QUEUE_NAME = "jobs";
+export const JOBS_QUEUE_NAME = process.env.JOBS_QUEUE_NAME || "jobs";
+export const BULL_PREFIX = process.env.BULL_PREFIX || "qaib";
 
 export const JOB_NAMES = {
   TREND_EXPAND: "trend:expand",

@@ -1,9 +1,10 @@
 import { Queue } from "bullmq";
-import { JOBS_QUEUE_NAME, JOB_NAMES } from "./jobNames";
+import { BULL_PREFIX, JOBS_QUEUE_NAME, JOB_NAMES } from "./jobNames";
 import { bullConnection } from "../bull";
 
 export const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
+  prefix: BULL_PREFIX,
 });
 
 export async function enqueueTrendExpand(trendSignalId: string) {
