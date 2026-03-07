@@ -336,7 +336,7 @@ export async function runProfitEngine(): Promise<ProfitResult> {
         ${JSON.stringify({
           marketplace: match.marketplace_key,
           referralPct: feeModel.referralPct,
-          estimatedFeeTotal,
+          estimatedFeeTotal: estimatedFees,
         })}::jsonb,
         ${String(estimatedShipping)},
         ${String(estimatedCogs)},

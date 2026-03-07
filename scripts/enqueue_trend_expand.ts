@@ -32,14 +32,32 @@ loadEnvFile(".env.development.local");
 loadEnvFile(".env");
 loadEnvFile(".env.development");
 
-const trendSignalId = process.argv[2];
+async function resolveTrendSignalId(input?: string): Promise<string> {
+  const provided = String(input ?? "").trim();
+  if (provided) return provided;
 
-if (!trendSignalId) {
-  console.error("Usage: node scripts/enqueue_trend_expand.ts <trendSignalId>");
-  process.exit(1);
+  const { pool } = await import("../src/lib/db");
+  const result = await pool.query<{ id: string }>(
+    `
+      select id::text as id
+      from trend_signals
+      order by captured_ts desc nulls last, id desc
+      limit 1
+    `
+  );
+
+  const latest = String(result.rows[0]?.id ?? "").trim();
+  if (!latest) {
+    throw new Error(
+      "No trendSignalId provided and no rows found in trend_signals. Pass an id explicitly."
+    );
+  }
+
+  return latest;
 }
 
 async function main() {
+  const trendSignalId = await resolveTrendSignalId(process.argv[2]);
   const { enqueueTrendExpand, jobsQueue } = await import("../src/lib/jobs/enqueueTrendExpand");
   const job = await enqueueTrendExpand(trendSignalId);
 
