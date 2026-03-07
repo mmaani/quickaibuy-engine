@@ -78,10 +78,7 @@ export const jobsWorker = new Worker(
           },
         });
 
-        return {
-          ok: true,
-          ...result,
-        };
+        return result;
       }
 
       case JOB_NAMES.SCAN_MARKETPLACE_PRICE:
@@ -112,10 +109,7 @@ export const jobsWorker = new Worker(
           },
         });
 
-        return {
-          ok: true,
-          ...result,
-        };
+        return result;
       }
 
       case JOB_NAMES.MATCH_PRODUCT:
@@ -179,10 +173,7 @@ export const jobsWorker = new Worker(
           },
         });
 
-        return {
-          ok: true,
-          ...result,
-        };
+        return result;
       }
 
       default:
