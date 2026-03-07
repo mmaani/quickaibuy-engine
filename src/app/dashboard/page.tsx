@@ -87,8 +87,8 @@ function DataTable({
   );
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
-      <table className="w-full border-collapse text-sm text-white/90">
+    <div className="w-full overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+      <table className="min-w-max w-full border-collapse text-sm text-white/90">
         <thead className="sticky top-0 z-10">
           <tr>
             {columns.map((col) => (
@@ -139,7 +139,7 @@ export default async function DashboardPage() {
         : "unknown";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-app text-white">
+    <main className="relative min-h-screen bg-app text-white">
       <div className="pointer-events-none absolute inset-0">
         <div className="hero-orb hero-orb-a" />
         <div className="hero-orb hero-orb-b" />
