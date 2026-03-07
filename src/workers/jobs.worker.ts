@@ -1,17 +1,13 @@
 import { Worker } from "bullmq";
 import { bullConnection } from "../lib/bull";
 import { JOB_NAMES } from "../lib/jobNames";
-import { JOBS_QUEUE_NAME } from "../lib/jobs/jobNames";
+import { JOBS_QUEUE_NAME, LEGACY_JOB_NAMES } from "../lib/jobs/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
 import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
 import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 import { runProfitEngine } from "../lib/profit/profitEngine";
-
-// Legacy queued names already in Redis
-const LEGACY_MARKETPLACE_SCAN = "marketplace:scan";
-const LEGACY_MATCH_PRODUCT = "match:product";
 
 export const jobsWorker = new Worker(
   JOBS_QUEUE_NAME,
@@ -81,7 +77,7 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.SCAN_MARKETPLACE_PRICE:
-      case LEGACY_MARKETPLACE_SCAN: {
+      case LEGACY_JOB_NAMES.SCAN_MARKETPLACE_PRICE: {
         const result = await handleMarketplaceScanJob({
           limit: Number(job.data?.limit ?? 100),
           productRawId: job.data?.productRawId
@@ -112,7 +108,8 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.MATCH_PRODUCT:
-      case LEGACY_MATCH_PRODUCT: {
+      case LEGACY_JOB_NAMES.MATCH_PRODUCT:
+      case LEGACY_JOB_NAMES.PRODUCT_MATCH: {
         const result = await matchSupplierProductsToMarketplaceListings({
           supplierLimit: Number(job.data?.supplierLimit ?? 250),
           marketplaceLimit: Number(job.data?.marketplaceLimit ?? 1000),
@@ -157,7 +154,7 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.EVAL_PROFIT: {
-        const result = await runProfitEngine();
+        const result = await runProfitEngine(Number(job.data?.limit ?? 500));
 
         await writeAuditLog({
           actorType: "WORKER",
@@ -175,8 +172,30 @@ export const jobsWorker = new Worker(
         return result;
       }
 
-      default:
-        throw new Error(`Unhandled job name: ${job.name}`);
+      default: {
+        const reason = `Unhandled job name: ${job.name}`;
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: "jobs.worker",
+          entityType: "JOB",
+          entityId: String(job.id ?? "unknown"),
+          eventType: "SKIPPED",
+          details: {
+            reason,
+            jobName: String(job.name ?? ""),
+            jobData: job.data ?? null,
+          },
+        });
+
+        console.warn("[jobs.worker] skipped unknown job", {
+          id: String(job.id ?? ""),
+          name: job.name,
+          data: job.data,
+        });
+
+        return { ok: true, skipped: true, reason };
+      }
     }
   },
   {

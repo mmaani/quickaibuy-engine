@@ -1,3 +1,5 @@
+export const JOBS_QUEUE_NAME = "jobs";
+
 export const JOB_NAMES = {
   TREND_EXPAND: "trend:expand",
   PRODUCT_DISCOVER: "product:discover",
@@ -11,6 +13,13 @@ export const JOB_NAMES = {
   ORDER_SYNC: "ORDER_SYNC",
 } as const;
 
+export const LEGACY_JOB_NAMES = {
+  SCAN_MARKETPLACE_PRICE: "marketplace:scan",
+  MATCH_PRODUCT: "match:product",
+  PRODUCT_MATCH: "product:match",
+} as const;
+
 export const JOBS = JOB_NAMES;
 
 export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];
+export type LegacyJobName = (typeof LEGACY_JOB_NAMES)[keyof typeof LEGACY_JOB_NAMES];

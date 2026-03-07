@@ -1,11 +1,14 @@
-export const JOBS_QUEUE_NAME = "jobs";
+import { JOB_NAMES as ROOT_JOB_NAMES, JOBS_QUEUE_NAME } from "../jobNames";
 
-export const JOB_NAMES = {
-  TREND_EXPAND: "trend:expand",
-  PRODUCT_DISCOVER: "product:discover",
-  SUPPLIER_DISCOVER: "supplier:discover",
+export { JOBS_QUEUE_NAME };
+
+export const JOB_NAMES = ROOT_JOB_NAMES;
+
+export const LEGACY_JOB_NAMES = {
   SCAN_MARKETPLACE_PRICE: "marketplace:scan",
   MATCH_PRODUCT: "match:product",
+  PRODUCT_MATCH: "product:match",
 } as const;
 
-export type JobName = typeof JOB_NAMES[keyof typeof JOB_NAMES];
+export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];
+export type LegacyJobName = (typeof LEGACY_JOB_NAMES)[keyof typeof LEGACY_JOB_NAMES];
