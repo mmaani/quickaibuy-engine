@@ -18,6 +18,13 @@ const STOPWORDS = new Set([
   "oz",
   "inch",
   "inches",
+  "sample",
+  "samples",
+  "temu",
+  "alibaba",
+  "aliexpress",
+  "amazon",
+  "ebay",
 ]);
 
 export function normalizeText(input: string): string {
@@ -159,7 +166,8 @@ export function scoreCandidate(
     [product.title, ...(product.mainKeywords || [])],
     candidate.matchedTitle
   );
-  const finalMatchScore = (0.65 * titleSimilarityScore) + (0.35 * keywordScore);
+
+  const finalMatchScore = (0.8 * titleSimilarityScore) + (0.2 * keywordScore);
 
   return {
     ...candidate,

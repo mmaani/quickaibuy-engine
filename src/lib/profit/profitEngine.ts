@@ -73,6 +73,10 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function toPgTextArray(values: string[]): string {
+  return `{${values.map((value) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')).map((value) => `"${value}"`).join(",")}}`;
+}
+
 function toNumber(v: unknown, fallback = 0): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
   if (typeof v === "string") {
@@ -247,7 +251,7 @@ export async function runProfitEngine(limit = 500): Promise<ProfitResult> {
     const supplierRes = await db.execute(sql`
       SELECT id, title, price_min, price_max, shipping_estimates
       FROM products_raw
-      WHERE supplier_key = ${match.supplier_key}
+      WHERE lower(supplier_key) = lower(${match.supplier_key})
         AND supplier_product_id = ${match.supplier_product_id}
       ORDER BY ${supplierOrderBy}
       LIMIT 1
@@ -346,7 +350,7 @@ export async function runProfitEngine(limit = 500): Promise<ProfitResult> {
         ${String(estimatedProfit)},
         ${String(marginPct)},
         ${String(roiPct)},
-        ${riskFlags},
+        ${toPgTextArray(riskFlags)}::text[],
         'PENDING',
         ${reason}
       )

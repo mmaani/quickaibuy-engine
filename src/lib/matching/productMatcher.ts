@@ -43,12 +43,14 @@ export type MatchProductsResult = {
   evaluatedPairs: number;
   acceptedCount: number;
   accepted: AcceptedMatch[];
+  debugTopRejected?: Array<Record<string, unknown>>;
 };
 
 const STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it",
   "of", "on", "or", "that", "the", "this", "to", "with", "without", "your", "you", "our",
-  "new", "best", "hot", "sale", "set", "pack", "pcs", "pc", "piece", "pieces"
+  "new", "best", "hot", "sale", "set", "pack", "pcs", "pc", "piece", "pieces",
+  "sample", "samples", "temu", "alibaba", "aliexpress", "ebay", "amazon"
 ]);
 
 const COLOR_MAP: Array<[RegExp, string]> = [
@@ -132,6 +134,16 @@ function tokenOverlapScore(aTokens: string[], bTokens: string[]): number {
     if (B.has(t)) shared += 1;
   }
   return (2 * shared) / (A.size + B.size || 1);
+}
+
+function tokenCoverageScore(needleTokens: string[], haystackTokens: string[]): number {
+  if (!needleTokens.length) return 0;
+  const haystack = new Set(haystackTokens);
+  let covered = 0;
+  for (const token of needleTokens) {
+    if (haystack.has(token)) covered += 1;
+  }
+  return covered / needleTokens.length;
 }
 
 function sharedTokens(aTokens: string[], bTokens: string[]): string[] {
@@ -386,12 +398,27 @@ function canonicalizeMarketplace(
 
 async function loadJsonRows(tableName: "products_raw" | "marketplace_prices", limit: number): Promise<JsonRow[]> {
   const safeLimit = Math.max(1, Math.min(limit, 5000));
+  const orderColumn = tableName === "products_raw" ? "snapshot_ts" : "snapshot_ts";
   const query = sql.raw(
-    `select row_to_json(t) as row from ${tableName} t limit ${safeLimit}`
+    `select row_to_json(t) as row from ${tableName} t order by ${orderColumn} desc nulls last limit ${safeLimit}`
   );
   const result = await db.execute(query);
   const rows = ((result as unknown as { rows?: Array<{ row: JsonRow }> }).rows ?? []).map((r) => r.row);
   return rows;
+}
+
+function dedupeCanonicalRows(rows: CanonicalProduct[]): CanonicalProduct[] {
+  const seen = new Set<string>();
+  const deduped: CanonicalProduct[] = [];
+
+  for (const row of rows) {
+    const key = `${row.sourceKey}:${row.productId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+
+  return deduped;
 }
 
 function buildMarketplaceTokenIndex(rows: CanonicalProduct[]): Map<string, CanonicalProduct[]> {
@@ -473,16 +500,33 @@ function computeConfidence(params: {
   sharedModelTokens: string[];
   fuzzy: number;
   overlap: number;
+  supplierCoverage: number;
+  listingCoverage: number;
+  titleContained: boolean;
   priceScore: number;
 }): number {
   if (params.exactBarcode) return 0.99;
 
   let score =
-    params.overlap * 0.45 +
-    params.fuzzy * 0.40 +
-    params.priceScore * 0.15;
+    params.overlap * 0.2 +
+    params.fuzzy * 0.3 +
+    params.supplierCoverage * 0.3 +
+    params.listingCoverage * 0.1 +
+    params.priceScore * 0.1;
 
   if (params.sharedModelTokens.length > 0) {
+    score += 0.08;
+  }
+
+  if (params.supplierCoverage >= 0.999) {
+    score += 0.05;
+  }
+
+  if (params.overlap >= 0.5 && params.fuzzy >= 0.6) {
+    score += 0.04;
+  }
+
+  if (params.titleContained) {
     score += 0.08;
   }
 
@@ -563,10 +607,12 @@ export async function matchSupplierProductsToMarketplaceListings(params?: {
   const rawSuppliers = await loadJsonRows("products_raw", supplierLimit * 4);
   const rawMarketplace = await loadJsonRows("marketplace_prices", marketplaceLimit * 4);
 
-  const canonicalizedSuppliers = rawSuppliers
+  const canonicalizedSuppliers = dedupeCanonicalRows(
+    rawSuppliers
     .map((row) => canonicalizeSupplier(row, supplierStats))
     .filter((x): x is CanonicalProduct => Boolean(x))
-    .sort((a, b) => b.ts - a.ts);
+    .sort((a, b) => b.ts - a.ts)
+  );
 
   const suppliers = canonicalizedSuppliers
     .filter((x) => x.sourceKey === "alibaba" || x.sourceKey === "aliexpress" || x.sourceKey === "temu")
@@ -574,10 +620,12 @@ export async function matchSupplierProductsToMarketplaceListings(params?: {
 
   const supplierRejectedBySource = canonicalizedSuppliers.length - suppliers.length;
 
-  const canonicalizedMarketplace = rawMarketplace
+  const canonicalizedMarketplace = dedupeCanonicalRows(
+    rawMarketplace
     .map((row) => canonicalizeMarketplace(row, marketplaceStats))
     .filter((x): x is CanonicalProduct => Boolean(x))
-    .sort((a, b) => b.ts - a.ts);
+    .sort((a, b) => b.ts - a.ts)
+  );
 
   const marketplaceListings = canonicalizedMarketplace
     .filter((x) => x.sourceKey === "amazon" || x.sourceKey === "ebay")
@@ -625,6 +673,7 @@ export async function matchSupplierProductsToMarketplaceListings(params?: {
   const tokenIndex = buildMarketplaceTokenIndex(marketplaceListings);
 
   const accepted: AcceptedMatch[] = [];
+  const topRejected: Array<Record<string, unknown>> = [];
   let evaluatedPairs = 0;
 
   for (const supplier of suppliers) {
@@ -645,6 +694,11 @@ export async function matchSupplierProductsToMarketplaceListings(params?: {
       if (!price.ok) continue;
 
       const shared = sharedTokens(supplier.tokens, listing.tokens);
+      const supplierCoverage = round4(tokenCoverageScore(supplier.tokens, listing.tokens));
+      const listingCoverage = round4(tokenCoverageScore(listing.tokens, supplier.tokens));
+      const titleContained =
+        supplier.normalizedTitle.includes(listing.normalizedTitle) ||
+        listing.normalizedTitle.includes(supplier.normalizedTitle);
       const sharedModelTokens = supplier.modelTokens.filter((t) => listing.modelTokens.includes(t));
       const exactBarcode =
         Boolean(supplier.barcode) &&
@@ -663,12 +717,35 @@ export async function matchSupplierProductsToMarketplaceListings(params?: {
         sharedModelTokens,
         fuzzy,
         overlap,
+        supplierCoverage,
+        listingCoverage,
+        titleContained,
         priceScore: price.score
       });
 
       evaluatedPairs += 1;
 
       if (confidence < minConfidence && !forceReviewBelowThreshold) {
+        if (debug) {
+          topRejected.push({
+            supplierKey: supplier.sourceKey,
+            supplierProductId: supplier.productId,
+            supplierTitle: supplier.titleRaw,
+            marketplaceKey: listing.sourceKey,
+            marketplaceListingId: listing.productId,
+            marketplaceTitle: listing.titleRaw,
+            confidence,
+            overlap,
+            fuzzy,
+            supplierCoverage,
+            listingCoverage,
+            titleContained,
+            priceRatio: price.ratio,
+            priceBand: price.reason,
+          });
+          topRejected.sort((a, b) => Number(b.confidence ?? 0) - Number(a.confidence ?? 0));
+          if (topRejected.length > 10) topRejected.length = 10;
+        }
         continue;
       }
 
@@ -679,7 +756,10 @@ export async function matchSupplierProductsToMarketplaceListings(params?: {
         normalizedMarketplaceTitle: listing.normalizedTitle,
         sharedTokens: shared,
         tokenOverlapScore: overlap,
+        supplierCoverageScore: supplierCoverage,
+        listingCoverageScore: listingCoverage,
         fuzzyTitleSimilarity: fuzzy,
+        titleContained,
         supplierPrice: supplier.price,
         marketplacePrice: listing.price,
         priceRatio: price.ratio,
@@ -713,6 +793,7 @@ export async function matchSupplierProductsToMarketplaceListings(params?: {
     scannedMarketplaceListings: marketplaceListings.length,
     evaluatedPairs,
     acceptedCount: accepted.length,
-    accepted
+    accepted,
+    debugTopRejected: debug ? topRejected : undefined,
   };
 }

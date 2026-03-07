@@ -41,20 +41,54 @@ export async function scanOneProductTrendMode(
   const mainKeywords = extractMainKeywordsFromRawPayload(product.rawPayload);
   const queries = buildSearchQueries({ title, mainKeywords });
 
+  console.log("[marketplace-scan] product", {
+    productRawId: product.id,
+    title,
+    queries,
+    requestedPlatform,
+  });
+
   const platforms =
     requestedPlatform === "all" ? (["ebay", "amazon"] as const) : ([requestedPlatform] as const);
 
   const bestByPlatform = new Map<string, MarketplaceCandidate>();
+  const bestSeenByPlatform = new Map<string, MarketplaceCandidate>();
+
   const minScore = Number(process.env.MARKETPLACE_MIN_MATCH_SCORE || "0.45");
   const perQueryLimit = Number(process.env.MARKETPLACE_QUERY_LIMIT || "10");
   const delayMs = Number(process.env.MARKETPLACE_SCAN_DELAY_MS || "300");
+  const allowFallback = String(process.env.MARKETPLACE_ALLOW_TOP_RESULT_FALLBACK || "true") === "true";
 
   for (const query of queries) {
     for (const platform of platforms) {
       const candidates = await searchPlatform(platform, query, perQueryLimit);
 
+      console.log("[marketplace-scan] candidates", {
+        productRawId: product.id,
+        platform,
+        query,
+        candidateCount: candidates.length,
+      });
+
       for (const raw of candidates) {
         const scored = scoreCandidate({ title, mainKeywords }, raw);
+
+        console.log("[marketplace-scan] scored-candidate", {
+          productRawId: product.id,
+          platform,
+          query,
+          listingId: scored.marketplaceListingId,
+          matchedTitle: scored.matchedTitle,
+          finalMatchScore: scored.finalMatchScore,
+          price: scored.price,
+          currency: scored.currency,
+        });
+
+        const prevSeen = bestSeenByPlatform.get(platform);
+        if (!prevSeen || (scored.finalMatchScore || 0) > (prevSeen.finalMatchScore || 0)) {
+          bestSeenByPlatform.set(platform, scored);
+        }
+
         if ((scored.finalMatchScore || 0) < minScore) continue;
 
         const prev = bestByPlatform.get(platform);
@@ -65,6 +99,21 @@ export async function scanOneProductTrendMode(
 
       if (delayMs > 0) {
         await sleep(delayMs);
+      }
+    }
+  }
+
+  if (allowFallback) {
+    for (const platform of platforms) {
+      if (!bestByPlatform.has(platform) && bestSeenByPlatform.has(platform)) {
+        const fallback = bestSeenByPlatform.get(platform)!;
+        console.log("[marketplace-scan] fallback-selected", {
+          productRawId: product.id,
+          platform,
+          listingId: fallback.marketplaceListingId,
+          score: fallback.finalMatchScore,
+        });
+        bestByPlatform.set(platform, fallback);
       }
     }
   }
@@ -81,9 +130,7 @@ export async function runTrendMarketplaceScanner(input?: {
   const platform = input?.platform ?? "all";
 
   const products = input?.productRawId
-    ? (() => {
-        return Promise.resolve(input.productRawId);
-      })().then(async (id) => {
+    ? (() => Promise.resolve(input.productRawId))().then(async (id) => {
         const one = await getProductRawById(id);
         return one ? [one] : [];
       })
@@ -94,13 +141,33 @@ export async function runTrendMarketplaceScanner(input?: {
   let inserted = 0;
   let scanned = 0;
 
+  console.log("[marketplace-scan] batch-start", {
+    requestedLimit: limit,
+    actualProducts: resolvedProducts.length,
+    platform,
+    productRawId: input?.productRawId ?? null,
+  });
+
   for (const product of resolvedProducts) {
     scanned++;
 
     const matches = await scanOneProductTrendMode(product, platform);
 
+    console.log("[marketplace-scan] product-matches", {
+      productRawId: product.id,
+      matchCount: matches.length,
+    });
+
     for (const match of matches) {
       if (!match.marketplaceListingId || !match.matchedTitle || match.price == null || !match.currency) {
+        console.log("[marketplace-scan] skipped-insert", {
+          reason: "missing-required-fields",
+          productRawId: product.id,
+          listingId: match.marketplaceListingId,
+          matchedTitle: match.matchedTitle,
+          price: match.price,
+          currency: match.currency,
+        });
         continue;
       }
 
@@ -128,14 +195,25 @@ export async function runTrendMarketplaceScanner(input?: {
       });
 
       inserted++;
+
+      console.log("[marketplace-scan] inserted", {
+        productRawId: product.id,
+        platform: match.marketplaceKey,
+        listingId: match.marketplaceListingId,
+        score: match.finalMatchScore,
+      });
     }
   }
 
-  return {
+  const result = {
     ok: true,
     scanned,
     inserted,
     platform,
     productRawId: input?.productRawId ?? null,
   };
+
+  console.log("[marketplace-scan] batch-complete", result);
+
+  return result;
 }

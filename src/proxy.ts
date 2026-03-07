@@ -1,0 +1,36 @@
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { REVIEW_CONSOLE_REALM, getReviewConsoleCredentials, isAuthorizedReviewRequest } from "@/lib/review/auth";
+
+function unauthorizedResponse(): NextResponse {
+  return new NextResponse("Authentication required", {
+    status: 401,
+    headers: {
+      "WWW-Authenticate": `Basic realm="${REVIEW_CONSOLE_REALM}"`,
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+export function proxy(request: NextRequest) {
+  const configured = getReviewConsoleCredentials();
+
+  if (!configured) {
+    return new NextResponse("Review console auth is not configured.", {
+      status: 503,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  if (!isAuthorizedReviewRequest(request)) {
+    return unauthorizedResponse();
+  }
+
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: ["/admin/review/:path*", "/api/admin/review/:path*"],
+};

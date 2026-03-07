@@ -1,10 +1,13 @@
 import "dotenv/config";
 import { Queue } from "bullmq";
 import { bullConnection } from "../src/lib/bull";
-import { JOB_NAMES, JOBS_QUEUE_NAME } from "../src/lib/jobs/jobNames";
+import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "../src/lib/jobs/jobNames";
 
 async function run() {
-  const q = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection });
+  const q = new Queue(JOBS_QUEUE_NAME, {
+    connection: bullConnection,
+    prefix: BULL_PREFIX,
+  });
 
   try {
     const limit = Number(process.argv[2] ?? 500);

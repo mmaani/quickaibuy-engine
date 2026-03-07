@@ -1,0 +1,513 @@
+import { headers } from "next/headers";
+import type { Metadata } from "next";
+import {
+  REVIEW_ROUTE,
+  REVIEW_STATUSES,
+  getCandidateDetail,
+  getReviewCandidates,
+  getReviewFilterOptions,
+  getReviewFiltersFromSearchParams,
+  getSupplierImageUrl,
+  LOW_MATCH_CONFIDENCE_THRESHOLD,
+  type AuditEntry,
+  type CandidateDetail,
+  type ReviewFilters,
+} from "@/lib/review/console";
+import { isReviewConsoleConfigured } from "@/lib/review/auth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export const metadata: Metadata = {
+  title: "Review Console",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
+
+type SearchParams = Record<string, string | string[] | undefined>;
+
+function formatMoney(value: number | null, currency = "USD"): string {
+  if (value == null) return "-";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatPercent(value: number | null): string {
+  if (value == null) return "-";
+  return `${value.toFixed(2)}%`;
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  });
+}
+
+function serializeDetails(value: unknown): string {
+  if (value == null) return "-";
+  return JSON.stringify(value, null, 2);
+}
+
+function buildReviewHref(filters: ReviewFilters, candidateId: string): string {
+  const params = new URLSearchParams();
+
+  if (filters.supplier) params.set("supplier", filters.supplier);
+  if (filters.marketplace) params.set("marketplace", filters.marketplace);
+  if (filters.decisionStatus) params.set("decisionStatus", filters.decisionStatus);
+  if (filters.minProfit) params.set("minProfit", filters.minProfit);
+  if (filters.minMargin) params.set("minMargin", filters.minMargin);
+  if (filters.minRoi) params.set("minRoi", filters.minRoi);
+  if (filters.riskOnly) params.set("riskOnly", "1");
+  if (filters.sort) params.set("sort", filters.sort);
+  if (candidateId) params.set("candidateId", candidateId);
+
+  const query = params.toString();
+  return query ? `${REVIEW_ROUTE}?${query}` : REVIEW_ROUTE;
+}
+
+function RiskBadge({ flag }: { flag: string }) {
+  const isBlocking =
+    flag === "LOW_MATCH_CONFIDENCE" ||
+    flag === "MISSING_SHIPPING_ESTIMATE" ||
+    flag === "BRAND_OR_RESTRICTED_TITLE" ||
+    flag === "DUPLICATE_CANDIDATE_PATTERN";
+
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${
+        isBlocking
+          ? "border-rose-300/30 bg-rose-400/12 text-rose-100"
+          : "border-amber-300/30 bg-amber-400/12 text-amber-100"
+      }`}
+    >
+      {flag.replaceAll("_", " ")}
+    </span>
+  );
+}
+
+function DetailBlock({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="glass-panel rounded-3xl border border-white/10 p-5">
+      <h2 className="mb-4 text-lg font-semibold text-white">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function KeyValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">{label}</div>
+      <div className="mt-2 text-sm text-white/90">{value}</div>
+    </div>
+  );
+}
+
+function AuditList({ entries }: { entries: AuditEntry[] }) {
+  if (!entries.length) {
+    return <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">No audit history for this candidate or match yet.</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {entries.map((entry) => (
+        <div key={entry.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm font-semibold text-white">{entry.eventType}</div>
+            <div className="text-xs text-white/45">{formatDateTime(entry.eventTs)}</div>
+          </div>
+          <div className="mt-2 text-xs uppercase tracking-[0.16em] text-white/45">
+            {entry.actorType}
+            {entry.actorId ? ` / ${entry.actorId}` : ""}
+            {` / ${entry.entityType} / ${entry.entityId}`}
+          </div>
+          <pre className="mt-3 overflow-x-auto rounded-2xl border border-white/10 bg-[#0a1020] p-3 text-xs text-white/75">
+            {serializeDetails(entry.details)}
+          </pre>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReviewActions({ candidate }: { candidate: CandidateDetail["candidate"] }) {
+  return (
+    <DetailBlock title="Human Decision">
+      <form action="/api/admin/review/decision" method="post" className="space-y-4">
+        <input type="hidden" name="candidateId" value={candidate.id} />
+        <div className="grid gap-4 md:grid-cols-2">
+          <KeyValue label="Current Status" value={candidate.decisionStatus} />
+          <KeyValue
+            label="Listing Eligible"
+            value={
+              <span className={candidate.listingEligible ? "text-emerald-200" : "text-rose-200"}>
+                {candidate.listingEligible ? "YES" : "NO"}
+              </span>
+            }
+          />
+        </div>
+        <label className="block">
+          <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Reason / Note</div>
+          <textarea
+            name="reason"
+            defaultValue={candidate.reason ?? ""}
+            rows={4}
+            className="contact-input min-h-[110px] resize-y"
+            placeholder="Optional approval note"
+          />
+        </label>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="submit"
+            name="decisionStatus"
+            value="APPROVED"
+            className="rounded-2xl border border-emerald-300/30 bg-emerald-400/12 px-4 py-2 text-sm font-semibold text-emerald-100"
+          >
+            Approve
+          </button>
+          <button
+            type="submit"
+            name="decisionStatus"
+            value="REJECTED"
+            className="rounded-2xl border border-rose-300/30 bg-rose-400/12 px-4 py-2 text-sm font-semibold text-rose-100"
+          >
+            Reject
+          </button>
+          <button
+            type="submit"
+            name="decisionStatus"
+            value="RECHECK"
+            className="rounded-2xl border border-amber-300/30 bg-amber-400/12 px-4 py-2 text-sm font-semibold text-amber-100"
+          >
+            Mark for Recheck
+          </button>
+        </div>
+      </form>
+    </DetailBlock>
+  );
+}
+
+function EmptyDetailPane() {
+  return (
+    <div className="glass-panel rounded-3xl border border-white/10 p-8 text-center text-sm text-white/55">
+      No candidate selected. Adjust filters or choose a row from the left pane.
+    </div>
+  );
+}
+
+export default async function ReviewPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams> | SearchParams;
+}) {
+  const resolvedSearchParams = searchParams instanceof Promise ? await searchParams : searchParams;
+  const filters = getReviewFiltersFromSearchParams(resolvedSearchParams);
+  const [filterOptions, candidates] = await Promise.all([
+    getReviewFilterOptions(),
+    getReviewCandidates(filters),
+  ]);
+
+  const selectedCandidateId = filters.candidateId || candidates[0]?.id || "";
+  const detail = selectedCandidateId ? await getCandidateDetail(selectedCandidateId) : null;
+  const supplierImageUrl = getSupplierImageUrl(detail);
+  const configured = isReviewConsoleConfigured();
+  const host = (await headers()).get("host");
+
+  return (
+    <main className="relative min-h-screen bg-app text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="hero-orb hero-orb-a" />
+        <div className="hero-orb hero-orb-b" />
+        <div className="hero-orb hero-orb-c" />
+        <div className="grid-overlay opacity-[0.08]" />
+      </div>
+
+      <div className="relative mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
+        <header className="glass-card rounded-3xl border border-white/10 px-5 py-5 sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="m-0 text-3xl font-bold text-white">Profitable Candidate Review Console</h1>
+              <p className="mt-2 text-sm text-white/65">
+                Internal review UI for approval decisions and listing readiness.
+              </p>
+              <p className="mt-2 text-xs text-white/45">
+                Route: {REVIEW_ROUTE} | Host: {host ?? "-"} | Auth configured: {configured ? "yes" : "no"}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/8 px-4 py-3 text-sm text-cyan-100">
+              Confidence threshold: {LOW_MATCH_CONFIDENCE_THRESHOLD}
+            </div>
+          </div>
+
+          <form action={REVIEW_ROUTE} method="get" className="mt-5 grid gap-3 xl:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
+            <select name="supplier" defaultValue={filters.supplier} className="contact-input">
+              <option value="">All suppliers</option>
+              {filterOptions.suppliers.map((supplier) => (
+                <option key={supplier} value={supplier}>
+                  {supplier}
+                </option>
+              ))}
+            </select>
+            <select name="marketplace" defaultValue={filters.marketplace} className="contact-input">
+              <option value="">All marketplaces</option>
+              {filterOptions.marketplaces.map((marketplace) => (
+                <option key={marketplace} value={marketplace}>
+                  {marketplace}
+                </option>
+              ))}
+            </select>
+            <select name="decisionStatus" defaultValue={filters.decisionStatus} className="contact-input">
+              <option value="">All statuses</option>
+              {REVIEW_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+            <input name="minProfit" defaultValue={filters.minProfit} className="contact-input" placeholder="Min profit" />
+            <input name="minMargin" defaultValue={filters.minMargin} className="contact-input" placeholder="Min margin %" />
+            <input name="minRoi" defaultValue={filters.minRoi} className="contact-input" placeholder="Min ROI %" />
+            <select name="sort" defaultValue={filters.sort} className="contact-input">
+              <option value="calc_ts_desc">Newest first</option>
+              <option value="estimated_profit_desc">Estimated profit desc</option>
+              <option value="margin_pct_desc">Margin desc</option>
+              <option value="roi_pct_desc">ROI desc</option>
+            </select>
+            <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+              <label className="flex items-center gap-2 text-sm text-white/85">
+                <input type="checkbox" name="riskOnly" value="1" defaultChecked={filters.riskOnly} />
+                Risk only
+              </label>
+              <button
+                type="submit"
+                className="rounded-2xl border border-cyan-300/30 bg-cyan-400/12 px-4 py-2 text-sm font-semibold text-cyan-100"
+              >
+                Apply
+              </button>
+            </div>
+          </form>
+        </header>
+
+        <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,760px)_minmax(0,1fr)]">
+          <section className="glass-panel rounded-3xl border border-white/10 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-white">Candidate Queue</h2>
+              <div className="text-xs text-white/45">{candidates.length} row(s)</div>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-white/10">
+              <div className="max-h-[78vh] overflow-auto">
+                <table className="min-w-full border-collapse text-sm text-white/90">
+                  <thead className="sticky top-0 z-10 bg-[#111827]">
+                    <tr>
+                      {["candidate", "supplier", "marketplace", "profit", "margin", "roi", "status", "calc_ts"].map((label) => (
+                        <th
+                          key={label}
+                          className="border-b border-white/10 px-3 py-3 text-left text-[11px] uppercase tracking-[0.16em] text-white/45"
+                        >
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidates.length ? (
+                      candidates.map((candidate) => {
+                        const selected = detail?.candidate.id === candidate.id;
+                        return (
+                          <tr
+                            key={candidate.id}
+                            className={selected ? "bg-cyan-300/[0.08]" : "odd:bg-transparent even:bg-white/[0.02]"}
+                          >
+                            <td className="border-b border-white/5 px-3 py-3 align-top">
+                              <a href={buildReviewHref(filters, candidate.id)} className="block text-cyan-100">
+                                <div className="font-semibold">{candidate.id}</div>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {candidate.riskFlags.slice(0, 2).map((flag) => (
+                                    <RiskBadge key={flag} flag={flag} />
+                                  ))}
+                                  {candidate.listingEligible ? (
+                                    <span className="rounded-full border border-emerald-300/30 bg-emerald-400/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
+                                      Eligible
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </a>
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top">
+                              <div className="font-semibold">{candidate.supplierKey}</div>
+                              <div className="mt-1 text-xs text-white/55">{candidate.supplierProductId}</div>
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top">
+                              <div className="font-semibold">{candidate.marketplaceKey}</div>
+                              <div className="mt-1 text-xs text-white/55">{candidate.marketplaceListingId}</div>
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top">{formatMoney(candidate.estimatedProfit)}</td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top">{formatPercent(candidate.marginPct)}</td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top">{formatPercent(candidate.roiPct)}</td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top">{candidate.decisionStatus}</td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top text-xs text-white/55">
+                              {formatDateTime(candidate.calcTs)}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-10 text-center text-sm text-white/55">
+                          No profitable candidates match the current filters.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <div className="grid gap-5">
+            {!detail ? (
+              <EmptyDetailPane />
+            ) : (
+              <>
+                <DetailBlock title="Candidate Detail">
+                  <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+                    <div className="overflow-hidden rounded-3xl border border-white/10 bg-black/20">
+                      {supplierImageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={supplierImageUrl} alt={detail.supplierSnapshot?.title ?? "Supplier product"} className="h-full min-h-[220px] w-full object-cover" />
+                      ) : (
+                        <div className="flex min-h-[220px] items-center justify-center text-sm text-white/40">No supplier image</div>
+                      )}
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <KeyValue label="Candidate ID" value={detail.candidate.id} />
+                      <KeyValue label="Decision Status" value={detail.candidate.decisionStatus} />
+                      <KeyValue label="Supplier" value={`${detail.candidate.supplierKey} / ${detail.candidate.supplierProductId}`} />
+                      <KeyValue label="Marketplace" value={`${detail.candidate.marketplaceKey} / ${detail.candidate.marketplaceListingId}`} />
+                      <KeyValue label="Estimated Profit" value={formatMoney(detail.candidate.estimatedProfit)} />
+                      <KeyValue label="Margin / ROI" value={`${formatPercent(detail.candidate.marginPct)} / ${formatPercent(detail.candidate.roiPct)}`} />
+                      <KeyValue label="Match Confidence" value={detail.match?.confidence?.toFixed(4) ?? "-"} />
+                      <KeyValue label="Calculated" value={formatDateTime(detail.candidate.calcTs)} />
+                    </div>
+                  </div>
+                </DetailBlock>
+
+                <ReviewActions candidate={detail.candidate} />
+
+                <DetailBlock title="Listing Readiness">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <KeyValue
+                      label="Listing Eligible"
+                      value={
+                        <span className={detail.candidate.listingEligible ? "text-emerald-200" : "text-rose-200"}>
+                          {detail.candidate.listingEligible ? "YES" : "NO"}
+                        </span>
+                      }
+                    />
+                    <KeyValue
+                      label="Blocking Risk Flags"
+                      value={detail.candidate.blockingRiskFlags.length ? detail.candidate.blockingRiskFlags.join(", ") : "None"}
+                    />
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/85">
+                    {detail.candidate.listingEligibilityReasons.length ? (
+                      <ul className="space-y-2">
+                        {detail.candidate.listingEligibilityReasons.map((reason) => (
+                          <li key={reason}>- {reason}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      "All listing-eligibility checks passed."
+                    )}
+                  </div>
+                </DetailBlock>
+
+                <DetailBlock title="Supporting Evidence">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <KeyValue label="Supplier Title" value={detail.supplierSnapshot?.title ?? "-"} />
+                    <KeyValue label="Marketplace Title" value={detail.marketplaceSnapshot?.matchedTitle ?? "-"} />
+                    <KeyValue
+                      label="Supplier Price"
+                      value={formatMoney(
+                        detail.supplierSnapshot?.priceMin ?? detail.supplierSnapshot?.priceMax ?? null,
+                        detail.supplierSnapshot?.currency ?? "USD"
+                      )}
+                    />
+                    <KeyValue
+                      label="Marketplace Price"
+                      value={formatMoney(detail.marketplaceSnapshot?.price ?? null, detail.marketplaceSnapshot?.currency ?? "USD")}
+                    />
+                    <KeyValue
+                      label="Supplier Source URL"
+                      value={
+                        detail.supplierSnapshot?.sourceUrl ? (
+                          <a href={detail.supplierSnapshot.sourceUrl} className="text-cyan-100 underline" target="_blank" rel="noreferrer">
+                            Open supplier source
+                          </a>
+                        ) : (
+                          "-"
+                        )
+                      }
+                    />
+                    <KeyValue
+                      label="Marketplace Listing URL"
+                      value={
+                        detail.marketplaceSnapshot?.productPageUrl ? (
+                          <a href={detail.marketplaceSnapshot.productPageUrl} className="text-cyan-100 underline" target="_blank" rel="noreferrer">
+                            Open marketplace listing
+                          </a>
+                        ) : (
+                          "-"
+                        )
+                      }
+                    />
+                    <KeyValue label="Fee Breakdown" value={<pre className="overflow-x-auto text-xs text-white/75">{serializeDetails(detail.candidate.estimatedFees)}</pre>} />
+                    <KeyValue label="Risk Flags" value={<div className="flex flex-wrap gap-2">{detail.candidate.riskFlags.length ? detail.candidate.riskFlags.map((flag) => <RiskBadge key={flag} flag={flag} />) : "None"}</div>} />
+                  </div>
+                </DetailBlock>
+
+                <DetailBlock title="Match Evidence">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <KeyValue label="Match Type" value={detail.match?.matchType ?? "-"} />
+                    <KeyValue label="Match Status" value={detail.match?.status ?? "-"} />
+                    <KeyValue label="First / Last Seen" value={`${formatDateTime(detail.match?.firstSeenTs)} / ${formatDateTime(detail.match?.lastSeenTs)}`} />
+                  </div>
+                  <pre className="mt-4 overflow-x-auto rounded-2xl border border-white/10 bg-[#0a1020] p-4 text-xs text-white/75">
+                    {serializeDetails(detail.match?.evidence)}
+                  </pre>
+                </DetailBlock>
+
+                <DetailBlock title="Audit History">
+                  <AuditList entries={detail.auditHistory} />
+                </DetailBlock>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}

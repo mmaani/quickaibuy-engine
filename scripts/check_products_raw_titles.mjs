@@ -1,16 +1,9 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import pg from "pg";
-
-dotenv.config({ path: ".env.local" });
-dotenv.config();
 
 const { Client } = pg;
 
 async function main() {
-  console.log("env check:", {
-    hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
-  });
-
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
@@ -21,20 +14,12 @@ async function main() {
   const { rows } = await client.query(`
     SELECT
       id,
-      marketplace_key,
-      marketplace_listing_id,
-      product_raw_id,
       supplier_key,
       supplier_product_id,
-      matched_title,
-      price,
-      shipping_price,
-      currency,
-      seller_name,
-      availability_status,
-      final_match_score,
+      title,
       snapshot_ts
-    FROM marketplace_prices
+    FROM products_raw
+    WHERE COALESCE(title, '') <> ''
     ORDER BY snapshot_ts DESC
     LIMIT 20
   `);
