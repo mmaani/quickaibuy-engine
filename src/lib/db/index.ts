@@ -2,7 +2,11 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
 const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) throw new Error("Missing DATABASE_URL");
+if (!DATABASE_URL) {
+  throw new Error(
+    "Missing DATABASE_URL. Set it in .env.local (for local dev) or your runtime environment."
+  );
+}
 
 export const pool = new Pool({
   connectionString: DATABASE_URL,
