@@ -1,5 +1,6 @@
 import { getTrendCandidates } from "@/lib/db/trendCandidates";
 import { insertProductsRaw } from "@/lib/db/productsRaw";
+import type { InsertRawProductInput } from "@/lib/db/productsRaw";
 import { searchAliExpressByKeyword } from "@/lib/products/suppliers/aliexpress";
 import { searchAlibabaByKeyword } from "@/lib/products/suppliers/alibaba";
 import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
@@ -12,13 +13,21 @@ export type SupplierDiscoverResult = {
   sources: string[];
 };
 
-function toRawInsert(product: SupplierProduct) {
+function toRawInsert(product: SupplierProduct): InsertRawProductInput {
+  const snapshotTs = new Date(product.snapshotTs);
+
   return {
-    source: product.platform,
+    supplierKey: product.platform,
+    supplierProductId: product.supplierProductId ?? product.sourceUrl,
     sourceUrl: product.sourceUrl,
-    externalId: product.supplierProductId,
-    fetchedAt: new Date(product.snapshotTs),
-    raw: {
+    title: product.title,
+    images: product.images,
+    variants: product.variants,
+    currency: product.currency,
+    priceMin: product.price,
+    priceMax: product.price,
+    shippingEstimates: product.shippingEstimates,
+    rawPayload: {
       jobType: "supplier:discover",
       keyword: product.keyword,
       title: product.title,
@@ -33,6 +42,7 @@ function toRawInsert(product: SupplierProduct) {
       platform: product.platform,
       ...product.raw,
     },
+    snapshotTs,
   };
 }
 
