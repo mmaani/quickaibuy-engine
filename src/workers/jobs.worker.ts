@@ -5,6 +5,7 @@ import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 import { discoverProductsForCandidate } from "../lib/products/discoverProducts";
 import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
+import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 
 export const jobsWorker = new Worker(
   "jobs",
@@ -100,6 +101,29 @@ export const jobsWorker = new Worker(
           ok: true,
           ...result,
         };
+      }
+
+      case JOB_NAMES.SCAN_MARKETPLACE_PRICE: {
+        const result = await handleMarketplaceScanJob({
+          limit: Number(job.data?.limit ?? 100),
+          productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
+          platform: (job.data?.platform ?? "all") as "amazon" | "ebay" | "all",
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.SCAN_MARKETPLACE_PRICE,
+          entityType: "MARKETPLACE_PRICE",
+          entityId: String(job.data?.productRawId ?? "batch"),
+          eventType: "MARKETPLACE_PRICES_SCANNED",
+          details: {
+            source: "trend-marketplace-scanner",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
+
+        return result;
       }
 
       default:

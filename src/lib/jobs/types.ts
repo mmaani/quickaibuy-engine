@@ -6,3 +6,9 @@ export type TrendIngestJob = {
   score?: number;
   rawPayload?: unknown;
 };
+
+export type MarketplaceScanJob = {
+  limit?: number;
+  productRawId?: string;
+  platform?: "amazon" | "ebay" | "all";
+};

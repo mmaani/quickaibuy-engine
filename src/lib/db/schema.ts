@@ -28,21 +28,48 @@ export const productsRaw = pgTable("products_raw", {
   snapshotTs: timestamp("snapshot_ts").notNull().defaultNow(),
 });
 
-export const marketplacePrices = pgTable("marketplace_prices", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  marketplaceKey: text("marketplace_key").notNull(),
-  marketplaceListingId: text("marketplace_listing_id").notNull(),
-  productPageUrl: text("product_page_url"),
-  currency: text("currency").notNull(),
-  price: numeric("price").notNull(),
-  shippingPrice: numeric("shipping_price"),
-  isPrime: boolean("is_prime"),
-  availabilityStatus: text("availability_status"),
-  sellerId: text("seller_id"),
-  sellerName: text("seller_name"),
-  rawPayload: jsonb("raw_payload").notNull(),
-  snapshotTs: timestamp("snapshot_ts").notNull().defaultNow(),
-});
+export const marketplacePrices = pgTable(
+  "marketplace_prices",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    marketplaceKey: text("marketplace_key").notNull(),
+    marketplaceListingId: text("marketplace_listing_id").notNull(),
+
+    productRawId: uuid("product_raw_id"),
+    supplierKey: text("supplier_key"),
+    supplierProductId: text("supplier_product_id"),
+
+    trendMode: boolean("trend_mode").notNull().default(true),
+    searchQuery: text("search_query"),
+    matchedTitle: text("matched_title"),
+
+    productPageUrl: text("product_page_url"),
+    currency: text("currency").notNull(),
+    price: numeric("price", { precision: 12, scale: 2 }).notNull(),
+    shippingPrice: numeric("shipping_price", { precision: 12, scale: 2 }),
+    isPrime: boolean("is_prime"),
+    availabilityStatus: text("availability_status"),
+    sellerId: text("seller_id"),
+    sellerName: text("seller_name"),
+
+    titleSimilarityScore: numeric("title_similarity_score", { precision: 6, scale: 4 }),
+    keywordScore: numeric("keyword_score", { precision: 6, scale: 4 }),
+    finalMatchScore: numeric("final_match_score", { precision: 6, scale: 4 }),
+
+    rawPayload: jsonb("raw_payload").notNull(),
+    snapshotTs: timestamp("snapshot_ts").notNull().defaultNow(),
+  },
+  (t) => ({
+    marketplacePricesListingIdx: index("marketplace_prices_listing_idx").on(
+      t.marketplaceKey,
+      t.marketplaceListingId
+    ),
+    marketplacePricesProductIdx: index("marketplace_prices_product_idx").on(t.productRawId),
+    marketplacePricesScoreIdx: index("marketplace_prices_score_idx").on(t.finalMatchScore),
+    marketplacePricesSnapshotIdx: index("marketplace_prices_snapshot_idx").on(t.snapshotTs),
+  })
+);
 
 export const matches = pgTable("matches", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -171,7 +198,7 @@ export const queryBudgets = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     source: text("source").notNull(),
-    period: text("period").notNull(), // daily/hourly
+    period: text("period").notNull(),
     maxQueries: integer("max_queries").notNull(),
     usedQueries: integer("used_queries").notNull().default(0),
     resetAt: timestamp("reset_at").notNull(),
@@ -189,7 +216,7 @@ export const queryTasks = pgTable(
     candidateId: uuid("candidate_id").notNull(),
     marketplace: text("marketplace").notNull(),
     priorityScore: numeric("priority_score", { precision: 6, scale: 4 }).notNull(),
-    status: text("status").notNull().default("NEW"), // NEW|QUEUED|RUNNING|DONE|FAILED
+    status: text("status").notNull().default("NEW"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     queuedAt: timestamp("queued_at"),
     startedAt: timestamp("started_at"),
