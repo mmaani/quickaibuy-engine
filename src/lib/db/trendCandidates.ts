@@ -14,7 +14,7 @@ export async function getTrendCandidates(limit = 50): Promise<TrendCandidateRow[
       candidate: trendCandidates.candidate,
     })
     .from(trendCandidates)
-    .orderBy(desc(trendCandidates.createdAt))
+    .orderBy(desc(trendCandidates.id))
     .limit(limit);
 
   return rows.filter((row) => String(row.candidate ?? "").trim().length > 0);
