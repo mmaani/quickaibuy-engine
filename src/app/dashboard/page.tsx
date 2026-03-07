@@ -8,14 +8,21 @@ type Tone = "default" | "ok" | "error" | "unknown";
 
 function Section({
   title,
+  description,
   children,
 }: {
   title: string;
+  description?: string;
   children: React.ReactNode;
 }) {
   return (
     <section className="glass-panel rounded-3xl border border-white/10 p-5 sm:p-6">
-      <h2 className="mb-4 text-lg font-semibold text-white sm:text-xl">{title}</h2>
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white sm:text-xl">{title}</h2>
+          {description ? <p className="mt-1 text-xs text-white/55 sm:text-sm">{description}</p> : null}
+        </div>
+      </div>
       {children}
     </section>
   );
@@ -40,7 +47,7 @@ function StatCard({
   return (
     <div className={`rounded-2xl border p-4 ${toneClass(tone)}`}>
       <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-white/55">{label}</div>
-      <div className="text-2xl font-bold leading-tight">{value}</div>
+      <div className="text-2xl font-bold leading-tight text-balance">{value}</div>
     </div>
   );
 }
@@ -103,7 +110,7 @@ function DataTable({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="odd:bg-transparent even:bg-white/[0.02]">
+            <tr key={i} className="odd:bg-transparent even:bg-white/[0.02] hover:bg-cyan-300/[0.06]">
               {columns.map((col) => (
                 <td
                   key={col}
@@ -123,6 +130,9 @@ function DataTable({
 
 export default async function DashboardPage() {
   const data = await getDashboardData();
+
+  const totalPipelineRows = data.pipelineCounts.reduce((sum, item) => sum + (item.count ?? 0), 0);
+  const activeFailures = data.jobs.counts.failed ?? 0;
 
   const dbTone: Tone =
     data.infrastructure.db.status === "ok"
@@ -153,7 +163,7 @@ export default async function DashboardPage() {
             <div>
               <h1 className="m-0 text-3xl font-bold text-white">Monitoring Dashboard</h1>
               <p className="mt-2 text-sm text-white/65">
-                AI Arbitrage Engine v1 — Milestone 1 pipeline visibility
+                Clear visibility into infrastructure, ingestion health, and execution outcomes.
               </p>
               <p className="mt-2 text-xs text-white/45">Generated at: {data.generatedAt}</p>
             </div>
@@ -165,11 +175,18 @@ export default async function DashboardPage() {
             <StatusPill label="Redis" value={data.infrastructure.redis.status} tone={redisTone} />
             <StatusPill label="Queue" value={data.jobs.queueName} tone="default" />
           </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Pipeline rows tracked" value={totalPipelineRows} />
+            <StatCard label="Failed jobs" value={activeFailures} tone={activeFailures > 0 ? "error" : "ok"} />
+            <StatCard label="Recent failed jobs" value={data.jobs.recentFailed.length} tone={data.jobs.recentFailed.length ? "error" : "ok"} />
+            <StatCard label="Recent succeeded jobs" value={data.jobs.recentSucceeded.length} tone="ok" />
+          </div>
         </header>
 
         <div className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
           <div className="grid gap-5">
-            <Section title="Infrastructure">
+            <Section title="Infrastructure" description="Runtime and connectivity checks for core dependencies.">
               <div className="grid grid-cols-1 gap-4">
                 <StatCard label="DB health" value={data.infrastructure.db.status} tone={dbTone} />
                 <StatCard label="Redis health" value={data.infrastructure.redis.status} tone={redisTone} />
@@ -182,7 +199,7 @@ export default async function DashboardPage() {
               </div>
             </Section>
 
-            <Section title="Pipeline Counts">
+            <Section title="Pipeline Counts" description="Row counts from key pipeline tables to spot ingestion gaps quickly.">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-1">
                 {data.pipelineCounts.map((item) => (
                   <StatCard
@@ -195,7 +212,7 @@ export default async function DashboardPage() {
               </div>
             </Section>
 
-            <Section title="Quality Snapshot">
+            <Section title="Quality Snapshot" description="High-level signal quality indicators.">
               <StatCard
                 label="Average match confidence"
                 value={
@@ -208,7 +225,7 @@ export default async function DashboardPage() {
           </div>
 
           <div className="grid gap-5">
-            <Section title="Fresh Activity">
+            <Section title="Fresh Activity" description="Most recent rows pulled from active tables for quick review.">
               <div className="grid gap-5">
                 {data.latestActivity.map((block) => (
                   <div key={block.table} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -231,7 +248,7 @@ export default async function DashboardPage() {
               </div>
             </Section>
 
-            <Section title="Job Visibility">
+            <Section title="Job Visibility" description="Queue metrics and most recent failed/succeeded job payloads.">
               {data.jobs.error ? (
                 <div className="mb-4 rounded-xl border border-rose-300/35 bg-rose-400/10 p-3 text-sm text-rose-100">
                   {data.jobs.error}
@@ -257,7 +274,7 @@ export default async function DashboardPage() {
               </div>
             </Section>
 
-            <Section title="Quality Details">
+            <Section title="Quality Details" description="Breakdown of opportunity quality and profitability coverage.">
               <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
                 <div>
                   <h3 className="mb-3 text-lg font-semibold text-white">Candidates by marketplace</h3>
