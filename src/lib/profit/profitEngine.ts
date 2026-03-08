@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { sql } from "drizzle-orm";
 
 function toNum(v: unknown): number | null {
@@ -43,13 +44,24 @@ export async function runProfitEngine(input?: {
         m.id AS match_id,
         m.supplier_key,
         m.supplier_product_id,
-        m.marketplace_key,
+        CASE
+          WHEN LOWER(m.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+          WHEN LOWER(m.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+          ELSE LOWER(m.marketplace_key)
+        END AS marketplace_key_norm,
         m.marketplace_listing_id,
         m.match_type,
         m.confidence,
         m.last_seen_ts,
         ROW_NUMBER() OVER (
-          PARTITION BY m.supplier_key, m.supplier_product_id, m.marketplace_key
+          PARTITION BY
+            m.supplier_key,
+            m.supplier_product_id,
+            CASE
+              WHEN LOWER(m.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+              WHEN LOWER(m.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+              ELSE LOWER(m.marketplace_key)
+            END
           ORDER BY
             CAST(m.confidence AS numeric) DESC,
             m.last_seen_ts DESC,
@@ -78,13 +90,24 @@ export async function runProfitEngine(input?: {
       SELECT
         mp.id,
         mp.product_raw_id,
-        mp.marketplace_key,
+        CASE
+          WHEN LOWER(mp.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+          WHEN LOWER(mp.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+          ELSE LOWER(mp.marketplace_key)
+        END AS marketplace_key_norm,
         mp.marketplace_listing_id,
         mp.price,
         mp.shipping_price,
         mp.snapshot_ts,
         ROW_NUMBER() OVER (
-          PARTITION BY mp.product_raw_id, mp.marketplace_key, mp.marketplace_listing_id
+          PARTITION BY
+            mp.product_raw_id,
+            CASE
+              WHEN LOWER(mp.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+              WHEN LOWER(mp.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+              ELSE LOWER(mp.marketplace_key)
+            END,
+            mp.marketplace_listing_id
           ORDER BY mp.snapshot_ts DESC, mp.id DESC
         ) AS rn
       FROM marketplace_prices mp
@@ -94,7 +117,7 @@ export async function runProfitEngine(input?: {
       rm.match_id AS "matchId",
       rm.supplier_key AS "supplierKey",
       rm.supplier_product_id AS "supplierProductId",
-      rm.marketplace_key AS "marketplaceKey",
+      rm.marketplace_key_norm AS "marketplaceKey",
       rm.marketplace_listing_id AS "marketplaceListingId",
       rm.match_type AS "matchType",
       rm.confidence AS "confidence",
@@ -110,7 +133,7 @@ export async function runProfitEngine(input?: {
       AND lp.rn = 1
     INNER JOIN latest_marketplace_prices lmp
       ON lmp.product_raw_id = lp.id
-      AND lmp.marketplace_key = rm.marketplace_key
+      AND lmp.marketplace_key_norm = rm.marketplace_key_norm
       AND lmp.marketplace_listing_id = rm.marketplace_listing_id
       AND lmp.rn = 1
     WHERE rm.rn = 1
@@ -165,7 +188,7 @@ export async function runProfitEngine(input?: {
       (
         ${String(row.supplierKey || "").toLowerCase()},
         ${row.supplierProductId},
-        ${row.marketplaceKey},
+        ${normalizeMarketplaceKey(row.marketplaceKey)},
         ${row.marketplaceListingId}
       )
     `);
@@ -206,7 +229,7 @@ export async function runProfitEngine(input?: {
   for (const row of acceptedRows) {
     const normalizedSupplierKey = String(row.supplierKey || "").toLowerCase();
     const supplierProductId = row.supplierProductId;
-    const marketplaceKey = row.marketplaceKey;
+    const marketplaceKey = normalizeMarketplaceKey(row.marketplaceKey);
     const marketplaceListingId = row.marketplaceListingId;
 
     const matchConfidence = toNum(row.confidence) ?? 0;

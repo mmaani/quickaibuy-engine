@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { productsRaw, marketplacePrices } from "@/lib/db/schema";
+import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { eq, desc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
@@ -162,6 +163,7 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
     const supplierTitle = String(row.supplierTitle || "");
     const marketplaceTitle = String(row.matchedTitle || "");
     const supplierKey = String(row.supplierKey || "").toLowerCase();
+    const marketplaceKey = normalizeMarketplaceKey(String(row.marketplaceKey || ""));
 
     const { confidence, titleScore, overlap } = computeConfidence(
       supplierTitle,
@@ -199,7 +201,7 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
       ) VALUES (
         ${supplierKey},
         ${row.supplierProductId},
-        ${row.marketplaceKey},
+        ${marketplaceKey},
         ${row.marketplaceListingId},
         ${detectMatchType(confidence)},
         ${String(confidence)},

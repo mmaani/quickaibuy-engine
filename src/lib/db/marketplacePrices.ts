@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { marketplacePrices } from "@/lib/db/schema";
+import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { desc, eq, sql } from "drizzle-orm";
 
 export type InsertMarketplacePriceSnapshotInput = {
@@ -31,7 +32,7 @@ export async function insertMarketplacePriceSnapshot(
   input: InsertMarketplacePriceSnapshotInput
 ) {
   const values = {
-    marketplaceKey: input.marketplaceKey,
+    marketplaceKey: normalizeMarketplaceKey(input.marketplaceKey),
     marketplaceListingId: input.marketplaceListingId,
     productRawId: input.productRawId ?? null,
     supplierKey: input.supplierKey ?? null,

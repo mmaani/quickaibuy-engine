@@ -1,4 +1,5 @@
 import { pool } from "@/lib/db";
+import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
@@ -365,7 +366,7 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     id: row.id,
     supplierKey: row.supplier_key,
     supplierProductId: row.supplier_product_id,
-    marketplaceKey: row.marketplace_key,
+    marketplaceKey: normalizeMarketplaceKey(row.marketplace_key),
     marketplaceListingId: row.marketplace_listing_id,
     estimatedProfit,
     marginPct,
@@ -428,7 +429,31 @@ export async function getReviewFilterOptions(): Promise<{
     pool.query<{ marketplace_key: string }>(
       `
         SELECT DISTINCT marketplace_key
-        FROM profitable_candidates
+        FROM (
+          SELECT
+            CASE
+              WHEN LOWER(marketplace_key) LIKE 'amazon%' THEN 'amazon'
+              WHEN LOWER(marketplace_key) LIKE 'ebay%' THEN 'ebay'
+              ELSE LOWER(marketplace_key)
+            END AS marketplace_key
+          FROM profitable_candidates
+          UNION ALL
+          SELECT
+            CASE
+              WHEN LOWER(marketplace_key) LIKE 'amazon%' THEN 'amazon'
+              WHEN LOWER(marketplace_key) LIKE 'ebay%' THEN 'ebay'
+              ELSE LOWER(marketplace_key)
+            END AS marketplace_key
+          FROM matches
+          UNION ALL
+          SELECT
+            CASE
+              WHEN LOWER(marketplace_key) LIKE 'amazon%' THEN 'amazon'
+              WHEN LOWER(marketplace_key) LIKE 'ebay%' THEN 'ebay'
+              ELSE LOWER(marketplace_key)
+            END AS marketplace_key
+          FROM marketplace_prices
+        ) m
         WHERE marketplace_key IS NOT NULL AND marketplace_key <> ''
         ORDER BY marketplace_key ASC
       `
@@ -452,8 +477,16 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
   }
 
   if (filters.marketplace) {
-    values.push(filters.marketplace);
-    conditions.push(`pc.marketplace_key = $${values.length}`);
+    values.push(normalizeMarketplaceKey(filters.marketplace));
+    conditions.push(`
+      (
+        CASE
+          WHEN LOWER(pc.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+          WHEN LOWER(pc.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+          ELSE LOWER(pc.marketplace_key)
+        END
+      ) = $${values.length}
+    `);
   }
 
   if (filters.decisionStatus && REVIEW_STATUSES.includes(filters.decisionStatus as ReviewStatus)) {
@@ -589,7 +622,7 @@ function mapMarketplaceSnapshot(row: QueryResultRow | undefined): MarketplaceSna
 
   return {
     id: String(row.id),
-    marketplaceKey: String(row.marketplace_key),
+    marketplaceKey: normalizeMarketplaceKey(String(row.marketplace_key)),
     marketplaceListingId: String(row.marketplace_listing_id),
     matchedTitle: row.matched_title == null ? null : String(row.matched_title),
     productPageUrl: row.product_page_url == null ? null : String(row.product_page_url),
