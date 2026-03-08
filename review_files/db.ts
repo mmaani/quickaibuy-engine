@@ -1,1 +1,1 @@
-export { db, pool } from "./db/index";
+export { db } from "@/lib/db";
