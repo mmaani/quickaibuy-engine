@@ -291,7 +291,11 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     flags.add("LOW_MATCH_CONFIDENCE");
   }
 
-  if (estimatedShipping == null || estimatedShipping <= 0) {
+  if (
+    estimatedShipping === null ||
+    estimatedShipping === undefined ||
+    Number.isNaN(estimatedShipping)
+  ) {
     flags.add("MISSING_SHIPPING_ESTIMATE");
   }
 
