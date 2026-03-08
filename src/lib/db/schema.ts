@@ -75,6 +75,7 @@ export const marketplacePrices = pgTable(
     matchedTitle: text("matched_title"),
 
     productPageUrl: text("product_page_url"),
+    imageUrl: text("image_url"),
     currency: text("currency").notNull(),
     price: numeric("price", { precision: 12, scale: 2 }).notNull(),
     shippingPrice: numeric("shipping_price", { precision: 12, scale: 2 }),

@@ -12,6 +12,7 @@ export type InsertMarketplacePriceSnapshotInput = {
   searchQuery?: string | null;
   matchedTitle: string;
   productPageUrl?: string | null;
+  imageUrl?: string | null;
   currency: string;
   price: string | number;
   shippingPrice?: string | number | null;
@@ -39,6 +40,7 @@ export async function insertMarketplacePriceSnapshot(
     searchQuery: input.searchQuery ?? null,
     matchedTitle: input.matchedTitle,
     productPageUrl: input.productPageUrl ?? null,
+    imageUrl: input.imageUrl ?? null,
     currency: input.currency,
     price: String(input.price),
     shippingPrice: input.shippingPrice != null ? String(input.shippingPrice) : null,
@@ -48,7 +50,8 @@ export async function insertMarketplacePriceSnapshot(
     sellerName: input.sellerName ?? null,
     titleSimilarityScore:
       input.titleSimilarityScore != null ? String(input.titleSimilarityScore) : null,
-    keywordScore: input.keywordScore != null ? String(input.keywordScore) : null,
+    keywordScore:
+      input.keywordScore != null ? String(input.keywordScore) : null,
     finalMatchScore:
       input.finalMatchScore != null ? String(input.finalMatchScore) : null,
     rawPayload: input.rawPayload,

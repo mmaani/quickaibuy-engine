@@ -22,13 +22,65 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function extractSupplierPrice(product: ProductRawLite): number | null {
+  const raw = product.rawPayload;
+  if (!raw || typeof raw !== "object") return null;
+
+  const obj = raw as Record<string, unknown>;
+  const candidates = [
+    obj.price,
+    obj.priceMin,
+    obj.price_min,
+    obj.offerPrice,
+    obj.offer_price,
+    obj.unitPrice,
+    obj.unit_price,
+  ];
+
+  for (const value of candidates) {
+    const num = Number(value);
+    if (Number.isFinite(num) && num > 0) return num;
+  }
+
+  return null;
+}
+
+function passesPriceSanity(product: ProductRawLite, match: MarketplaceCandidate): boolean {
+  const supplierPrice = extractSupplierPrice(product);
+  const marketplacePrice = match.price;
+
+  if (!supplierPrice || !marketplacePrice) {
+    return true;
+  }
+
+  const minRatio = Number(process.env.MARKETPLACE_MIN_PRICE_RATIO || "1.2");
+  const maxRatio = Number(process.env.MARKETPLACE_MAX_PRICE_RATIO || "10");
+  const ratio = marketplacePrice / supplierPrice;
+
+  if (ratio < minRatio || ratio > maxRatio) {
+    console.log("[marketplace-scan] skipped-price-outlier", {
+      productRawId: product.id,
+      supplierPrice,
+      marketplacePrice,
+      ratio: Number(ratio.toFixed(4)),
+      minRatio,
+      maxRatio,
+      listingId: match.marketplaceListingId,
+      matchedTitle: match.matchedTitle,
+    });
+    return false;
+  }
+
+  return true;
+}
+
 async function searchPlatform(
   platform: "amazon" | "ebay",
   query: string,
   limit: number
 ): Promise<MarketplaceCandidate[]> {
   if (platform === "ebay") return searchEbay(query, limit);
-  return searchAmazon(query, limit);
+  return searchAmazon();
 }
 
 export async function scanOneProductTrendMode(
@@ -57,7 +109,8 @@ export async function scanOneProductTrendMode(
   const minScore = Number(process.env.MARKETPLACE_MIN_MATCH_SCORE || "0.45");
   const perQueryLimit = Number(process.env.MARKETPLACE_QUERY_LIMIT || "10");
   const delayMs = Number(process.env.MARKETPLACE_SCAN_DELAY_MS || "300");
-  const allowFallback = String(process.env.MARKETPLACE_ALLOW_TOP_RESULT_FALLBACK || "true") === "true";
+  const allowFallback =
+    String(process.env.MARKETPLACE_ALLOW_TOP_RESULT_FALLBACK || "true") === "true";
 
   for (const query of queries) {
     for (const platform of platforms) {
@@ -171,6 +224,10 @@ export async function runTrendMarketplaceScanner(input?: {
         continue;
       }
 
+      if (!passesPriceSanity(product, match)) {
+        continue;
+      }
+
       await insertMarketplacePriceSnapshot({
         marketplaceKey: match.marketplaceKey,
         marketplaceListingId: match.marketplaceListingId,
@@ -181,6 +238,7 @@ export async function runTrendMarketplaceScanner(input?: {
         searchQuery: match.searchQuery ?? null,
         matchedTitle: match.matchedTitle,
         productPageUrl: match.productPageUrl ?? null,
+        imageUrl: match.imageUrl ?? null,
         currency: match.currency,
         price: match.price,
         shippingPrice: match.shippingPrice,
@@ -201,6 +259,7 @@ export async function runTrendMarketplaceScanner(input?: {
         platform: match.marketplaceKey,
         listingId: match.marketplaceListingId,
         score: match.finalMatchScore,
+        productPageUrl: match.productPageUrl ?? null,
       });
     }
   }

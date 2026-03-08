@@ -1,3 +1,38 @@
+type EbayShippingOption = {
+  shippingCost?: {
+    value?: string;
+    currency?: string;
+  };
+};
+
+type EbayEstimatedAvailability = {
+  estimatedAvailabilityStatus?: string;
+};
+
+type EbaySeller = {
+  username?: string;
+};
+
+type EbayImage = {
+  imageUrl?: string;
+};
+
+type EbayItemSummary = {
+  itemId?: string;
+  legacyItemId?: string;
+  title?: string;
+  price?: {
+    value?: string;
+    currency?: string;
+  };
+  shippingOptions?: EbayShippingOption[];
+  seller?: EbaySeller;
+  estimatedAvailabilities?: EbayEstimatedAvailability[];
+  itemWebUrl?: string;
+  image?: EbayImage;
+  thumbnailImages?: EbayImage[];
+};
+
 export type MarketplaceCandidate = {
   marketplaceKey: "amazon" | "ebay";
   marketplaceListingId: string;
@@ -9,6 +44,7 @@ export type MarketplaceCandidate = {
   sellerName: string | null;
   availabilityStatus: string | null;
   productPageUrl: string | null;
+  imageUrl: string | null;
   isPrime: boolean | null;
   rawPayload: unknown;
   searchQuery?: string | null;
@@ -19,31 +55,24 @@ export type MarketplaceCandidate = {
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
-type EbayItemSummary = {
-  itemId?: string;
-  legacyItemId?: string;
-  title?: string;
-  price?: {
-    value?: string;
-    currency?: string;
-  };
-  shippingOptions?: Array<{
-    shippingCost?: {
-      value?: string;
-    };
-  }>;
-  seller?: {
-    username?: string;
-  };
-  estimatedAvailabilities?: Array<{
-    estimatedAvailabilityStatus?: string;
-  }>;
-  itemWebUrl?: string;
-};
+function extractLegacyItemId(item: EbayItemSummary): string | null {
+  const legacy = item.legacyItemId ? String(item.legacyItemId) : "";
+  if (legacy) return legacy;
 
-type EbaySearchResponse = {
-  itemSummaries?: EbayItemSummary[];
-};
+  const itemId = item.itemId ? String(item.itemId) : "";
+  const match = itemId.match(/^v1\|(\d+)\|/);
+  return match?.[1] ?? null;
+}
+
+function buildEbayProductUrl(item: EbayItemSummary): string | null {
+  const direct = item.itemWebUrl ? String(item.itemWebUrl) : "";
+  if (direct) return direct;
+
+  const legacyItemId = extractLegacyItemId(item);
+  if (!legacyItemId) return null;
+
+  return `https://www.ebay.com/itm/${legacyItemId}`;
+}
 
 async function getEbayAccessToken(): Promise<string> {
   const clientId = process.env.EBAY_CLIENT_ID;
@@ -77,7 +106,11 @@ async function getEbayAccessToken(): Promise<string> {
     throw new Error(`eBay token failed: ${res.status} ${await res.text()}`);
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in?: number;
+  };
+
   cachedToken = {
     token: data.access_token,
     expiresAt: now + Number(data.expires_in ?? 7200) * 1000,
@@ -106,25 +139,29 @@ export async function searchEbay(query: string, limit = 10): Promise<Marketplace
     throw new Error(`eBay search failed: ${res.status} ${await res.text()}`);
   }
 
-  const data = (await res.json()) as EbaySearchResponse;
-  const items = Array.isArray(data?.itemSummaries) ? data.itemSummaries : [];
+  const data = (await res.json()) as {
+    itemSummaries?: EbayItemSummary[];
+  };
 
-  return items.map((item) => {
-    const shipping = Array.isArray(item?.shippingOptions) ? item.shippingOptions[0] : null;
+  const items = Array.isArray(data.itemSummaries) ? data.itemSummaries : [];
+
+  return items.map((item: EbayItemSummary) => {
+    const shipping = Array.isArray(item.shippingOptions) ? item.shippingOptions[0] : null;
 
     return {
       marketplaceKey: "ebay",
-      marketplaceListingId: String(item?.itemId || item?.legacyItemId || ""),
-      matchedTitle: String(item?.title || ""),
-      price: item?.price?.value != null ? Number(item.price.value) : null,
+      marketplaceListingId: String(item.itemId || item.legacyItemId || ""),
+      matchedTitle: String(item.title || ""),
+      price: item.price?.value != null ? Number(item.price.value) : null,
       shippingPrice:
         shipping?.shippingCost?.value != null ? Number(shipping.shippingCost.value) : null,
-      currency: item?.price?.currency || null,
-      sellerId: item?.seller?.username || null,
-      sellerName: item?.seller?.username || null,
+      currency: item.price?.currency || null,
+      sellerId: item.seller?.username || null,
+      sellerName: item.seller?.username || null,
       availabilityStatus:
-        item?.estimatedAvailabilities?.[0]?.estimatedAvailabilityStatus || null,
-      productPageUrl: item?.itemWebUrl || null,
+        item.estimatedAvailabilities?.[0]?.estimatedAvailabilityStatus || null,
+      productPageUrl: buildEbayProductUrl(item),
+      imageUrl: item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl || null,
       isPrime: null,
       rawPayload: item,
       searchQuery: query,
