@@ -20,7 +20,9 @@
     "probe:runtime": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/probe_runtime.ts",
     "worker:jobs:run": "pnpm worker:jobs",
     "supplier:discover:run": "pnpm enqueue:supplier-discover",
-    "verify:profit-pipeline": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/verify_profit_pipeline.ts"
+    "verify:profit-pipeline": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/verify_profit_pipeline.ts",
+    "diag:db-fingerprint": "node scripts/check_runtime_db_fingerprint.mjs",
+    "diag:env-compare": "node scripts/compare_local_and_vercel_env.mjs production"
   },
   "dependencies": {
     "bullmq": "^5.70.2",
