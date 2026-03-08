@@ -139,6 +139,11 @@ summary::-webkit-details-marker {
   box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.08);
 }
 
+.contact-input option {
+  color: #0b1220;
+  background: #e7eef9;
+}
+
 .grid-overlay {
   position: absolute;
   inset: 0;
