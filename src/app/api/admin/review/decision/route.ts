@@ -84,6 +84,10 @@ export async function POST(request: Request) {
   });
 
   const redirectUrl = buildRedirectUrl(request);
+  // Keep the updated candidate visible after decision changes by aligning
+  // status/risk filters with the new decision state.
+  redirectUrl.searchParams.set("decisionStatus", decisionStatus);
+  redirectUrl.searchParams.delete("riskOnly");
   redirectUrl.searchParams.set("candidateId", candidateId);
   redirectUrl.searchParams.set("updated", "1");
   return NextResponse.redirect(redirectUrl, { status: 303 });
