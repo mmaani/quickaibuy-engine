@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { productsRaw, marketplacePrices, matches } from "@/lib/db/schema";
+import { productsRaw, marketplacePrices } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
@@ -134,7 +134,6 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
           marketplaceKey: marketplacePrices.marketplaceKey,
           marketplaceListingId: marketplacePrices.marketplaceListingId,
           matchedTitle: marketplacePrices.matchedTitle,
-          price: marketplacePrices.price,
           finalMatchScore: marketplacePrices.finalMatchScore,
         })
         .from(marketplacePrices)
@@ -149,7 +148,6 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
           marketplaceKey: marketplacePrices.marketplaceKey,
           marketplaceListingId: marketplacePrices.marketplaceListingId,
           matchedTitle: marketplacePrices.matchedTitle,
-          price: marketplacePrices.price,
           finalMatchScore: marketplacePrices.finalMatchScore,
         })
         .from(marketplacePrices)
@@ -163,6 +161,7 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
   for (const row of rows) {
     const supplierTitle = String(row.supplierTitle || "");
     const marketplaceTitle = String(row.matchedTitle || "");
+    const supplierKey = String(row.supplierKey || "").toLowerCase();
 
     const { confidence, titleScore, overlap } = computeConfidence(
       supplierTitle,
@@ -198,7 +197,7 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
         first_seen_ts,
         last_seen_ts
       ) VALUES (
-        ${row.supplierKey},
+        ${supplierKey},
         ${row.supplierProductId},
         ${row.marketplaceKey},
         ${row.marketplaceListingId},

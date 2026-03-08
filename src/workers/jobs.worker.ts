@@ -1,19 +1,21 @@
-import { Worker } from "bullmq";
+import { Worker, Queue } from "bullmq";
 import { bullConnection } from "../lib/bull";
-import { BULL_PREFIX, JOB_NAMES } from "../lib/jobNames";
-import { JOBS_QUEUE_NAME, LEGACY_JOB_NAMES } from "../lib/jobs/jobNames";
+import { JOB_NAMES } from "../lib/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
-import { matchSupplierProductsToMarketplaceListings } from "../lib/matching/productMatcher";
+import { writeAuditLog } from "../lib/audit/writeAuditLog";
+import { discoverProductsForCandidate } from "../lib/products/discoverProducts";
 import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
 import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
-import { writeAuditLog } from "../lib/audit/writeAuditLog";
+import { handleMatchProductsJob } from "../lib/jobs/matchProducts";
 import { runProfitEngine } from "../lib/profit/profitEngine";
 
+const jobsQueue = new Queue("jobs", { connection: bullConnection });
+
 export const jobsWorker = new Worker(
-  JOBS_QUEUE_NAME,
+  "jobs",
   async (job) => {
     console.log("[jobs.worker] starting job", {
-      id: String(job.id ?? ""),
+      id: job.id,
       name: job.name,
       data: job.data,
     });
@@ -41,6 +43,18 @@ export const jobsWorker = new Worker(
             region: result.region,
             generatedCount: result.generatedCount,
             insertedCount: result.insertedCount,
+            candidates: result.candidates,
+          },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result: {
+            ok: true,
+            trendSignalId,
+            generatedCount: result.generatedCount,
+            insertedCount: result.insertedCount,
           },
         });
 
@@ -52,6 +66,44 @@ export const jobsWorker = new Worker(
         };
       }
 
+      case JOB_NAMES.PRODUCT_DISCOVER: {
+        const candidateId = String(job.data?.candidateId ?? "").trim();
+
+        if (!candidateId) {
+          throw new Error("product:discover missing candidateId");
+        }
+
+        const result = await discoverProductsForCandidate(candidateId);
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.PRODUCT_DISCOVER,
+          entityType: "TREND_CANDIDATE",
+          entityId: candidateId,
+          eventType: "PRODUCTS_DISCOVERED",
+          details: {
+            source: "product-discover-stub",
+            jobId: String(job.id ?? ""),
+            keyword: result.keyword,
+            insertedCount: result.insertedCount,
+            markets: result.markets,
+          },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        return {
+          ok: true,
+          candidateId,
+          insertedCount: result.insertedCount,
+          markets: result.markets,
+        };
+      }
+
       case JOB_NAMES.SUPPLIER_DISCOVER: {
         const limitPerKeyword = Number(job.data?.limitPerKeyword ?? 20);
         const result = await runSupplierDiscover(limitPerKeyword);
@@ -59,13 +111,12 @@ export const jobsWorker = new Worker(
         await writeAuditLog({
           actorType: "WORKER",
           actorId: JOB_NAMES.SUPPLIER_DISCOVER,
-          entityType: "JOB",
-          entityId: String(job.id ?? "supplier:discover"),
-          eventType: "COMPLETED",
+          entityType: "TREND_CANDIDATE",
+          entityId: "batch",
+          eventType: "SUPPLIER_PRODUCTS_DISCOVERED",
           details: {
             source: "supplier-discover",
             jobId: String(job.id ?? ""),
-            limitPerKeyword,
             processedCandidates: result.processedCandidates,
             insertedCount: result.insertedCount,
             keywords: result.keywords,
@@ -73,150 +124,149 @@ export const jobsWorker = new Worker(
           },
         });
 
-        return result;
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        return {
+          ok: true,
+          ...result,
+        };
       }
 
-      case JOB_NAMES.SCAN_MARKETPLACE_PRICE:
-      case LEGACY_JOB_NAMES.SCAN_MARKETPLACE_PRICE: {
+      case JOB_NAMES.SCAN_MARKETPLACE_PRICE: {
         const result = await handleMarketplaceScanJob({
           limit: Number(job.data?.limit ?? 100),
-          productRawId: job.data?.productRawId
-            ? String(job.data.productRawId).trim()
-            : undefined,
+          productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
           platform: (job.data?.platform ?? "all") as "amazon" | "ebay" | "all",
         });
 
         await writeAuditLog({
           actorType: "WORKER",
-          actorId: String(job.name),
-          entityType: "JOB",
-          entityId: String(job.id ?? "marketplace-scan"),
-          eventType: "COMPLETED",
+          actorId: JOB_NAMES.SCAN_MARKETPLACE_PRICE,
+          entityType: "MARKETPLACE_PRICE",
+          entityId: String(job.data?.productRawId ?? "batch"),
+          eventType: "MARKETPLACE_PRICES_SCANNED",
           details: {
-            source: "marketplace-scan",
+            source: "trend-marketplace-scanner",
             jobId: String(job.id ?? ""),
-            limit: Number(job.data?.limit ?? 100),
-            productRawId: job.data?.productRawId
-              ? String(job.data.productRawId).trim()
-              : null,
-            platform: (job.data?.platform ?? "all"),
-            result,
+            ...result,
           },
+        });
+
+        const nextJob = await jobsQueue.add(
+          JOB_NAMES.MATCH_PRODUCT,
+          {
+            limit: Number(job.data?.limit ?? 100),
+            productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
+          },
+          {
+            removeOnComplete: 1000,
+            removeOnFail: 5000,
+          }
+        );
+
+        console.log("[jobs.worker] enqueued follow-up", {
+          fromJob: job.name,
+          nextJobName: JOB_NAMES.MATCH_PRODUCT,
+          nextJobId: nextJob.id,
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
         });
 
         return result;
       }
 
-      case JOB_NAMES.MATCH_PRODUCT:
-      case LEGACY_JOB_NAMES.MATCH_PRODUCT:
-      case LEGACY_JOB_NAMES.PRODUCT_MATCH: {
-        const result = await matchSupplierProductsToMarketplaceListings({
-          supplierLimit: Number(job.data?.supplierLimit ?? 250),
-          marketplaceLimit: Number(job.data?.marketplaceLimit ?? 1000),
-          minConfidence: Number(job.data?.minConfidence ?? 0.75),
+      case JOB_NAMES.MATCH_PRODUCT: {
+        const result = await handleMatchProductsJob({
+          limit: Number(job.data?.limit ?? 50),
+          productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
         });
 
-        for (const match of result.accepted) {
-          await writeAuditLog({
-            actorType: "WORKER",
-            actorId: String(job.name),
-            entityType: "MATCH",
-            entityId:
-              match.matchId ||
-              [
-                match.supplierKey,
-                match.supplierProductId,
-                match.marketplaceKey,
-                match.marketplaceListingId,
-              ].join(":"),
-            eventType: "ACCEPTED",
-            details: {
-              supplierKey: match.supplierKey,
-              supplierProductId: match.supplierProductId,
-              marketplaceKey: match.marketplaceKey,
-              marketplaceListingId: match.marketplaceListingId,
-              matchType: match.matchType,
-              confidence: match.confidence,
-              evidence: match.evidence,
-              status: match.status,
-              jobId: String(job.id ?? ""),
-            },
-          });
-        }
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.MATCH_PRODUCT,
+          entityType: "MATCH",
+          entityId: String(job.data?.productRawId ?? "batch"),
+          eventType: "PRODUCTS_MATCHED",
+          details: {
+            source: "ebay-match-engine",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
 
-        return {
-          ok: true,
-          scannedSuppliers: result.scannedSuppliers,
-          scannedMarketplaceListings: result.scannedMarketplaceListings,
-          evaluatedPairs: result.evaluatedPairs,
-          acceptedCount: result.acceptedCount,
-        };
+        const nextJob = await jobsQueue.add(
+          JOB_NAMES.EVAL_PROFIT,
+          { limit: Number(job.data?.limit ?? 50) },
+          {
+            removeOnComplete: 1000,
+            removeOnFail: 5000,
+          }
+        );
+
+        console.log("[jobs.worker] enqueued follow-up", {
+          fromJob: job.name,
+          nextJobName: JOB_NAMES.EVAL_PROFIT,
+          nextJobId: nextJob.id,
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        return result;
       }
 
       case JOB_NAMES.EVAL_PROFIT: {
-        const result = await runProfitEngine(Number(job.data?.limit ?? 500));
+        const result = await runProfitEngine({
+          limit: Number(job.data?.limit ?? 50),
+        });
 
         await writeAuditLog({
           actorType: "WORKER",
           actorId: JOB_NAMES.EVAL_PROFIT,
-          entityType: "PROFIT_ENGINE",
-          entityId: String(job.id ?? "profit"),
-          eventType: "COMPLETED",
+          entityType: "PROFITABLE_CANDIDATE",
+          entityId: "batch",
+          eventType: "PROFIT_EVALUATED",
           details: {
-            scannedMatches: result.scannedMatches,
-            profitable: result.profitable,
+            source: "profit-engine",
             jobId: String(job.id ?? ""),
+            ...result,
           },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
         });
 
         return result;
       }
 
-      default: {
-        const reason = `Unhandled job name: ${job.name}`;
-
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: "jobs.worker",
-          entityType: "JOB",
-          entityId: String(job.id ?? "unknown"),
-          eventType: "SKIPPED",
-          details: {
-            reason,
-            jobName: String(job.name ?? ""),
-            jobData: job.data ?? null,
-          },
-        });
-
-        console.warn("[jobs.worker] skipped unknown job", {
-          id: String(job.id ?? ""),
-          name: job.name,
-          data: job.data,
-        });
-
-        return { ok: true, skipped: true, reason };
-      }
+      default:
+        throw new Error(`Unhandled job name: ${job.name}`);
     }
   },
   {
     connection: bullConnection,
     concurrency: 10,
-    prefix: BULL_PREFIX,
   }
 );
 
-jobsWorker.on("completed", (job, result) => {
-  console.log("[jobs.worker] completed job", {
-    id: String(job?.id ?? ""),
-    name: job?.name,
-    result,
-  });
-});
-
 jobsWorker.on("failed", (job, err) => {
   console.error("[jobs.worker] failed job", {
-    id: String(job?.id ?? ""),
+    id: job?.id,
     name: job?.name,
-    error: err?.message ?? String(err),
+    error: err.message,
   });
 });

@@ -4,7 +4,7 @@ import {
   marketplacePrices,
   matches,
 } from "@/lib/db/schema";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 function toNum(v: unknown): number | null {
@@ -19,6 +19,7 @@ export async function runProfitEngine(input?: {
 }) {
   const limit = Number(input?.limit ?? 50);
   const minRoiPct = Number(process.env.MIN_ROI_PCT || "15");
+  const minMatchConfidence = Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.50");
   const assumedFeePct = Number(process.env.MARKETPLACE_FEE_PCT || "12");
   const assumedOtherCost = Number(process.env.OTHER_COST_USD || "2");
 
@@ -29,12 +30,13 @@ export async function runProfitEngine(input?: {
       supplierProductId: matches.supplierProductId,
       marketplaceKey: matches.marketplaceKey,
       marketplaceListingId: matches.marketplaceListingId,
+      matchType: matches.matchType,
+      confidence: matches.confidence,
       supplierSnapshotId: productsRaw.id,
       marketPriceSnapshotId: marketplacePrices.id,
       supplierPriceMin: productsRaw.priceMin,
       marketPrice: marketplacePrices.price,
       shippingPrice: marketplacePrices.shippingPrice,
-      confidence: matches.confidence,
     })
     .from(matches)
     .innerJoin(
@@ -51,7 +53,12 @@ export async function runProfitEngine(input?: {
         eq(marketplacePrices.marketplaceListingId, matches.marketplaceListingId)
       )
     )
-    .where(eq(matches.status, "ACTIVE"))
+    .where(
+      and(
+        eq(matches.status, "ACTIVE"),
+        inArray(matches.matchType, ["strong_title_similarity", "title_similarity", "keyword_fuzzy"])
+      )
+    )
     .orderBy(desc(matches.lastSeenTs))
     .limit(limit);
 
@@ -59,6 +66,12 @@ export async function runProfitEngine(input?: {
   let skipped = 0;
 
   for (const row of rows) {
+    const matchConfidence = toNum(row.confidence) ?? 0;
+    if (matchConfidence < minMatchConfidence) {
+      skipped++;
+      continue;
+    }
+
     const supplierCost = toNum(row.supplierPriceMin);
     const marketPrice = toNum(row.marketPrice);
     const shipping = toNum(row.shippingPrice) ?? 0;
@@ -88,6 +101,8 @@ export async function runProfitEngine(input?: {
       feePct: assumedFeePct,
       feeUsd: estimatedFees,
       otherCostUsd: assumedOtherCost,
+      matchConfidence,
+      matchType: row.matchType,
     };
 
     await db.execute(sql`
@@ -109,7 +124,7 @@ export async function runProfitEngine(input?: {
         decision_status,
         reason
       ) VALUES (
-        ${row.supplierKey},
+        ${String(row.supplierKey || "").toLowerCase()},
         ${row.supplierProductId},
         ${row.marketplaceKey},
         ${row.marketplaceListingId},
@@ -124,7 +139,7 @@ export async function runProfitEngine(input?: {
         ${String(roiPct)},
         ARRAY[]::text[],
         'PENDING',
-        ${`roi ${roiPct}% >= minimum ${minRoiPct}%`}
+        ${`roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`}
       )
       ON CONFLICT (supplier_key, supplier_product_id, marketplace_key, marketplace_listing_id)
       DO UPDATE SET
@@ -151,5 +166,6 @@ export async function runProfitEngine(input?: {
     insertedOrUpdated,
     skipped,
     minRoiPct,
+    minMatchConfidence,
   };
 }
