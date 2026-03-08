@@ -29,6 +29,13 @@ const STOPWORDS = new Set([
   "ebay",
 ]);
 
+const MISMATCH_PHRASES = [
+  "pet hair",
+  "motorized brush",
+  "office",
+  "air pump",
+];
+
 function normalizeText(input: string): string {
   return (input || "")
     .toLowerCase()
@@ -44,6 +51,7 @@ function tokenize(input: string): string[] {
     .filter((x) => x.length > 1 && !STOPWORDS.has(x));
 }
 
+
 function jaccardSimilarity(a: string, b: string): number {
   const aa = new Set(tokenize(a));
   const bb = new Set(tokenize(b));
@@ -58,10 +66,126 @@ function jaccardSimilarity(a: string, b: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
+function overlapCount(a: string, b: string): number {
+  const aa = new Set(tokenize(a));
+  const bb = new Set(tokenize(b));
+
+  let intersection = 0;
+  for (const x of aa) {
+    if (bb.has(x)) intersection++;
+  }
+
+  return intersection;
+}
+
+function containsPhrase(text: string, phrase: string): boolean {
+  return normalizeText(text).includes(normalizeText(phrase));
+}
+
+function hasSemanticMismatch(supplierTitle: string, marketplaceTitle: string): string | null {
+  for (const phrase of MISMATCH_PHRASES) {
+    if (containsPhrase(marketplaceTitle, phrase) && !containsPhrase(supplierTitle, phrase)) {
+      return phrase;
+    }
+  }
+  return null;
+}
+
+function computeConfidence(
+  supplierTitle: string,
+  marketplaceTitle: string,
+  marketplaceScore?: string | null
+) {
+  const rescored = jaccardSimilarity(supplierTitle, marketplaceTitle);
+  const overlap = overlapCount(supplierTitle, marketplaceTitle);
+  const rawScore = marketplaceScore != null ? Number(marketplaceScore) : 0;
+
+  let confidence = (0.7 * rawScore) + (0.3 * rescored);
+
+  if (overlap >= 2) confidence += 0.05;
+  if (overlap >= 3) confidence += 0.05;
+
+  confidence = Math.max(0, Math.min(1, confidence));
+
+  return {
+    rawScore: Number(rawScore.toFixed(4)),
+    rescored: Number(rescored.toFixed(4)),
+    overlap,
+    confidence: Number(confidence.toFixed(4)),
+  };
+}
+
 function detectMatchType(score: number): string {
   if (score >= 0.75) return "strong_title_similarity";
   if (score >= 0.5) return "title_similarity";
   return "fallback_title_similarity";
+}
+
+type CandidateRow = {
+  productRawId: string;
+  supplierKey: string | null;
+  supplierProductId: string | null;
+  supplierTitle: string | null;
+  marketplaceKey: string | null;
+  marketplaceListingId: string | null;
+  matchedTitle: string | null;
+  finalMatchScore: string | null;
+};
+
+type RankedCandidate = CandidateRow & {
+  rawScore: number;
+  rescored: number;
+  overlap: number;
+  confidence: number;
+  mismatchPhrase: string | null;
+};
+
+function chooseBestCandidate(rows: CandidateRow[]): RankedCandidate | null {
+  const minConfidence = Number(process.env.MATCH_MIN_CONFIDENCE || "0.45");
+  const minMarketplaceScore = Number(process.env.MATCH_MIN_MARKETPLACE_SCORE || "0.42");
+  const minOverlap = Number(process.env.MATCH_MIN_OVERLAP || "2");
+
+  let best: RankedCandidate | null = null;
+
+  for (const row of rows) {
+    const supplierTitle = String(row.supplierTitle || "");
+    const matchedTitle = String(row.matchedTitle || "");
+
+    if (!supplierTitle || !matchedTitle || !row.marketplaceListingId || !row.marketplaceKey) {
+      continue;
+    }
+
+    const mismatchPhrase = hasSemanticMismatch(supplierTitle, matchedTitle);
+    const scored = computeConfidence(supplierTitle, matchedTitle, row.finalMatchScore);
+
+    if (mismatchPhrase) continue;
+    if (scored.rawScore < minMarketplaceScore) continue;
+    if (scored.overlap < minOverlap) continue;
+    if (scored.confidence < minConfidence) continue;
+
+    const candidate: RankedCandidate = {
+      ...row,
+      ...scored,
+      mismatchPhrase,
+    };
+
+    if (!best) {
+      best = candidate;
+      continue;
+    }
+
+    if (candidate.confidence > best.confidence) {
+      best = candidate;
+      continue;
+    }
+
+    if (candidate.confidence === best.confidence && candidate.rawScore > best.rawScore) {
+      best = candidate;
+      continue;
+    }
+  }
+
+  return best;
 }
 
 export async function runEbayMatches(input?: {
@@ -69,7 +193,6 @@ export async function runEbayMatches(input?: {
   productRawId?: string;
 }) {
   const limit = Number(input?.limit ?? 50);
-  const minConfidence = Number(process.env.MATCH_MIN_CONFIDENCE || "0.30");
 
   const rows = input?.productRawId
     ? await db
@@ -109,45 +232,92 @@ export async function runEbayMatches(input?: {
         .orderBy(desc(marketplacePrices.snapshotTs))
         .limit(limit);
 
+  const byProduct = new Map<string, CandidateRow[]>();
+  for (const row of rows) {
+    const key = String(row.productRawId);
+    const existing = byProduct.get(key) || [];
+    existing.push(row);
+    byProduct.set(key, existing);
+  }
+
+  let scanned = 0;
   let inserted = 0;
   let updated = 0;
-  let scanned = 0;
+  let skippedNoQualifiedCandidate = 0;
 
-  for (const row of rows) {
+  const minConfidence = Number(process.env.MATCH_MIN_CONFIDENCE || "0.45");
+  const minMarketplaceScore = Number(process.env.MATCH_MIN_MARKETPLACE_SCORE || "0.42");
+  const minOverlap = Number(process.env.MATCH_MIN_OVERLAP || "2");
+
+  for (const [, productRows] of byProduct) {
     scanned++;
 
-    const supplierTitle = String(row.supplierTitle || "");
-    const matchedTitle = String(row.matchedTitle || "");
-    const rescored = jaccardSimilarity(supplierTitle, matchedTitle);
+    const best = chooseBestCandidate(productRows);
+    const first = productRows[0];
 
-    const rawScore =
-      row.finalMatchScore != null ? Number(row.finalMatchScore) : rescored;
+    if (!best) {
+      if (first?.supplierKey && first?.supplierProductId) {
+        await db
+          .update(matches)
+          .set({
+            status: "INACTIVE",
+            lastSeenTs: new Date(),
+          })
+          .where(
+            and(
+              eq(matches.supplierKey, String(first.supplierKey)),
+              eq(matches.supplierProductId, String(first.supplierProductId)),
+              eq(matches.marketplaceKey, "ebay"),
+            )
+          );
+      }
 
-    const confidence = Math.max(rawScore, rescored);
-
-    if (confidence < minConfidence) {
+      skippedNoQualifiedCandidate++;
       continue;
     }
 
+    const supplierKey = String(best.supplierKey || "").toLowerCase();
+    const supplierProductId = String(best.supplierProductId || "");
+    const matchedTitle = String(best.matchedTitle || "");
+
     const evidence = {
-      supplierTitle,
+      supplierTitle: String(best.supplierTitle || ""),
       matchedTitle,
-      marketplaceKey: row.marketplaceKey,
-      marketplaceListingId: row.marketplaceListingId,
-      marketplacePriceScore: row.finalMatchScore != null ? Number(row.finalMatchScore) : null,
-      recomputedTitleSimilarity: Number(rescored.toFixed(4)),
-      acceptedConfidence: Number(confidence.toFixed(4)),
+      marketplaceKey: best.marketplaceKey,
+      marketplaceListingId: best.marketplaceListingId,
+      marketplacePriceScore: best.rawScore,
+      recomputedTitleSimilarity: best.rescored,
+      overlap: best.overlap,
+      acceptedConfidence: best.confidence,
+      minConfidence,
+      minMarketplaceScore,
+      minOverlap,
+      selectionMode: "best_per_supplier_product",
     };
+
+    await db
+      .update(matches)
+      .set({
+        status: "INACTIVE",
+        lastSeenTs: new Date(),
+      })
+      .where(
+        and(
+          eq(matches.supplierKey, supplierKey),
+          eq(matches.supplierProductId, supplierProductId),
+          eq(matches.marketplaceKey, "ebay"),
+        )
+      );
 
     const existing = await db
       .select({ id: matches.id })
       .from(matches)
       .where(
         and(
-          eq(matches.supplierKey, row.supplierKey),
-          eq(matches.supplierProductId, row.supplierProductId),
+          eq(matches.supplierKey, supplierKey),
+          eq(matches.supplierProductId, supplierProductId),
           eq(matches.marketplaceKey, "ebay"),
-          eq(matches.marketplaceListingId, row.marketplaceListingId),
+          eq(matches.marketplaceListingId, String(best.marketplaceListingId)),
         )
       )
       .limit(1);
@@ -156,8 +326,8 @@ export async function runEbayMatches(input?: {
       await db
         .update(matches)
         .set({
-          matchType: detectMatchType(confidence),
-          confidence: String(Number(confidence.toFixed(4))),
+          matchType: detectMatchType(best.confidence),
+          confidence: String(best.confidence),
           evidence,
           status: "ACTIVE",
           lastSeenTs: new Date(),
@@ -169,12 +339,12 @@ export async function runEbayMatches(input?: {
     }
 
     await db.insert(matches).values({
-      supplierKey: row.supplierKey,
-      supplierProductId: row.supplierProductId,
+      supplierKey,
+      supplierProductId,
       marketplaceKey: "ebay",
-      marketplaceListingId: row.marketplaceListingId,
-      matchType: detectMatchType(confidence),
-      confidence: String(Number(confidence.toFixed(4))),
+      marketplaceListingId: String(best.marketplaceListingId),
+      matchType: detectMatchType(best.confidence),
+      confidence: String(best.confidence),
       evidence,
       status: "ACTIVE",
       firstSeenTs: new Date(),
@@ -189,7 +359,10 @@ export async function runEbayMatches(input?: {
     scanned,
     inserted,
     updated,
+    skippedNoQualifiedCandidate,
     minConfidence,
+    minMarketplaceScore,
+    minOverlap,
   };
 }
 

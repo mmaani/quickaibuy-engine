@@ -27,6 +27,57 @@ const STOPWORDS = new Set([
   "ebay",
 ]);
 
+const PRIORITY_MODIFIERS = new Set([
+  "usb",
+  "mini",
+  "portable",
+  "rechargeable",
+  "wireless",
+  "cordless",
+  "handheld",
+  "travel",
+  "compact",
+]);
+
+const BASE_PRODUCT_NOUNS = new Set([
+  "vacuum",
+  "blender",
+  "cleaner",
+  "fan",
+  "lamp",
+  "bottle",
+]);
+
+const GENERIC_TITLE_PATTERNS = [
+  /\boffice\b/i,
+  /\bhome and car\b/i,
+  /\bcar and office\b/i,
+  /\btwo speeds?\b/i,
+  /\bhome\b/i,
+];
+
+const SUBTYPE_TOKENS = [
+  "pet",
+  "pet hair",
+  "motorized",
+  "brush",
+  "apex",
+  "air pump",
+  "blower",
+  "4 in 1",
+  "4-in-1",
+  "2 in 1",
+  "2-in-1",
+];
+
+const PREMIUM_HINTS = [
+  "apex",
+  "pro",
+  "max",
+  "ultra",
+  "premium",
+];
+
 export function normalizeText(input: string): string {
   return (input || "")
     .toLowerCase()
@@ -104,27 +155,57 @@ export function extractMainKeywordsFromRawPayload(rawPayload: unknown): string[]
   return dedupeKeepOrder(out);
 }
 
+function pickBaseNoun(tokens: string[]): string {
+  for (const token of tokens) {
+    if (BASE_PRODUCT_NOUNS.has(token)) return token;
+  }
+  return tokens[tokens.length - 1] || "";
+}
+
+function buildCoreTokenSet(titleTokens: string[], keywordTokens: string[]): string[] {
+  return dedupeKeepOrder([...titleTokens, ...keywordTokens]).slice(0, 8);
+}
+
+function makeQuery(tokens: string[]): string {
+  return dedupeKeepOrder(tokens).filter(Boolean).join(" ").trim();
+}
+
+function orderedPriorityModifiers(tokens: string[], baseNoun: string): string[] {
+  return tokens.filter((t) => t !== baseNoun && PRIORITY_MODIFIERS.has(t));
+}
+
+function orderedRegularTokens(tokens: string[], baseNoun: string): string[] {
+  return tokens.filter((t) => t !== baseNoun && !PRIORITY_MODIFIERS.has(t));
+}
+
 export function buildSearchQueries(input: {
   title: string;
   mainKeywords?: string[];
 }): string[] {
   const titleTokens = tokenize(input.title);
-  const coreTitle = titleTokens.slice(0, 8).join(" ").trim();
-
   const keywordTokens = dedupeKeepOrder(
     (input.mainKeywords || []).flatMap((x) => tokenize(x))
   ).slice(0, 8);
 
-  const keywordQuery = keywordTokens.join(" ").trim();
+  const coreTokens = buildCoreTokenSet(titleTokens, keywordTokens);
+  const baseNoun = pickBaseNoun(coreTokens);
 
-  return dedupeKeepOrder(
-    [
-      coreTitle,
-      keywordQuery,
-      titleTokens.slice(0, 5).join(" "),
-      `${coreTitle} ${keywordQuery}`.trim(),
-    ].filter(Boolean)
-  ).slice(0, 4);
+  const priorityModifiers = orderedPriorityModifiers(coreTokens, baseNoun);
+  const regularTokens = orderedRegularTokens(coreTokens, baseNoun);
+
+  const naturalTitleQuery = makeQuery(titleTokens.slice(0, 5));
+  const nounLeadingQuery = makeQuery([baseNoun, ...priorityModifiers.slice(0, 2), ...regularTokens.slice(0, 1)]);
+  const naturalCoreQuery = makeQuery(coreTokens.slice(0, 4));
+  const modifierLeadingQuery = makeQuery([...priorityModifiers.slice(0, 2), baseNoun, ...regularTokens.slice(0, 1)]);
+
+  const queries = dedupeKeepOrder([
+    naturalTitleQuery,
+    naturalCoreQuery,
+    nounLeadingQuery,
+    modifierLeadingQuery,
+  ]).filter(Boolean);
+
+  return queries.slice(0, 4);
 }
 
 export function jaccardSimilarity(a: string, b: string): number {
@@ -154,6 +235,78 @@ export function keywordOverlap(productTerms: string[], candidateTitle: string): 
   return overlap / pp.size;
 }
 
+function exactPhraseBonus(productTitle: string, candidateTitle: string): number {
+  const productNorm = normalizeText(productTitle);
+  const candidateNorm = normalizeText(candidateTitle);
+
+  if (!productNorm || !candidateNorm) return 0;
+
+  if (candidateNorm.includes(productNorm)) return 0.08;
+
+  const productTokens = tokenize(productTitle);
+  const compactPhrase = productTokens.slice(0, 3).join(" ");
+  if (compactPhrase && candidateNorm.includes(compactPhrase)) return 0.04;
+
+  return 0;
+}
+
+function genericTitlePenalty(candidateTitle: string): number {
+  let penalty = 0;
+  for (const pattern of GENERIC_TITLE_PATTERNS) {
+    if (pattern.test(candidateTitle)) penalty += 0.04;
+  }
+  return penalty;
+}
+
+function hasTokenOrPhrase(text: string, token: string): boolean {
+  return normalizeText(text).includes(normalizeText(token));
+}
+
+function subtypeMismatchPenalty(productTitle: string, candidateTitle: string): number {
+  const productNorm = normalizeText(productTitle);
+  const candidateNorm = normalizeText(candidateTitle);
+
+  let penalty = 0;
+
+  for (const token of SUBTYPE_TOKENS) {
+    const inProduct = hasTokenOrPhrase(productNorm, token);
+    const inCandidate = hasTokenOrPhrase(candidateNorm, token);
+    if (!inProduct && inCandidate) {
+      penalty += 0.035;
+    }
+  }
+
+  return penalty;
+}
+
+function premiumHintPenalty(productTitle: string, candidateTitle: string): number {
+  const productNorm = normalizeText(productTitle);
+  const candidateNorm = normalizeText(candidateTitle);
+
+  let penalty = 0;
+
+  for (const token of PREMIUM_HINTS) {
+    const inProduct = hasTokenOrPhrase(productNorm, token);
+    const inCandidate = hasTokenOrPhrase(candidateNorm, token);
+    if (!inProduct && inCandidate) {
+      penalty += 0.025;
+    }
+  }
+
+  return penalty;
+}
+
+export function computePricePreferenceScore(price: number | null | undefined): number {
+  if (price == null || !Number.isFinite(price) || price <= 0) return 0;
+
+  if (price <= 15) return 0.03;
+  if (price <= 25) return 0.02;
+  if (price <= 40) return 0.01;
+  if (price <= 60) return 0;
+  if (price <= 90) return -0.01;
+  return -0.02;
+}
+
 export function scoreCandidate(
   product: {
     title: string;
@@ -167,7 +320,20 @@ export function scoreCandidate(
     candidate.matchedTitle
   );
 
-  const finalMatchScore = (0.8 * titleSimilarityScore) + (0.2 * keywordScore);
+  const bonus = exactPhraseBonus(product.title, candidate.matchedTitle);
+  const genericPenalty = genericTitlePenalty(candidate.matchedTitle);
+  const subtypePenalty = subtypeMismatchPenalty(product.title, candidate.matchedTitle);
+  const premiumPenalty = premiumHintPenalty(product.title, candidate.matchedTitle);
+
+  const rawScore =
+    (0.78 * titleSimilarityScore) +
+    (0.22 * keywordScore) +
+    bonus -
+    genericPenalty -
+    subtypePenalty -
+    premiumPenalty;
+
+  const finalMatchScore = Math.max(0, Math.min(1, rawScore));
 
   return {
     ...candidate,

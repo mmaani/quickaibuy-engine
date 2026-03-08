@@ -1,9 +1,9 @@
 import { db } from "@/lib/db";
 import { marketplacePrices } from "@/lib/db/schema";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 export type InsertMarketplacePriceSnapshotInput = {
-  marketplaceKey: "ebay" | "amazon";
+  marketplaceKey: "amazon" | "ebay";
   marketplaceListingId: string;
   productRawId?: string | null;
   supplierKey?: string | null;
@@ -30,7 +30,7 @@ export type InsertMarketplacePriceSnapshotInput = {
 export async function insertMarketplacePriceSnapshot(
   input: InsertMarketplacePriceSnapshotInput
 ) {
-  const values = {
+  await db.insert(marketplacePrices).values({
     marketplaceKey: input.marketplaceKey,
     marketplaceListingId: input.marketplaceListingId,
     productRawId: input.productRawId ?? null,
@@ -56,39 +56,7 @@ export async function insertMarketplacePriceSnapshot(
       input.finalMatchScore != null ? String(input.finalMatchScore) : null,
     rawPayload: input.rawPayload,
     snapshotTs: input.snapshotTs ?? new Date(),
-  };
-
-  await db
-    .insert(marketplacePrices)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [
-        marketplacePrices.marketplaceKey,
-        marketplacePrices.marketplaceListingId,
-        marketplacePrices.productRawId,
-      ],
-      set: {
-        supplierKey: values.supplierKey,
-        supplierProductId: values.supplierProductId,
-        trendMode: values.trendMode,
-        searchQuery: values.searchQuery,
-        matchedTitle: values.matchedTitle,
-        productPageUrl: values.productPageUrl,
-        imageUrl: sql`coalesce(excluded.image_url, ${marketplacePrices.imageUrl})`,
-        currency: values.currency,
-        price: values.price,
-        shippingPrice: values.shippingPrice,
-        isPrime: values.isPrime,
-        availabilityStatus: values.availabilityStatus,
-        sellerId: values.sellerId,
-        sellerName: values.sellerName,
-        titleSimilarityScore: values.titleSimilarityScore,
-        keywordScore: values.keywordScore,
-        finalMatchScore: values.finalMatchScore,
-        rawPayload: values.rawPayload,
-        snapshotTs: values.snapshotTs,
-      },
-    });
+  });
 }
 
 export async function getRecentMarketplacePrices(limit = 20) {

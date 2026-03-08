@@ -3,11 +3,14 @@ dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 async function main() {
-  const { matchSupplierProductsToMarketplaceListings } =
-    await import("@/lib/matching/productMatcher");
+  const limitArg = Number(process.argv[2] || "20");
+  const productRawIdArg = process.argv[3] || undefined;
 
-  const result = await matchSupplierProductsToMarketplaceListings({
-    limit: 20,
+  const { runEbayMatches } = await import("@/lib/matches/ebayMatchEngine");
+
+  const result = await runEbayMatches({
+    limit: limitArg,
+    productRawId: productRawIdArg,
   });
 
   console.log(JSON.stringify(result, null, 2));

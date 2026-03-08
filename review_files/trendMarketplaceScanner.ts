@@ -4,7 +4,6 @@ import { searchEbay, type MarketplaceCandidate } from "./ebay";
 import { searchAmazon } from "./amazon";
 import {
   buildSearchQueries,
-  computePricePreferenceScore,
   extractMainKeywordsFromRawPayload,
   scoreCandidate,
 } from "./match";
@@ -21,24 +20,6 @@ type ProductRawLite = {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms}ms`));
-    }, ms);
-
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-  });
 }
 
 function extractSupplierPrice(product: ProductRawLite): number | null {
@@ -93,25 +74,6 @@ function passesPriceSanity(product: ProductRawLite, match: MarketplaceCandidate)
   return true;
 }
 
-function compareCandidates(a: MarketplaceCandidate, b: MarketplaceCandidate): number {
-  const aScore = a.finalMatchScore || 0;
-  const bScore = b.finalMatchScore || 0;
-
-  if (aScore !== bScore) return aScore - bScore;
-
-  const aPricePref = computePricePreferenceScore(a.price);
-  const bPricePref = computePricePreferenceScore(b.price);
-
-  if (aPricePref !== bPricePref) return aPricePref - bPricePref;
-
-  const aPrice = a.price ?? Number.POSITIVE_INFINITY;
-  const bPrice = b.price ?? Number.POSITIVE_INFINITY;
-
-  if (aPrice !== bPrice) return bPrice - aPrice;
-
-  return 0;
-}
-
 async function searchPlatform(
   platform: "amazon" | "ebay",
   query: string,
@@ -121,64 +83,12 @@ async function searchPlatform(
   return searchAmazon();
 }
 
-async function searchPlatformWithRetry(
-  platform: "amazon" | "ebay",
-  query: string,
-  limit: number
-): Promise<MarketplaceCandidate[]> {
-  const timeoutMs = Number(process.env.MARKETPLACE_QUERY_TIMEOUT_MS || "12000");
-  const maxRetries = Number(process.env.MARKETPLACE_QUERY_RETRIES || "2");
-  const baseBackoffMs = Number(process.env.MARKETPLACE_QUERY_BACKOFF_MS || "800");
-
-  let attempt = 0;
-  let lastError: unknown = null;
-
-  while (attempt <= maxRetries) {
-    try {
-      return await withTimeout(
-        searchPlatform(platform, query, limit),
-        timeoutMs,
-        `[${platform}] query "${query}"`
-      );
-    } catch (error) {
-      lastError = error;
-      console.log("[marketplace-scan] query-error", {
-        platform,
-        query,
-        attempt: attempt + 1,
-        maxRetries: maxRetries + 1,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      if (attempt >= maxRetries) break;
-
-      const waitMs = baseBackoffMs * Math.pow(2, attempt);
-      await sleep(waitMs);
-      attempt++;
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-
 export async function scanOneProductTrendMode(
   product: ProductRawLite,
   requestedPlatform: "amazon" | "ebay" | "all" = "all"
-): Promise<{
-  matches: MarketplaceCandidate[];
-  acceptedCount: number;
-  rejectedLowScoreCount: number;
-  queryErrorCount: number;
-}> {
+): Promise<MarketplaceCandidate[]> {
   const title = String(product.title || "").trim();
-  if (!title) {
-    return {
-      matches: [],
-      acceptedCount: 0,
-      rejectedLowScoreCount: 0,
-      queryErrorCount: 0,
-    };
-  }
+  if (!title) return [];
 
   const mainKeywords = extractMainKeywordsFromRawPayload(product.rawPayload);
   const queries = buildSearchQueries({ title, mainKeywords });
@@ -202,30 +112,9 @@ export async function scanOneProductTrendMode(
   const allowFallback =
     String(process.env.MARKETPLACE_ALLOW_TOP_RESULT_FALLBACK || "true") === "true";
 
-  let acceptedCount = 0;
-  let rejectedLowScoreCount = 0;
-  let queryErrorCount = 0;
-
   for (const query of queries) {
     for (const platform of platforms) {
-      let candidates: MarketplaceCandidate[] = [];
-
-      try {
-        candidates = await searchPlatformWithRetry(platform, query, perQueryLimit);
-      } catch (error) {
-        queryErrorCount++;
-        console.log("[marketplace-scan] query-failed", {
-          productRawId: product.id,
-          platform,
-          query,
-          error: error instanceof Error ? error.message : String(error),
-        });
-
-        if (delayMs > 0) {
-          await sleep(delayMs);
-        }
-        continue;
-      }
+      const candidates = await searchPlatform(platform, query, perQueryLimit);
 
       console.log("[marketplace-scan] candidates", {
         productRawId: product.id,
@@ -249,19 +138,14 @@ export async function scanOneProductTrendMode(
         });
 
         const prevSeen = bestSeenByPlatform.get(platform);
-        if (!prevSeen || compareCandidates(prevSeen, scored) < 0) {
+        if (!prevSeen || (scored.finalMatchScore || 0) > (prevSeen.finalMatchScore || 0)) {
           bestSeenByPlatform.set(platform, scored);
         }
 
-        if ((scored.finalMatchScore || 0) < minScore) {
-          rejectedLowScoreCount++;
-          continue;
-        }
-
-        acceptedCount++;
+        if ((scored.finalMatchScore || 0) < minScore) continue;
 
         const prev = bestByPlatform.get(platform);
-        if (!prev || compareCandidates(prev, scored) < 0) {
+        if (!prev || (scored.finalMatchScore || 0) > (prev.finalMatchScore || 0)) {
           bestByPlatform.set(platform, scored);
         }
       }
@@ -287,12 +171,7 @@ export async function scanOneProductTrendMode(
     }
   }
 
-  return {
-    matches: Array.from(bestByPlatform.values()),
-    acceptedCount,
-    rejectedLowScoreCount,
-    queryErrorCount,
-  };
+  return Array.from(bestByPlatform.values());
 }
 
 export async function runTrendMarketplaceScanner(input?: {
@@ -312,13 +191,8 @@ export async function runTrendMarketplaceScanner(input?: {
 
   const resolvedProducts = await products;
 
-  let upserted = 0;
+  let inserted = 0;
   let scanned = 0;
-  let acceptedCandidates = 0;
-  let rejectedLowScore = 0;
-  let queryErrors = 0;
-  let skippedMissingRequiredFields = 0;
-  let skippedPriceOutlier = 0;
 
   console.log("[marketplace-scan] batch-start", {
     requestedLimit: limit,
@@ -330,12 +204,7 @@ export async function runTrendMarketplaceScanner(input?: {
   for (const product of resolvedProducts) {
     scanned++;
 
-    const scanResult = await scanOneProductTrendMode(product, platform);
-    const matches = scanResult.matches;
-
-    acceptedCandidates += scanResult.acceptedCount;
-    rejectedLowScore += scanResult.rejectedLowScoreCount;
-    queryErrors += scanResult.queryErrorCount;
+    const matches = await scanOneProductTrendMode(product, platform);
 
     console.log("[marketplace-scan] product-matches", {
       productRawId: product.id,
@@ -344,7 +213,6 @@ export async function runTrendMarketplaceScanner(input?: {
 
     for (const match of matches) {
       if (!match.marketplaceListingId || !match.matchedTitle || match.price == null || !match.currency) {
-        skippedMissingRequiredFields++;
         console.log("[marketplace-scan] skipped-insert", {
           reason: "missing-required-fields",
           productRawId: product.id,
@@ -357,7 +225,6 @@ export async function runTrendMarketplaceScanner(input?: {
       }
 
       if (!passesPriceSanity(product, match)) {
-        skippedPriceOutlier++;
         continue;
       }
 
@@ -385,9 +252,9 @@ export async function runTrendMarketplaceScanner(input?: {
         rawPayload: match.rawPayload,
       });
 
-      upserted++;
+      inserted++;
 
-      console.log("[marketplace-scan] upserted", {
+      console.log("[marketplace-scan] inserted", {
         productRawId: product.id,
         platform: match.marketplaceKey,
         listingId: match.marketplaceListingId,
@@ -400,12 +267,7 @@ export async function runTrendMarketplaceScanner(input?: {
   const result = {
     ok: true,
     scanned,
-    upserted,
-    acceptedCandidates,
-    rejectedLowScore,
-    skippedMissingRequiredFields,
-    skippedPriceOutlier,
-    queryErrors,
+    inserted,
     platform,
     productRawId: input?.productRawId ?? null,
   };
