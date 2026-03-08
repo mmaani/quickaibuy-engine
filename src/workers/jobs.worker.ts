@@ -10,6 +10,7 @@ import { handleMatchProductsJob } from "../lib/jobs/matchProducts";
 import { runProfitEngine } from "../lib/profit/profitEngine";
 
 const jobsQueue = new Queue("jobs", { connection: bullConnection });
+console.log("[jobs.worker] booted and waiting for jobs");
 
 export const jobsWorker = new Worker(
   "jobs",
