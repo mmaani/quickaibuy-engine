@@ -122,19 +122,10 @@ export async function runProfitEngine(input?: {
 
   let insertedOrUpdated = 0;
   let skipped = 0;
-  let staleDeleted = 0;
+
+  const acceptedRows: ProfitRow[] = [];
 
   for (const row of rows) {
-    const normalizedSupplierKey = String(row.supplierKey || "").toLowerCase();
-    const supplierProductId = row.supplierProductId;
-    const marketplaceKey = row.marketplaceKey;
-    const marketplaceListingId = row.marketplaceListingId;
-
-    if (!normalizedSupplierKey || !supplierProductId || !marketplaceKey || !marketplaceListingId) {
-      skipped++;
-      continue;
-    }
-
     const matchConfidence = toNum(row.confidence) ?? 0;
     if (matchConfidence < minMatchConfidence) {
       skipped++;
@@ -156,8 +147,6 @@ export async function runProfitEngine(input?: {
     const estimatedProfit = Number(
       (marketPrice - estimatedFees - estimatedShipping - estimatedCogs).toFixed(2)
     );
-    const marginPct =
-      marketPrice > 0 ? Number(((estimatedProfit / marketPrice) * 100).toFixed(2)) : 0;
     const roiPct =
       estimatedCogs > 0 ? Number(((estimatedProfit / estimatedCogs) * 100).toFixed(2)) : 0;
 
@@ -166,26 +155,75 @@ export async function runProfitEngine(input?: {
       continue;
     }
 
+    acceptedRows.push(row);
+  }
+
+  let staleDeleted = 0;
+
+  if (acceptedRows.length > 0) {
+    const acceptedPairs = acceptedRows.map((row) => sql`
+      (
+        ${String(row.supplierKey || "").toLowerCase()},
+        ${row.supplierProductId},
+        ${row.marketplaceKey},
+        ${row.marketplaceListingId}
+      )
+    `);
+
     const staleCountResult = await db.execute<{ count: number }>(sql`
       SELECT COUNT(*)::int AS count
-      FROM profitable_candidates
+      FROM profitable_candidates pc
       WHERE
-        supplier_key = ${normalizedSupplierKey}
-        AND supplier_product_id = ${supplierProductId}
-        AND marketplace_key = ${marketplaceKey}
-        AND marketplace_listing_id <> ${marketplaceListingId}
+        ${supplierKeyFilter ? sql`LOWER(pc.supplier_key) = ${supplierKeyFilter} AND` : sql``}
+        (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
+        NOT IN (${sql.join(acceptedPairs, sql`, `)})
     `);
 
-    staleDeleted += Number(staleCountResult.rows?.[0]?.count ?? 0);
+    staleDeleted = Number(staleCountResult.rows?.[0]?.count ?? 0);
 
     await db.execute(sql`
-      DELETE FROM profitable_candidates
+      DELETE FROM profitable_candidates pc
       WHERE
-        supplier_key = ${normalizedSupplierKey}
-        AND supplier_product_id = ${supplierProductId}
-        AND marketplace_key = ${marketplaceKey}
-        AND marketplace_listing_id <> ${marketplaceListingId}
+        ${supplierKeyFilter ? sql`LOWER(pc.supplier_key) = ${supplierKeyFilter} AND` : sql``}
+        (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
+        NOT IN (${sql.join(acceptedPairs, sql`, `)})
     `);
+  } else if (supplierKeyFilter) {
+    const staleCountResult = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count
+      FROM profitable_candidates pc
+      WHERE LOWER(pc.supplier_key) = ${supplierKeyFilter}
+    `);
+
+    staleDeleted = Number(staleCountResult.rows?.[0]?.count ?? 0);
+
+    await db.execute(sql`
+      DELETE FROM profitable_candidates pc
+      WHERE LOWER(pc.supplier_key) = ${supplierKeyFilter}
+    `);
+  }
+
+  for (const row of acceptedRows) {
+    const normalizedSupplierKey = String(row.supplierKey || "").toLowerCase();
+    const supplierProductId = row.supplierProductId;
+    const marketplaceKey = row.marketplaceKey;
+    const marketplaceListingId = row.marketplaceListingId;
+
+    const matchConfidence = toNum(row.confidence) ?? 0;
+    const supplierCost = toNum(row.supplierPriceMin) ?? 0;
+    const marketPrice = toNum(row.marketPrice) ?? 0;
+    const shipping = toNum(row.shippingPrice) ?? 0;
+
+    const estimatedFees = Number(((marketPrice * assumedFeePct) / 100).toFixed(2));
+    const estimatedShipping = Number(shipping.toFixed(2));
+    const estimatedCogs = Number((supplierCost + assumedOtherCost).toFixed(2));
+    const estimatedProfit = Number(
+      (marketPrice - estimatedFees - estimatedShipping - estimatedCogs).toFixed(2)
+    );
+    const marginPct =
+      marketPrice > 0 ? Number(((estimatedProfit / marketPrice) * 100).toFixed(2)) : 0;
+    const roiPct =
+      estimatedCogs > 0 ? Number(((estimatedProfit / estimatedCogs) * 100).toFixed(2)) : 0;
 
     const estimatedFeesJson = {
       feePct: assumedFeePct,

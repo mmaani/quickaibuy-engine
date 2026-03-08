@@ -15,31 +15,21 @@ async function main() {
   await client.connect();
 
   const { rows } = await client.query(`
-    WITH ranked AS (
-      SELECT
-        pc.*,
-        ROW_NUMBER() OVER (
-          PARTITION BY pc.supplier_key, pc.supplier_product_id, pc.marketplace_key
-          ORDER BY pc.calc_ts DESC, pc.id DESC
-        ) AS rn
-      FROM profitable_candidates pc
-    )
     SELECT
       id,
-      supplier_key,
-      supplier_product_id,
+      candidate_id,
       marketplace_key,
-      marketplace_listing_id,
-      estimated_profit,
-      margin_pct,
-      roi_pct,
-      decision_status,
-      reason,
-      calc_ts
-    FROM ranked
-    WHERE rn = 1
-    ORDER BY calc_ts DESC
-    LIMIT 50
+      external_listing_id,
+      title,
+      price,
+      quantity,
+      status,
+      idempotency_key,
+      created_at,
+      updated_at
+    FROM listings
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 20
   `);
 
   console.log(JSON.stringify(rows, null, 2));

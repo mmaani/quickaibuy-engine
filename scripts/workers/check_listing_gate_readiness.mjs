@@ -15,34 +15,28 @@ async function main() {
   await client.connect();
 
   const { rows } = await client.query(`
-    WITH ranked AS (
-      SELECT
-        pc.*,
-        ROW_NUMBER() OVER (
-          PARTITION BY pc.supplier_key, pc.supplier_product_id, pc.marketplace_key
-          ORDER BY pc.calc_ts DESC, pc.id DESC
-        ) AS rn
-      FROM profitable_candidates pc
-    )
     SELECT
-      id,
       supplier_key,
       supplier_product_id,
       marketplace_key,
       marketplace_listing_id,
+      decision_status,
       estimated_profit,
       margin_pct,
       roi_pct,
-      decision_status,
-      reason,
       calc_ts
-    FROM ranked
-    WHERE rn = 1
+    FROM profitable_candidates
     ORDER BY calc_ts DESC
-    LIMIT 50
   `);
 
-  console.log(JSON.stringify(rows, null, 2));
+  const summary = {
+    total: rows.length,
+    pending: rows.filter((r) => r.decision_status === "PENDING").length,
+    approved: rows.filter((r) => r.decision_status === "APPROVED").length,
+    rejected: rows.filter((r) => r.decision_status === "REJECTED").length,
+  };
+
+  console.log(JSON.stringify({ summary, rows }, null, 2));
   await client.end();
 }
 

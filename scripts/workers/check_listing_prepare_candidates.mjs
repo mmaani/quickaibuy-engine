@@ -15,17 +15,7 @@ async function main() {
   await client.connect();
 
   const { rows } = await client.query(`
-    WITH ranked AS (
-      SELECT
-        pc.*,
-        ROW_NUMBER() OVER (
-          PARTITION BY pc.supplier_key, pc.supplier_product_id, pc.marketplace_key
-          ORDER BY pc.calc_ts DESC, pc.id DESC
-        ) AS rn
-      FROM profitable_candidates pc
-    )
     SELECT
-      id,
       supplier_key,
       supplier_product_id,
       marketplace_key,
@@ -34,12 +24,10 @@ async function main() {
       margin_pct,
       roi_pct,
       decision_status,
-      reason,
       calc_ts
-    FROM ranked
-    WHERE rn = 1
+    FROM profitable_candidates
+    WHERE decision_status = 'APPROVED'
     ORDER BY calc_ts DESC
-    LIMIT 50
   `);
 
   console.log(JSON.stringify(rows, null, 2));
