@@ -78,8 +78,15 @@ type CandidateRow = {
   marketplace_title: string | null;
   listing_id: string | null;
   listing_status: string | null;
+  listing_marketplace_key?: string | null;
   listing_title: string | null;
   listing_price: string | number | null;
+  listing_quantity?: string | number | null;
+  listing_idempotency_key?: string | null;
+  listing_payload?: unknown;
+  listing_response?: unknown;
+  listing_created_at?: string | Date | null;
+  listing_updated_at?: string | Date | null;
   match_confidence: string | number | null;
   duplicate_count: string | number | null;
 };
@@ -146,6 +153,13 @@ export type CandidateDetail = {
     estimatedFees: unknown;
     supplierSnapshotId: string;
     marketPriceSnapshotId: string;
+    listingMarketplaceKey: string | null;
+    listingQuantity: number | null;
+    listingIdempotencyKey: string | null;
+    listingPayload: Record<string, unknown> | null;
+    listingResponse: Record<string, unknown> | null;
+    listingCreatedAt: string | null;
+    listingUpdatedAt: string | null;
   };
   supplierSnapshot: SupplierSnapshot | null;
   marketplaceSnapshot: MarketplaceSnapshot | null;
@@ -620,23 +634,48 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
     ? `
         l.id AS listing_id,
         l.status AS listing_status,
+        l.marketplace_key AS listing_marketplace_key,
         l.title AS listing_title,
         l.price AS listing_price,
+        l.quantity AS listing_quantity,
+        l.idempotency_key AS listing_idempotency_key,
+        l.payload AS listing_payload,
+        l.response AS listing_response,
+        l.created_at AS listing_created_at,
+        l.updated_at AS listing_updated_at,
       `
     : `
         NULL::uuid AS listing_id,
         NULL::text AS listing_status,
+        NULL::text AS listing_marketplace_key,
         NULL::text AS listing_title,
         NULL::numeric AS listing_price,
+        NULL::int AS listing_quantity,
+        NULL::text AS listing_idempotency_key,
+        NULL::jsonb AS listing_payload,
+        NULL::jsonb AS listing_response,
+        NULL::timestamp AS listing_created_at,
+        NULL::timestamp AS listing_updated_at,
       `;
   const listingJoinClause = listingsAvailable
     ? `
       LEFT JOIN LATERAL (
-        SELECT id, status, title, price
+        SELECT
+          id,
+          status,
+          marketplace_key,
+          title,
+          price,
+          quantity,
+          idempotency_key,
+          payload,
+          response,
+          created_at,
+          updated_at
         FROM listings
         WHERE candidate_id = pc.id
           AND marketplace_key = pc.marketplace_key
-        ORDER BY created_at DESC NULLS LAST, id DESC
+        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
         LIMIT 1
       ) l ON true
     `
@@ -764,6 +803,13 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
       estimatedFees: candidateRow.estimated_fees,
       supplierSnapshotId: candidateRow.supplier_snapshot_id,
       marketPriceSnapshotId: candidateRow.market_price_snapshot_id,
+      listingMarketplaceKey: candidateRow.listing_marketplace_key ?? null,
+      listingQuantity: toNumber(candidateRow.listing_quantity),
+      listingIdempotencyKey: candidateRow.listing_idempotency_key ?? null,
+      listingPayload: asObject(candidateRow.listing_payload),
+      listingResponse: asObject(candidateRow.listing_response),
+      listingCreatedAt: toIsoString(candidateRow.listing_created_at),
+      listingUpdatedAt: toIsoString(candidateRow.listing_updated_at),
     },
     supplierSnapshot: mapSupplierSnapshot(supplierResult.rows[0] as QueryResultRow | undefined),
     marketplaceSnapshot: mapMarketplaceSnapshot(marketplaceResult.rows[0] as QueryResultRow | undefined),

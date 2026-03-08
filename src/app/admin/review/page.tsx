@@ -66,6 +66,125 @@ function serializeDetails(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function getNestedValue(
+  obj: Record<string, unknown> | null,
+  path: readonly string[]
+): string | number | boolean | null {
+  if (!obj) return null;
+  let current: unknown = obj;
+  for (const key of path) {
+    const record = asObject(current);
+    if (!record || !(key in record)) return null;
+    current = record[key];
+  }
+  if (typeof current === "string" || typeof current === "number" || typeof current === "boolean") {
+    return current;
+  }
+  return null;
+}
+
+function shortJson(value: unknown, maxLength = 420): string {
+  try {
+    const text = JSON.stringify(value, null, 2);
+    if (!text) return "-";
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+  } catch {
+    return "-";
+  }
+}
+
+function renderListingPayloadSummary(payload: unknown): React.ReactNode {
+  const root = asObject(payload);
+  if (!root) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">
+        No payload summary available.
+      </div>
+    );
+  }
+
+  const summaryFields: Array<{ label: string; value: React.ReactNode }> = [];
+  const dryRun = getNestedValue(root, ["dryRun"]);
+  const marketplace = getNestedValue(root, ["marketplace"]);
+  const listingType = getNestedValue(root, ["listingType"]);
+  const condition = getNestedValue(root, ["condition"]);
+  const supplierTitle = getNestedValue(root, ["source", "supplierTitle"]);
+  const supplierSourceUrl = getNestedValue(root, ["source", "supplierSourceUrl"]);
+  const matchedMarketplaceListingId = getNestedValue(root, ["matchedMarketplace", "marketplaceListingId"]);
+
+  if (dryRun != null) summaryFields.push({ label: "Dry Run", value: String(dryRun) });
+  if (marketplace != null) summaryFields.push({ label: "Marketplace", value: String(marketplace) });
+  if (listingType != null) summaryFields.push({ label: "Listing Type", value: String(listingType) });
+  if (condition != null) summaryFields.push({ label: "Condition", value: String(condition) });
+  if (supplierTitle != null) summaryFields.push({ label: "Supplier Title", value: String(supplierTitle) });
+  if (supplierSourceUrl != null) {
+    const url = String(supplierSourceUrl);
+    summaryFields.push({
+      label: "Supplier Source",
+      value: (
+        <a href={url} className="text-cyan-100 underline" target="_blank" rel="noreferrer">
+          {url}
+        </a>
+      ),
+    });
+  }
+  if (matchedMarketplaceListingId != null) {
+    summaryFields.push({
+      label: "Matched Listing ID",
+      value: String(matchedMarketplaceListingId),
+    });
+  }
+
+  if (!summaryFields.length) {
+    return (
+      <pre className="overflow-x-auto rounded-2xl border border-white/10 bg-[#0a1020] p-3 text-xs text-white/75">
+        {shortJson(root)}
+      </pre>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {summaryFields.map((field) => (
+        <KeyValue key={field.label} label={field.label} value={field.value} />
+      ))}
+    </div>
+  );
+}
+
+function renderListingResponseSummary(response: unknown): React.ReactNode {
+  const root = asObject(response);
+  if (!root) return null;
+
+  const previewVersion = getNestedValue(root, ["previewVersion"]);
+  const liveApiCalled = getNestedValue(root, ["liveApiCalled"]);
+  const titleLength = getNestedValue(root, ["titleLength"]);
+
+  const fields = [
+    previewVersion != null ? { label: "Preview Version", value: String(previewVersion) } : null,
+    liveApiCalled != null ? { label: "Live API Called", value: String(liveApiCalled) } : null,
+    titleLength != null ? { label: "Title Length", value: String(titleLength) } : null,
+  ].filter(Boolean) as Array<{ label: string; value: string }>;
+
+  if (!fields.length) return null;
+
+  return (
+    <div className="mt-4">
+      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Preview Metadata</div>
+      <div className="grid gap-3 md:grid-cols-3">
+        {fields.map((field) => (
+          <KeyValue key={field.label} label={field.label} value={field.value} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function buildReviewHref(filters: ReviewFilters, candidateId: string): string {
   const params = new URLSearchParams();
 
@@ -468,6 +587,32 @@ export default async function ReviewPage({
                 </DetailBlock>
 
                 <ReviewActions candidate={detail.candidate} />
+
+                <DetailBlock title="Listing Preview">
+                  {detail.candidate.listingId ? (
+                    <>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <KeyValue label="Listing Status" value={formatListingStatus(detail.candidate.listingStatus)} />
+                        <KeyValue label="Marketplace" value={detail.candidate.listingMarketplaceKey ?? "-"} />
+                        <KeyValue label="Title" value={detail.candidate.listingTitle ?? "-"} />
+                        <KeyValue label="Price" value={formatMoney(detail.candidate.listingPrice)} />
+                        <KeyValue label="Quantity" value={detail.candidate.listingQuantity ?? "-"} />
+                        <KeyValue label="Idempotency Key" value={detail.candidate.listingIdempotencyKey ?? "-"} />
+                        <KeyValue label="Created At" value={formatDateTime(detail.candidate.listingCreatedAt)} />
+                        <KeyValue label="Updated At" value={formatDateTime(detail.candidate.listingUpdatedAt)} />
+                      </div>
+                      <div className="mt-4">
+                        <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Payload Summary</div>
+                        {renderListingPayloadSummary(detail.candidate.listingPayload)}
+                      </div>
+                      {renderListingResponseSummary(detail.candidate.listingResponse)}
+                    </>
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">
+                      No listing preview has been prepared for this candidate yet.
+                    </div>
+                  )}
+                </DetailBlock>
 
                 <DetailBlock title="Listing Readiness">
                   <div className="grid gap-4 md:grid-cols-2">
