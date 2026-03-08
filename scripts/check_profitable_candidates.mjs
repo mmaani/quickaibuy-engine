@@ -1,5 +1,8 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import pg from "pg";
+
+dotenv.config({ path: ".env.local" });
+dotenv.config();
 
 const { Client } = pg;
 
@@ -11,19 +14,16 @@ async function main() {
 
   await client.connect();
 
-  const res = await client.query(`
+  const { rows } = await client.query(`
     SELECT
+      id,
       supplier_key,
       supplier_product_id,
       marketplace_key,
       marketplace_listing_id,
-      estimated_fees,
-      estimated_shipping,
-      estimated_cogs,
       estimated_profit,
       margin_pct,
       roi_pct,
-      risk_flags,
       decision_status,
       reason,
       calc_ts
@@ -32,7 +32,7 @@ async function main() {
     LIMIT 20
   `);
 
-  console.table(res.rows);
+  console.log(JSON.stringify(rows, null, 2));
   await client.end();
 }
 

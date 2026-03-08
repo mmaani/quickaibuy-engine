@@ -11,25 +11,20 @@ async function main() {
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
-
   await client.connect();
 
   const { rows } = await client.query(`
     SELECT
-      id,
       supplier_key,
       supplier_product_id,
       marketplace_key,
       marketplace_listing_id,
-      match_type,
-      confidence,
-      status,
-      evidence,
-      first_seen_ts,
-      last_seen_ts
+      COUNT(*) AS cnt
     FROM matches
-    ORDER BY last_seen_ts DESC
-    LIMIT 20
+    GROUP BY 1,2,3,4
+    HAVING COUNT(*) > 1
+    ORDER BY cnt DESC, supplier_key, supplier_product_id
+    LIMIT 50
   `);
 
   console.log(JSON.stringify(rows, null, 2));
