@@ -297,6 +297,8 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     Number.isNaN(estimatedShipping)
   ) {
     flags.add("MISSING_SHIPPING_ESTIMATE");
+  } else {
+    flags.delete("MISSING_SHIPPING_ESTIMATE");
   }
 
   if (joinedTitle && hasBrandedOrRestrictedTitle(joinedTitle)) {

@@ -3,6 +3,7 @@ import { pool } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
 import {
+  REVIEW_CONSOLE_REALM,
   getReviewActorIdFromAuthorizationHeader,
   isAuthorizedReviewAuthorizationHeader,
   isReviewConsoleConfigured,
@@ -10,6 +11,19 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function unauthorizedResponse(): NextResponse {
+  return NextResponse.json(
+    { ok: false, error: "unauthorized" },
+    {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": `Basic realm="${REVIEW_CONSOLE_REALM}"`,
+        "Cache-Control": "no-store",
+      },
+    }
+  );
+}
 
 function buildRedirectUrl(request: Request): URL {
   const referer = request.headers.get("referer");
@@ -25,7 +39,7 @@ function buildRedirectUrl(request: Request): URL {
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization");
   if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(authorization)) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return unauthorizedResponse();
   }
 
   const formData = await request.formData();

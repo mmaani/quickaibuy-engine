@@ -4,10 +4,27 @@ import {
   PrepareListingPreviewError,
   prepareListingPreviewForCandidate,
 } from "@/lib/listings/prepareListingPreviews";
-import { isAuthorizedReviewAuthorizationHeader, isReviewConsoleConfigured } from "@/lib/review/auth";
+import {
+  REVIEW_CONSOLE_REALM,
+  isAuthorizedReviewAuthorizationHeader,
+  isReviewConsoleConfigured,
+} from "@/lib/review/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function unauthorizedResponse(): NextResponse {
+  return NextResponse.json(
+    { ok: false, error: "unauthorized" },
+    {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": `Basic realm="${REVIEW_CONSOLE_REALM}"`,
+        "Cache-Control": "no-store",
+      },
+    }
+  );
+}
 
 function buildRedirectUrl(request: Request): URL {
   const referer = request.headers.get("referer");
@@ -28,7 +45,7 @@ function parseForceRefresh(input: FormDataEntryValue | null): boolean {
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization");
   if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(authorization)) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return unauthorizedResponse();
   }
 
   const formData = await request.formData();
