@@ -1,12 +1,12 @@
 import { getProductRawById, getProductsRawForMarketplaceScan } from "@/lib/db/productsRaw";
 import { insertMarketplacePriceSnapshot } from "@/lib/db/marketplacePrices";
-import { searchEbay, type MarketplaceCandidate } from "./ebay";
-import { searchAmazon } from "./amazon";
+import { searchEbay, type MarketplaceCandidate } from "../src/lib/marketplaces/ebay";
+import { searchAmazon } from "../src/lib/marketplaces/amazon";
 import {
   buildSearchQueries,
   extractMainKeywordsFromRawPayload,
   scoreCandidate,
-} from "./match";
+} from "../src/lib/marketplaces/match";
 
 type ProductRawLite = {
   id: string;
