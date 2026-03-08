@@ -8,6 +8,7 @@ import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
 import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 import { handleMatchProductsJob } from "../lib/jobs/matchProducts";
 import { runProfitEngine } from "../lib/profit/profitEngine";
+import { prepareListingPreviews } from "../lib/listings/prepareListingPreviews";
 
 const jobsQueue = new Queue("jobs", { connection: bullConnection });
 console.log("[jobs.worker] booted and waiting for jobs");
@@ -240,6 +241,34 @@ export const jobsWorker = new Worker(
           eventType: "PROFIT_EVALUATED",
           details: {
             source: "profit-engine",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        return result;
+      }
+            case JOB_NAMES.LISTING_PREPARE: {
+        const result = await prepareListingPreviews({
+          limit: Number(job.data?.limit ?? 20),
+          marketplace: (job.data?.marketplace ?? "ebay") as "ebay" | "amazon",
+          forceRefresh: Boolean(job.data?.forceRefresh),
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.LISTING_PREPARE,
+          entityType: "LISTING",
+          entityId: "batch",
+          eventType: "LISTING_PREVIEWS_PREPARED",
+          details: {
+            source: "listing-readiness",
             jobId: String(job.id ?? ""),
             ...result,
           },

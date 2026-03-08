@@ -46,6 +46,10 @@ export type ReviewListItem = {
   matchConfidence: number | null;
   supplierTitle: string | null;
   marketplaceTitle: string | null;
+  listingId: string | null;
+  listingStatus: string | null;
+  listingTitle: string | null;
+  listingPrice: number | null;
   riskFlags: string[];
   blockingRiskFlags: string[];
   listingEligible: boolean;
@@ -72,6 +76,10 @@ type CandidateRow = {
   market_price_snapshot_id: string;
   supplier_title: string | null;
   marketplace_title: string | null;
+  listing_id: string | null;
+  listing_status: string | null;
+  listing_title: string | null;
+  listing_price: string | number | null;
   match_confidence: string | number | null;
   duplicate_count: string | number | null;
 };
@@ -146,6 +154,7 @@ export type CandidateDetail = {
 };
 
 type QueryResultRow = Record<string, unknown>;
+let listingsTableExistsCache: boolean | null = null;
 
 const SORT_SQL: Record<ReviewSortKey, string> = {
   estimated_profit_desc: `pc.estimated_profit DESC NULLS LAST, pc.calc_ts DESC NULLS LAST`,
@@ -177,6 +186,22 @@ const RESTRICTED_PATTERNS = [
   "toy",
   "cosmetic",
 ];
+
+async function hasListingsTable(): Promise<boolean> {
+  if (listingsTableExistsCache != null) return listingsTableExistsCache;
+  const result = await pool.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'listings'
+      ) AS exists
+    `
+  );
+  listingsTableExistsCache = Boolean(result.rows[0]?.exists);
+  return listingsTableExistsCache;
+}
 
 function toNumber(value: unknown): number | null {
   if (value == null) return null;
@@ -330,6 +355,10 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     matchConfidence,
     supplierTitle: row.supplier_title,
     marketplaceTitle: row.marketplace_title,
+    listingId: row.listing_id,
+    listingStatus: row.listing_status,
+    listingTitle: row.listing_title,
+    listingPrice: toNumber(row.listing_price),
     riskFlags,
     blockingRiskFlags: eligibility.blockingRiskFlags,
     listingEligible: eligibility.listingEligible,
@@ -393,6 +422,7 @@ export async function getReviewFilterOptions(): Promise<{
 }
 
 export async function getReviewCandidates(filters: ReviewFilters): Promise<ReviewListItem[]> {
+  const listingsAvailable = await hasListingsTable();
   const conditions: string[] = [];
   const values: unknown[] = [];
 
@@ -431,6 +461,31 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const orderClause = SORT_SQL[filters.sort];
+  const listingSelectClause = listingsAvailable
+    ? `
+        l.id AS listing_id,
+        l.status AS listing_status,
+        l.title AS listing_title,
+        l.price AS listing_price,
+      `
+    : `
+        NULL::uuid AS listing_id,
+        NULL::text AS listing_status,
+        NULL::text AS listing_title,
+        NULL::numeric AS listing_price,
+      `;
+  const listingJoinClause = listingsAvailable
+    ? `
+      LEFT JOIN LATERAL (
+        SELECT id, status, title, price
+        FROM listings
+        WHERE candidate_id = pc.id
+          AND marketplace_key = pc.marketplace_key
+        ORDER BY created_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) l ON true
+    `
+    : "";
 
   const result = await pool.query<CandidateRow>(
     `
@@ -454,6 +509,7 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
         pc.market_price_snapshot_id,
         pr.title AS supplier_title,
         mp.matched_title AS marketplace_title,
+        ${listingSelectClause}
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -467,6 +523,7 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
         ON pr.id = pc.supplier_snapshot_id
       LEFT JOIN marketplace_prices mp
         ON mp.id = pc.market_price_snapshot_id
+      ${listingJoinClause}
       LEFT JOIN LATERAL (
         SELECT confidence
         FROM matches
@@ -558,6 +615,32 @@ function mapAuditEntry(row: QueryResultRow): AuditEntry {
 
 export async function getCandidateDetail(candidateId: string): Promise<CandidateDetail | null> {
   if (!candidateId) return null;
+  const listingsAvailable = await hasListingsTable();
+  const listingSelectClause = listingsAvailable
+    ? `
+        l.id AS listing_id,
+        l.status AS listing_status,
+        l.title AS listing_title,
+        l.price AS listing_price,
+      `
+    : `
+        NULL::uuid AS listing_id,
+        NULL::text AS listing_status,
+        NULL::text AS listing_title,
+        NULL::numeric AS listing_price,
+      `;
+  const listingJoinClause = listingsAvailable
+    ? `
+      LEFT JOIN LATERAL (
+        SELECT id, status, title, price
+        FROM listings
+        WHERE candidate_id = pc.id
+          AND marketplace_key = pc.marketplace_key
+        ORDER BY created_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) l ON true
+    `
+    : "";
 
   const candidateResult = await pool.query<CandidateRow>(
     `
@@ -581,6 +664,7 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
         pc.market_price_snapshot_id,
         pr.title AS supplier_title,
         mp.matched_title AS marketplace_title,
+        ${listingSelectClause}
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -594,6 +678,7 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
         ON pr.id = pc.supplier_snapshot_id
       LEFT JOIN marketplace_prices mp
         ON mp.id = pc.market_price_snapshot_id
+      ${listingJoinClause}
       LEFT JOIN LATERAL (
         SELECT confidence
         FROM matches

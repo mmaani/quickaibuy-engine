@@ -9,6 +9,7 @@ export const LEGACY_JOB_NAMES = {
   SCAN_MARKETPLACE_PRICE: "marketplace:scan",
   MATCH_PRODUCT: "match:product",
   PRODUCT_MATCH: "product:match",
+  LISTING_PREPARE: "listing:prepare",
 } as const;
 
 export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];

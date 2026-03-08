@@ -43,6 +43,13 @@ function formatPercent(value: number | null): string {
   return `${value.toFixed(2)}%`;
 }
 
+function formatListingStatus(status: string | null | undefined): string {
+  const normalized = (status ?? "").trim();
+  if (!normalized) return "No preview";
+  if (normalized.toUpperCase() === "PREVIEW") return "PREVIEW ready";
+  return normalized;
+}
+
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "-";
   const date = new Date(value);
@@ -154,6 +161,10 @@ function AuditList({ entries }: { entries: AuditEntry[] }) {
 }
 
 function ReviewActions({ candidate }: { candidate: CandidateDetail["candidate"] }) {
+  const canPreparePreview = candidate.decisionStatus === "APPROVED";
+  const hasPreview = Boolean(candidate.listingId || candidate.listingStatus);
+  const prepareButtonLabel = hasPreview ? "Refresh Preview" : "Prepare Preview";
+
   return (
     <DetailBlock title="Human Decision">
       <form action="/api/admin/review/decision" method="post" className="space-y-4">
@@ -206,6 +217,28 @@ function ReviewActions({ candidate }: { candidate: CandidateDetail["candidate"] 
           </button>
         </div>
       </form>
+
+      <div className="mt-5 border-t border-white/10 pt-4">
+        <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Listing Preview</div>
+        <div className="mb-3 text-sm text-white/75">Current: {formatListingStatus(candidate.listingStatus)}</div>
+        {canPreparePreview ? (
+          <form action="/api/admin/review/prepare-preview" method="post">
+            <input type="hidden" name="candidateId" value={candidate.id} />
+            <input type="hidden" name="marketplace" value="ebay" />
+            <input type="hidden" name="forceRefresh" value={hasPreview ? "true" : "false"} />
+            <button
+              type="submit"
+              className="rounded-2xl border border-cyan-300/30 bg-cyan-400/12 px-4 py-2 text-sm font-semibold text-cyan-100"
+            >
+              {prepareButtonLabel}
+            </button>
+          </form>
+        ) : (
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/60">
+            Approve candidate first to prepare listing preview.
+          </div>
+        )}
+      </div>
     </DetailBlock>
   );
 }
@@ -224,6 +257,8 @@ export default async function ReviewPage({
   searchParams?: Promise<SearchParams> | SearchParams;
 }) {
   const resolvedSearchParams = searchParams instanceof Promise ? await searchParams : searchParams;
+  const previewUpdated = String(resolvedSearchParams?.previewUpdated ?? "").trim() === "1";
+  const previewError = String(resolvedSearchParams?.previewError ?? "").trim();
   const filters = getReviewFiltersFromSearchParams(resolvedSearchParams);
   const [filterOptions, candidates] = await Promise.all([
     getReviewFilterOptions(),
@@ -261,6 +296,16 @@ export default async function ReviewPage({
               Confidence threshold: {LOW_MATCH_CONFIDENCE_THRESHOLD}
             </div>
           </div>
+          {previewUpdated ? (
+            <div className="mt-4 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">
+              Listing preview updated.
+            </div>
+          ) : null}
+          {previewError ? (
+            <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              {previewError}
+            </div>
+          ) : null}
 
           <form action={REVIEW_ROUTE} method="get" className="mt-5 grid gap-3 xl:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
             <select name="supplier" defaultValue={filters.supplier} className="contact-input">
@@ -344,6 +389,9 @@ export default async function ReviewPage({
                             <td className="border-b border-white/5 px-3 py-3 align-top">
                               <a href={buildReviewHref(filters, candidate.id)} className="block text-cyan-100">
                                 <div className="font-semibold">{candidate.id}</div>
+                                <div className="mt-1 text-xs text-white/65">
+                                  Listing: {formatListingStatus(candidate.listingStatus)}
+                                </div>
                                 <div className="mt-2 flex flex-wrap gap-2">
                                   {candidate.riskFlags.slice(0, 2).map((flag) => (
                                     <RiskBadge key={flag} flag={flag} />
@@ -411,6 +459,10 @@ export default async function ReviewPage({
                       <KeyValue label="Margin / ROI" value={`${formatPercent(detail.candidate.marginPct)} / ${formatPercent(detail.candidate.roiPct)}`} />
                       <KeyValue label="Match Confidence" value={detail.match?.confidence?.toFixed(4) ?? "-"} />
                       <KeyValue label="Calculated" value={formatDateTime(detail.candidate.calcTs)} />
+                      <KeyValue label="Listing Status" value={formatListingStatus(detail.candidate.listingStatus)} />
+                      <KeyValue label="Listing ID" value={detail.candidate.listingId ?? "-"} />
+                      <KeyValue label="Listing Title" value={detail.candidate.listingTitle ?? "-"} />
+                      <KeyValue label="Listing Price" value={formatMoney(detail.candidate.listingPrice)} />
                     </div>
                   </div>
                 </DetailBlock>

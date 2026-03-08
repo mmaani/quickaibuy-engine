@@ -27,7 +27,37 @@ export const productsRaw = pgTable("products_raw", {
   rawPayload: jsonb("raw_payload").notNull(),
   snapshotTs: timestamp("snapshot_ts").notNull().defaultNow(),
 });
+export const listings = pgTable(
+  "listings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id").notNull(),
+    marketplaceKey: text("marketplace_key").notNull(),
+    status: text("status").notNull().default("PREVIEW"),
 
+    title: text("title").notNull(),
+    price: numeric("price", { precision: 12, scale: 2 }).notNull(),
+    quantity: integer("quantity").notNull().default(1),
+
+    payload: jsonb("payload").notNull(),
+    response: jsonb("response").$type<unknown>(),
+
+    idempotencyKey: text("idempotency_key").notNull(),
+
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    listingsCandidateIdx: index("listings_candidate_idx").on(t.candidateId),
+    listingsMarketplaceStatusIdx: index("listings_marketplace_status_idx").on(
+      t.marketplaceKey,
+      t.status
+    ),
+    listingsUniqueIdempotencyKey: uniqueIndex("listings_unique_idempotency_key").on(
+      t.idempotencyKey
+    ),
+  })
+);
 export const marketplacePrices = pgTable(
   "marketplace_prices",
   {

@@ -5,7 +5,7 @@ export const JOB_NAMES = {
   TREND_EXPAND: "trend:expand",
   PRODUCT_DISCOVER: "product:discover",
   SUPPLIER_DISCOVER: "supplier:discover",
-
+  LISTING_PREPARE: "listing:prepare",
   SCAN_SUPPLIER: "SCAN_SUPPLIER",
   SCAN_MARKETPLACE_PRICE: "SCAN_MARKETPLACE_PRICE",
   MATCH_PRODUCT: "MATCH_PRODUCT",
