@@ -17,7 +17,7 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
   const snapshotTs = new Date(product.snapshotTs);
 
   return {
-    supplierKey: product.platform,
+    supplierKey: String(product.platform ?? "").trim().toLowerCase(),
     supplierProductId: product.supplierProductId ?? product.sourceUrl,
     sourceUrl: product.sourceUrl,
     title: product.title,
