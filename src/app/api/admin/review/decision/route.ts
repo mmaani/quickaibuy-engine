@@ -47,6 +47,7 @@ export async function POST(request: Request) {
   const decisionStatus = String(formData.get("decisionStatus") ?? "").trim().toUpperCase();
   const reasonValue = String(formData.get("reason") ?? "").trim();
   const reason = reasonValue ? reasonValue : null;
+  const actorId = getReviewActorIdFromAuthorizationHeader(authorization);
 
   if (!candidateId) {
     return NextResponse.json({ ok: false, error: "candidateId required" }, { status: 400 });
@@ -78,19 +79,42 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "candidate not found" }, { status: 404 });
   }
 
+  const approvalReason = reason ?? `decision:${decisionStatus}`;
+
   await pool.query(
     `
       UPDATE profitable_candidates
-      SET decision_status = $2,
-          reason = $3
+      SET
+        decision_status = $2,
+        reason = $3,
+        approved_ts = CASE
+          WHEN $2 = 'APPROVED' THEN COALESCE(approved_ts, NOW())
+          ELSE approved_ts
+        END,
+        approved_by = CASE
+          WHEN $2 = 'APPROVED' THEN COALESCE(approved_by, $4)
+          ELSE approved_by
+        END,
+        listing_eligible = CASE
+          WHEN $2 = 'APPROVED' AND marketplace_key = 'ebay' THEN TRUE
+          ELSE FALSE
+        END,
+        listing_eligible_ts = CASE
+          WHEN $2 = 'APPROVED' AND marketplace_key = 'ebay' THEN COALESCE(listing_eligible_ts, NOW())
+          ELSE NULL
+        END,
+        listing_block_reason = CASE
+          WHEN $2 = 'APPROVED' AND marketplace_key = 'ebay' THEN NULL
+          ELSE $5
+        END
       WHERE id = $1
     `,
-    [candidateId, decisionStatus, reason]
+    [candidateId, decisionStatus, reason, actorId, approvalReason]
   );
 
   await writeAuditLog({
     actorType: "ADMIN",
-    actorId: getReviewActorIdFromAuthorizationHeader(authorization),
+    actorId,
     entityType: "PROFITABLE_CANDIDATE",
     entityId: candidateId,
     eventType: `DECISION_${decisionStatus}`,
@@ -102,13 +126,12 @@ export async function POST(request: Request) {
       supplierProductId: existing.supplier_product_id,
       marketplaceKey: existing.marketplace_key,
       marketplaceListingId: existing.marketplace_listing_id,
+      listingEligible: decisionStatus === "APPROVED" && existing.marketplace_key === "ebay",
       source: "review-console",
     },
   });
 
   const redirectUrl = buildRedirectUrl(request);
-  // Keep the updated candidate visible after decision changes by aligning
-  // status/risk filters with the new decision state.
   redirectUrl.searchParams.set("decisionStatus", decisionStatus);
   redirectUrl.searchParams.delete("riskOnly");
   redirectUrl.searchParams.set("candidateId", candidateId);

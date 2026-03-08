@@ -4,19 +4,23 @@ import { sql } from "drizzle-orm";
 export type ListingExecutionCandidate = {
   id: string;
   candidateId: string;
-  marketplaceKey: string;
+  marketplaceKey: "ebay";
   title: string;
   price: string;
   status: string;
   idempotencyKey: string | null;
 };
 
-export async function getListingExecutionCandidates(input?: {
+type GetListingExecutionCandidatesInput = {
   limit?: number;
-  marketplace?: "ebay" | "amazon";
-}) {
+  marketplace?: "ebay";
+};
+
+export async function getListingExecutionCandidates(
+  input?: GetListingExecutionCandidatesInput
+): Promise<ListingExecutionCandidate[]> {
   const limit = Number(input?.limit ?? 10);
-  const marketplace = (input?.marketplace ?? "ebay").toLowerCase();
+  const marketplace = (input?.marketplace ?? "ebay") as "ebay";
 
   const result = await db.execute(sql`
     SELECT
@@ -31,8 +35,10 @@ export async function getListingExecutionCandidates(input?: {
     INNER JOIN profitable_candidates pc
       ON pc.id = l.candidate_id
     WHERE l.marketplace_key = ${marketplace}
-      AND l.status = 'PREVIEW'
+      AND l.status = 'READY_TO_PUBLISH'
+      AND pc.marketplace_key = ${marketplace}
       AND pc.decision_status = 'APPROVED'
+      AND pc.listing_eligible = TRUE
     ORDER BY l.updated_at ASC, l.created_at ASC
     LIMIT ${limit}
   `);
