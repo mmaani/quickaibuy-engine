@@ -3,7 +3,7 @@ import { pool } from "@/lib/db";
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
 export const REVIEW_ACTION_STATUSES = ["APPROVED", "REJECTED", "RECHECK"] as const;
-export const LOW_MATCH_CONFIDENCE_THRESHOLD = 0.75;
+export const LOW_MATCH_CONFIDENCE_THRESHOLD = 0.71;
 export const HIGH_MARGIN_THRESHOLD = 80;
 export const BLOCKING_RISK_FLAGS = new Set([
   "LOW_MATCH_CONFIDENCE",
