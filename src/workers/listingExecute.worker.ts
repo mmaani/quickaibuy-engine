@@ -1,11 +1,11 @@
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
-import { remainingListingCapacity } from "@/lib/listings/checkDailyListingCap";
+import { checkDailyListingCap } from "@/lib/listings/checkDailyListingCap";
 import { db } from "@/lib/db";
 import { listings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function runListingExecution(maxPerDay = 10) {
-  const capacity = await remainingListingCapacity(maxPerDay);
+  const { remaining: capacity } = await checkDailyListingCap({ dailyCap: maxPerDay });
 
   if (capacity === 0) {
     console.log("[listing-execute] daily cap reached");
@@ -18,7 +18,7 @@ export async function runListingExecution(maxPerDay = 10) {
     };
   }
 
-  const candidates = await getListingExecutionCandidates(capacity);
+  const candidates = await getListingExecutionCandidates({ limit: capacity });
 
   let listed = 0;
   let skipped = 0;
@@ -33,8 +33,8 @@ export async function runListingExecution(maxPerDay = 10) {
 
     console.log("[listing-execute] listing", {
       listingId: row.id,
-      candidateId: row.candidate_id,
-      marketplaceKey: row.marketplace_key,
+      candidateId: row.candidateId,
+      marketplaceKey: row.marketplaceKey,
       title: row.title,
       price: row.price,
     });
