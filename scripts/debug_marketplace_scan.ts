@@ -25,9 +25,15 @@ async function main() {
     console.log("supplier_product_id:", row.supplierProductId);
     console.log("title:", row.title);
 
-    const matches = await scanOneProductTrendMode(row, "ebay");
+    const scanResult = await scanOneProductTrendMode(row, "ebay");
+    const matches = scanResult.matches;
 
     console.log("match count:", matches.length);
+    console.log("scan stats:", {
+      acceptedCount: scanResult.acceptedCount,
+      rejectedLowScoreCount: scanResult.rejectedLowScoreCount,
+      queryErrorCount: scanResult.queryErrorCount,
+    });
 
     for (const match of matches) {
       console.log(
