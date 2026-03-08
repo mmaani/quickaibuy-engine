@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
-import { getReviewActorIdFromAuthorizationHeader } from "@/lib/review/auth";
+import {
+  getReviewActorIdFromAuthorizationHeader,
+  isAuthorizedReviewAuthorizationHeader,
+  isReviewConsoleConfigured,
+} from "@/lib/review/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +23,11 @@ function buildRedirectUrl(request: Request): URL {
 }
 
 export async function POST(request: Request) {
+  const authorization = request.headers.get("authorization");
+  if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(authorization)) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
   const formData = await request.formData();
   const candidateId = String(formData.get("candidateId") ?? "").trim();
   const decisionStatus = String(formData.get("decisionStatus") ?? "").trim().toUpperCase();
@@ -67,7 +76,7 @@ export async function POST(request: Request) {
 
   await writeAuditLog({
     actorType: "ADMIN",
-    actorId: getReviewActorIdFromAuthorizationHeader(request.headers.get("authorization")),
+    actorId: getReviewActorIdFromAuthorizationHeader(authorization),
     entityType: "PROFITABLE_CANDIDATE",
     entityId: candidateId,
     eventType: `DECISION_${decisionStatus}`,

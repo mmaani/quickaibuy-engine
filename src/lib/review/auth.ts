@@ -48,6 +48,16 @@ export function isAuthorizedReviewRequest(request: NextRequest): boolean {
   return parsed.username === configured.username && parsed.password === configured.password;
 }
 
+export function isAuthorizedReviewAuthorizationHeader(value: string | null): boolean {
+  const configured = getReviewConsoleCredentials();
+  if (!configured) return false;
+
+  const parsed = decodeBasicAuthHeader(value);
+  if (!parsed) return false;
+
+  return parsed.username === configured.username && parsed.password === configured.password;
+}
+
 export function getReviewActorIdFromAuthorizationHeader(value: string | null): string | null {
   const parsed = decodeBasicAuthHeader(value);
   return parsed?.username?.trim() ? parsed.username.trim() : null;
