@@ -16,21 +16,22 @@ async function main() {
 
   const { rows } = await client.query(`
     SELECT
-      id,
-      candidate_id,
-      marketplace_key,
-      title,
-      price,
-      quantity,
-      status,
-      idempotency_key,
-      payload,
-      response,
-      created_at,
-      updated_at
-    FROM listings
-    ORDER BY updated_at DESC, created_at DESC
-    LIMIT 20
+      l.id,
+      l.candidate_id,
+      l.marketplace_key,
+      l.title,
+      l.status,
+      l.created_at,
+      l.updated_at,
+      pc.id AS candidate_exists,
+      pc.supplier_key,
+      pc.supplier_product_id,
+      pc.marketplace_listing_id,
+      pc.decision_status
+    FROM listings l
+    LEFT JOIN profitable_candidates pc
+      ON pc.id = l.candidate_id
+    ORDER BY l.updated_at DESC, l.created_at DESC
   `);
 
   console.log(JSON.stringify(rows, null, 2));

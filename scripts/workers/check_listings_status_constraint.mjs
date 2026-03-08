@@ -16,21 +16,15 @@ async function main() {
 
   const { rows } = await client.query(`
     SELECT
-      id,
-      candidate_id,
-      marketplace_key,
-      title,
-      price,
-      quantity,
-      status,
-      idempotency_key,
-      payload,
-      response,
-      created_at,
-      updated_at
-    FROM listings
-    ORDER BY updated_at DESC, created_at DESC
-    LIMIT 20
+      con.conname AS constraint_name,
+      pg_get_constraintdef(con.oid) AS constraint_def
+    FROM pg_constraint con
+    INNER JOIN pg_class rel
+      ON rel.oid = con.conrelid
+    INNER JOIN pg_namespace nsp
+      ON nsp.oid = con.connamespace
+    WHERE rel.relname = 'listings'
+      AND con.conname = 'listings_status_check'
   `);
 
   console.log(JSON.stringify(rows, null, 2));

@@ -1,5 +1,4 @@
 import dotenv from "dotenv";
-import fs from "fs";
 import pg from "pg";
 
 dotenv.config({ path: ".env.local" });
@@ -8,23 +7,25 @@ dotenv.config();
 const { Client } = pg;
 
 async function main() {
-  const file = process.argv[2];
-  if (!file) {
-    throw new Error("Usage: node scripts/run_sql_file.mjs <sql-file>");
-  }
-
-  const sql = fs.readFileSync(file, "utf8");
-
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
 
   await client.connect();
-  await client.query(sql);
-  await client.end();
 
-  console.log(JSON.stringify({ ok: true, file }, null, 2));
+  const { rows } = await client.query(`
+    SELECT
+      column_name,
+      data_type,
+      is_nullable
+    FROM information_schema.columns
+    WHERE table_name = 'listings'
+    ORDER BY ordinal_position
+  `);
+
+  console.log(JSON.stringify(rows, null, 2));
+  await client.end();
 }
 
 main().catch((err) => {

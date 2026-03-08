@@ -15,25 +15,28 @@ async function main() {
   await client.connect();
 
   const { rows } = await client.query(`
-    SELECT
-      id,
-      candidate_id,
-      marketplace_key,
-      title,
-      price,
-      quantity,
-      status,
-      idempotency_key,
-      payload,
-      response,
-      created_at,
-      updated_at
-    FROM listings
-    ORDER BY updated_at DESC, created_at DESC
-    LIMIT 20
+    DELETE FROM listings l
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM profitable_candidates pc
+      WHERE pc.id = l.candidate_id
+    )
+    RETURNING
+      l.id,
+      l.candidate_id,
+      l.marketplace_key,
+      l.title,
+      l.status,
+      l.created_at,
+      l.updated_at
   `);
 
-  console.log(JSON.stringify(rows, null, 2));
+  console.log(JSON.stringify({
+    ok: true,
+    deleted: rows.length,
+    rows,
+  }, null, 2));
+
   await client.end();
 }
 
