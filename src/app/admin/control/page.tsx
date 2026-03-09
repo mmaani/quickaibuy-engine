@@ -8,15 +8,9 @@ export const revalidate = 0;
 function Badge({ ok }: { ok: boolean }) {
   return (
     <span
-      style={{
-        display: "inline-block",
-        padding: "4px 10px",
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 700,
-        background: ok ? "#DCFCE7" : "#FEE2E2",
-        color: ok ? "#166534" : "#991B1B",
-      }}
+      className={`inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${
+        ok ? "bg-emerald-400/20 text-emerald-100" : "bg-rose-400/20 text-rose-100"
+      }`}
     >
       {ok ? "OK" : "DEGRADED"}
     </span>
@@ -37,26 +31,18 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section
-      style={{
-        border: "1px solid #E5E7EB",
-        borderRadius: 16,
-        padding: 20,
-        background: "#fff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>{title}</h2>
+    <section className="glass-panel rounded-3xl border border-white/10 p-5">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="m-0 text-lg font-semibold text-white">{title}</h2>
         <Badge ok={ok} />
       </div>
 
-      <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 10 }}>
+      <div className="mb-3 text-xs text-white/60">
         HTTP: {status ?? "n/a"}
       </div>
 
       {error ? (
-        <div style={{ color: "#B91C1C", marginBottom: 10, fontSize: 13 }}>
+        <div className="mb-3 rounded-xl border border-rose-300/35 bg-rose-500/10 p-2 text-xs text-rose-100">
           Error: {error}
         </div>
       ) : null}
@@ -71,39 +57,26 @@ export default async function AdminControlPage() {
   const panel = await getControlPanelData(authHeader);
 
   return (
-    <main
-      style={{
-        padding: 24,
-        background: "#F9FAFB",
-        minHeight: "100vh",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: 1400, margin: "0 auto" }}>
-        <header style={{ marginBottom: 24 }}>
-          <h1 style={{ margin: 0, fontSize: 30 }}>QuickAIBuy Control Panel</h1>
-          <p style={{ marginTop: 8, color: "#6B7280" }}>
-            Live infrastructure and worker visibility.
+    <main className="relative min-h-screen bg-app text-white">
+      <div className="relative mx-auto grid max-w-[1600px] gap-5 px-4 py-6 sm:px-6 lg:px-8">
+        <header className="glass-card rounded-3xl border border-white/10 px-5 py-4 sm:px-6">
+          <h1 className="m-0 text-3xl font-bold">Operational Control Panel</h1>
+          <p className="mt-2 text-sm text-white/65">
+            Official v1 operations console. Use this for health, alerts, and live runtime visibility.
           </p>
-          <p style={{ marginTop: 8, color: "#9CA3AF", fontSize: 12 }}>
+          <p className="mt-2 text-xs text-white/45">
             Generated at: {panel.generatedAt}
           </p>
         </header>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-            gap: 16,
-          }}
-        >
+        <div className="grid gap-4 lg:grid-cols-2">
           <Card
             title="System Health"
             ok={panel.health.ok}
             status={panel.health.status}
             error={panel.health.error}
           >
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-white/85">
               {JSON.stringify(panel.health.data, null, 2)}
             </pre>
           </Card>
@@ -114,7 +87,7 @@ export default async function AdminControlPage() {
             status={panel.queues.status}
             error={panel.queues.error}
           >
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-white/85">
               {JSON.stringify(panel.queues.data, null, 2)}
             </pre>
           </Card>
@@ -125,7 +98,7 @@ export default async function AdminControlPage() {
             status={panel.workerRuns.status}
             error={panel.workerRuns.error}
           >
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-white/85">
               {JSON.stringify(panel.workerRuns.data, null, 2)}
             </pre>
           </Card>
@@ -136,7 +109,7 @@ export default async function AdminControlPage() {
             status={panel.errors.status}
             error={panel.errors.error}
           >
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-white/85">
               {JSON.stringify(panel.errors.data, null, 2)}
             </pre>
           </Card>
