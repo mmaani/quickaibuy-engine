@@ -2,18 +2,12 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import { sql } from "drizzle-orm";
 import RefreshButton from "@/app/_components/RefreshButton";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
-import { db } from "@/lib/db";
-import { handleMarketplaceScanJob } from "@/lib/jobs/marketplaceScan";
-import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
-import { runSupplierDiscover } from "@/lib/jobs/supplierDiscover";
+import { enqueueProductMatch } from "@/lib/jobs/enqueueProductMatch";
+import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueTrendExpand";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
-import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
-import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
-import { runProfitEngine } from "@/lib/profit/profitEngine";
 import { isAuthorizedReviewAuthorizationHeader, isReviewConsoleConfigured } from "@/lib/review/auth";
 
 export const runtime = "nodejs";
@@ -27,6 +21,29 @@ export const metadata: Metadata = {
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+type QuickActionKey = "match" | "scan" | "dry-run";
+
+const QUICK_ACTIONS: Array<{ key: string; label: string; enabled: boolean; reason?: string }> = [
+  { key: "supplier", label: "Run supplier discover", enabled: false, reason: "Not wired yet (safe enqueue path missing)." },
+  { key: "match", label: "Enqueue matching job", enabled: true },
+  { key: "scan", label: "Enqueue marketplace scan (eBay)", enabled: true },
+  { key: "profit", label: "Run profit engine", enabled: false, reason: "Not wired yet (safe enqueue path missing)." },
+  { key: "prepare", label: "Prepare listing previews", enabled: false, reason: "Not wired yet (safe enqueue path missing)." },
+  { key: "promote", label: "Promote previews to READY_TO_PUBLISH", enabled: false, reason: "Not wired yet (manual execution path disabled)." },
+  { key: "dry-run", label: "Run listing execution dry-run", enabled: true },
+  { key: "monitor", label: "Run listing monitor", enabled: false, reason: "Not wired yet (no dedicated monitor job path)." },
+];
+
+const LIFECYCLE_STATUSES = [
+  "PREVIEW",
+  "READY_TO_PUBLISH",
+  "PUBLISH_IN_PROGRESS",
+  "ACTIVE",
+  "PUBLISH_FAILED",
+  "PAUSED",
+  "ENDED",
+] as const;
+
 function one(value: string | string[] | undefined): string | null {
   return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
 }
@@ -34,7 +51,7 @@ function one(value: string | string[] | undefined): string | null {
 async function requireAdmin() {
   const auth = (await headers()).get("authorization");
   if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(auth)) {
-    redirect("/admin/review");
+    redirect("/");
   }
 }
 
@@ -105,49 +122,28 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-async function runAction(action: string) {
+function normalizeLifecycleRows(rows: Array<Record<string, unknown>>) {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const status = String(row.status ?? "").toUpperCase();
+    const count = Number(row.count ?? 0);
+    if (status) counts.set(status, Number.isFinite(count) ? count : 0);
+  }
+  return LIFECYCLE_STATUSES.map((status) => ({ status, count: counts.get(status) ?? 0 }));
+}
+
+async function runAction(action: QuickActionKey) {
   "use server";
 
   await requireAdmin();
   let message = "Action completed.";
 
-  if (action === "supplier") {
-    const result = await runSupplierDiscover(10);
-    message = `Supplier discover inserted ${result.insertedCount} rows.`;
-  } else if (action === "match") {
-    const result = await handleMatchProductsJob({ limit: 25 });
-    message = `Matching scanned ${result.scanned}; inserted ${result.inserted}, updated ${result.updated} (total upserts ${result.inserted + result.updated}).`;
+  if (action === "match") {
+    const job = await enqueueProductMatch({ supplierLimit: 250, marketplaceLimit: 1000, minConfidence: 0.75 });
+    message = `Enqueued MATCH_PRODUCT job (${String(job.id)}).`;
   } else if (action === "scan") {
-    const result = await handleMarketplaceScanJob({ limit: 25, platform: "ebay" });
-    message = `Marketplace scan (eBay) scanned ${result.scanned} rows.`;
-  } else if (action === "profit") {
-    const result = await runProfitEngine({ limit: 50 });
-    message = `Profit engine scanned ${result.scanned}; upserted ${result.insertedOrUpdated}; skipped ${result.skipped}; stale deleted ${result.staleDeleted}.`;
-  } else if (action === "prepare") {
-    const result = await prepareListingPreviews({ limit: 25, marketplace: "ebay" });
-    message = `Previews created ${result.created}, updated ${result.updated}, skipped ${result.skipped}.`;
-  } else if (action === "promote") {
-    const rows = await db.execute(sql`
-      select id
-      from listings
-      where marketplace_key = 'ebay' and status = 'PREVIEW'
-      order by updated_at asc
-      limit 25
-    `);
-
-    let promoted = 0;
-    let blocked = 0;
-    for (const row of (rows.rows ?? []) as Array<{ id: string }>) {
-      const out = await markListingReadyToPublish({
-        listingId: row.id,
-        actorType: "ADMIN",
-        actorId: "control-panel",
-      });
-      if (out.ok) promoted++;
-      else blocked++;
-    }
-
-    message = `Promoted ${promoted} previews; blocked ${blocked} by review/eligibility safeguards.`;
+    const job = await enqueueMarketplacePriceScan({ limit: 100, platform: "ebay" });
+    message = `Enqueued SCAN_MARKETPLACE_PRICE job (${String(job.id)}) for eBay.`;
   } else if (action === "dry-run") {
     const candidates = await getListingExecutionCandidates({ limit: 20, marketplace: "ebay" });
     await writeAuditLog({
@@ -159,23 +155,6 @@ async function runAction(action: string) {
       details: { count: candidates.length },
     });
     message = `Listing execution dry-run found ${candidates.length} READY_TO_PUBLISH candidates.`;
-  } else if (action === "monitor") {
-    const statusCounts = await db.execute(sql`
-      select status, count(*)::int as count
-      from listings
-      where marketplace_key = 'ebay'
-      group by status
-      order by count desc
-    `);
-    await writeAuditLog({
-      actorType: "ADMIN",
-      actorId: "control-panel",
-      entityType: "PIPELINE",
-      entityId: "listing-monitor",
-      eventType: "LISTING_MONITOR_RUN",
-      details: { rows: statusCounts.rows ?? [] },
-    });
-    message = "Listing monitor snapshot recorded.";
   }
 
   await writeAuditLog({
@@ -194,6 +173,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Sea
   await requireAdmin();
   const data = await getControlPanelData();
   const message = one(searchParams?.actionMessage);
+  const lifecycleRows = normalizeLifecycleRows(data.listingLifecycle.statusCounts);
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -211,9 +191,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Sea
             <RefreshButton />
           </div>
 
-          {message ? (
-            <div className="mt-3 rounded-xl border border-cyan-300/30 bg-cyan-500/10 p-3 text-sm">{message}</div>
-          ) : null}
+          {message ? <div className="mt-3 rounded-xl border border-cyan-300/30 bg-cyan-500/10 p-3 text-sm">{message}</div> : null}
         </header>
 
         <Section title="Pipeline Overview">
@@ -234,7 +212,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Sea
         <Section title="Supplier Discovery Health">
           <div className="grid gap-4 lg:grid-cols-2">
             <DataTable rows={data.supplierDiscoveryHealth.bySupplier} empty="No products_raw supplier counts available." />
-            <DataTable rows={data.supplierDiscoveryHealth.freshnessBySupplier} empty="Supplier freshness unavailable (snapshot_ts missing or table unavailable)." />
+            <DataTable
+              rows={data.supplierDiscoveryHealth.freshnessBySupplier}
+              empty="Supplier freshness unavailable (snapshot_ts missing or table unavailable)."
+            />
           </div>
           <p className="mt-3 text-xs text-white/60">v1 supplier focus: Alibaba, AliExpress, Temu.</p>
         </Section>
@@ -296,9 +277,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Sea
             <StatCard label="daily cap remaining" value={data.listingLifecycle.dailyCap.capRemaining ?? "-"} />
           </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <DataTable rows={data.listingLifecycle.statusCounts} empty="No listing lifecycle rows." />
+            <DataTable rows={lifecycleRows} empty="No listing lifecycle rows." />
             <DataTable rows={data.listingLifecycle.publishFailures} empty="No PUBLISH_FAILED rows." />
           </div>
+          <p className="mt-3 text-xs text-white/60">Only ACTIVE is live. PREVIEW is dry-run only. READY_TO_PUBLISH is the execution entry state.</p>
         </Section>
 
         <Section title="Worker / Queue Health">
@@ -306,11 +288,13 @@ export default async function ControlPage({ searchParams }: { searchParams?: Sea
             <StatCard label="DB reachable" value={data.health.db.status} />
             <StatCard label="Queue reachable" value={data.health.queue.status} />
             <StatCard label="recent worker activity" value={data.workerQueueHealth.recentWorkerActivityTs ?? "none"} />
-            <StatCard label="recent job failures" value={data.workerQueueHealth.recentJobFailures.length} />
+            <StatCard label="recent worker failures" value={data.workerQueueHealth.recentWorkerFailures.length} />
           </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <DataTable rows={data.workerQueueHealth.recentWorkerRuns} empty="worker_runs unavailable or empty." />
+            <DataTable rows={data.workerQueueHealth.recentWorkerFailures} empty="No recent worker failures." />
             <DataTable rows={data.workerQueueHealth.recentJobs} empty="jobs unavailable or empty." />
+            <DataTable rows={data.workerQueueHealth.recentAuditEvents} empty="audit_log unavailable or empty." />
           </div>
         </Section>
 
@@ -336,17 +320,23 @@ export default async function ControlPage({ searchParams }: { searchParams?: Sea
 
         <Section title="Quick Actions">
           <div className="rounded-xl border border-amber-300/30 bg-amber-400/10 p-3 text-xs text-amber-100">
-            Listing execution-related actions are eBay-only and preserve review gate constraints.
+            Operator-safe mode: actions only enqueue supported jobs or run non-destructive dry-runs; unwired actions are disabled.
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <form action={runAction.bind(null, "supplier")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run supplier discover</button></form>
-            <form action={runAction.bind(null, "match")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run matching</button></form>
-            <form action={runAction.bind(null, "scan")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run marketplace scan</button></form>
-            <form action={runAction.bind(null, "profit")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run profit engine</button></form>
-            <form action={runAction.bind(null, "prepare")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Prepare listing previews</button></form>
-            <form action={runAction.bind(null, "promote")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Promote listing previews ready</button></form>
-            <form action={runAction.bind(null, "dry-run")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run listing execution dry-run</button></form>
-            <form action={runAction.bind(null, "monitor")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run listing monitor</button></form>
+            {QUICK_ACTIONS.map((action) => (
+              <div key={action.key} className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
+                {action.enabled ? (
+                  <form action={runAction.bind(null, action.key as QuickActionKey)}>
+                    <button className="w-full text-left text-sm">{action.label}</button>
+                  </form>
+                ) : (
+                  <button className="w-full cursor-not-allowed text-left text-sm text-white/40" disabled>
+                    {action.label}
+                  </button>
+                )}
+                {!action.enabled ? <div className="mt-2 text-xs text-white/50">{action.reason}</div> : null}
+              </div>
+            ))}
           </div>
           <div className="mt-3">
             <Link href="/admin/review" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm inline-block">

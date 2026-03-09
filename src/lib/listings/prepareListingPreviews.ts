@@ -279,12 +279,6 @@ async function processCandidatePreviewRows(
           response: responseJson,
           idempotencyKey,
           status: "PREVIEW",
-          publish_marketplace: null,
-          publish_started_ts: null,
-          publish_finished_ts: null,
-          published_external_id: null,
-          last_publish_error: null,
-          listing_date: null,
           updatedAt: new Date(),
         })
         .where(eq(listings.id, existingPreview[0].id));
