@@ -4,7 +4,7 @@ import { getDashboardData } from "@/lib/dashboard/getDashboardData";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Tone = "default" | "ok" | "error" | "unknown";
+type Tone = "default" | "ok" | "error";
 
 function Section({
   title,
@@ -31,7 +31,6 @@ function Section({
 function toneClass(tone: Tone): string {
   if (tone === "ok") return "border-emerald-300/30 bg-emerald-400/10 text-emerald-100";
   if (tone === "error") return "border-rose-300/30 bg-rose-400/10 text-rose-100";
-  if (tone === "unknown") return "border-amber-300/30 bg-amber-400/10 text-amber-100";
   return "border-white/10 bg-white/[0.04] text-white";
 }
 
@@ -48,23 +47,6 @@ function StatCard({
     <div className={`rounded-2xl border p-4 ${toneClass(tone)}`}>
       <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-white/55">{label}</div>
       <div className="text-2xl font-bold leading-tight text-balance">{value}</div>
-    </div>
-  );
-}
-
-function StatusPill({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: Tone;
-}) {
-  return (
-    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${toneClass(tone)}`}>
-      <span className="text-white/70">{label}</span>
-      <span className="font-semibold uppercase tracking-wide">{value}</span>
     </div>
   );
 }
@@ -131,22 +113,9 @@ function DataTable({
 export default async function DashboardPage() {
   const data = await getDashboardData();
 
-  const totalPipelineRows = data.pipelineCounts.reduce((sum, item) => sum + (item.count ?? 0), 0);
-  const activeFailures = data.jobs.counts.failed ?? 0;
-
-  const dbTone: Tone =
-    data.infrastructure.db.status === "ok"
-      ? "ok"
-      : data.infrastructure.db.status === "error"
-        ? "error"
-        : "unknown";
-
-  const redisTone: Tone =
-    data.infrastructure.redis.status === "ok"
-      ? "ok"
-      : data.infrastructure.redis.status === "error"
-        ? "error"
-        : "unknown";
+  const totalPipelineRows = data.pipelineCounts.reduce((sum, item) => sum + (item.count ?? 0), 0) ?? 0;
+  const profitableCount = data.pipelineCounts.find((x) => x.table === "profitable_candidates")?.count ?? 0;
+  const avgConfidence = data.quality.averageMatchConfidence;
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -163,42 +132,26 @@ export default async function DashboardPage() {
             <div>
               <h1 className="m-0 text-3xl font-bold text-white">Monitoring Dashboard</h1>
               <p className="mt-2 text-sm text-white/65">
-                Clear visibility into infrastructure, ingestion health, and execution outcomes.
+                Business and analytics visibility for pipeline output quality and opportunity coverage.
               </p>
               <p className="mt-2 text-xs text-white/45">Generated at: {data.generatedAt}</p>
             </div>
             <RefreshButton />
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <StatusPill label="DB" value={data.infrastructure.db.status} tone={dbTone} />
-            <StatusPill label="Redis" value={data.infrastructure.redis.status} tone={redisTone} />
-            <StatusPill label="Queue" value={data.jobs.queueName} tone="default" />
-          </div>
-
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="Pipeline rows tracked" value={totalPipelineRows} />
-            <StatCard label="Failed jobs" value={activeFailures} tone={activeFailures > 0 ? "error" : "ok"} />
-            <StatCard label="Recent failed jobs" value={data.jobs.recentFailed.length} tone={data.jobs.recentFailed.length ? "error" : "ok"} />
-            <StatCard label="Recent succeeded jobs" value={data.jobs.recentSucceeded.length} tone="ok" />
+            <StatCard label="Profitable candidates" value={profitableCount} />
+            <StatCard
+              label="Average match confidence"
+              value={avgConfidence == null ? "-" : avgConfidence}
+            />
+            <StatCard label="Top opportunities listed" value={data.quality.topProfitableOpportunities.length} tone="ok" />
           </div>
         </header>
 
         <div className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
           <div className="grid gap-5">
-            <Section title="Infrastructure" description="Runtime and connectivity checks for core dependencies.">
-              <div className="grid grid-cols-1 gap-4">
-                <StatCard label="DB health" value={data.infrastructure.db.status} tone={dbTone} />
-                <StatCard label="Redis health" value={data.infrastructure.redis.status} tone={redisTone} />
-                <StatCard label="NODE_ENV" value={data.infrastructure.environment.nodeEnv} />
-                <StatCard label="VERCEL_ENV" value={data.infrastructure.environment.vercelEnv} />
-              </div>
-              <div className="mt-4 space-y-1 text-sm text-white/60">
-                <div>DB detail: {data.infrastructure.db.detail ?? "-"}</div>
-                <div>Redis detail: {data.infrastructure.redis.detail ?? "-"}</div>
-              </div>
-            </Section>
-
             <Section title="Pipeline Counts" description="Row counts from key pipeline tables to spot ingestion gaps quickly.">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-1">
                 {data.pipelineCounts.map((item) => (
@@ -212,15 +165,21 @@ export default async function DashboardPage() {
               </div>
             </Section>
 
-            <Section title="Quality Snapshot" description="High-level signal quality indicators.">
-              <StatCard
-                label="Average match confidence"
-                value={
-                  data.quality.averageMatchConfidence == null
-                    ? "-"
-                    : data.quality.averageMatchConfidence
-                }
-              />
+            <Section title="Admin Surfaces" description="Use dedicated admin consoles for operations and decisions.">
+              <div className="grid gap-3">
+                <a
+                  href="/admin/control"
+                  className="rounded-2xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-3 text-sm font-semibold text-cyan-100"
+                >
+                  Open Operational Control Panel
+                </a>
+                <a
+                  href="/admin/review"
+                  className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100"
+                >
+                  Open Review Console
+                </a>
+              </div>
             </Section>
           </div>
 
@@ -245,32 +204,6 @@ export default async function DashboardPage() {
                     <DataTable rows={block.rows} empty="No recent rows found" />
                   </div>
                 ))}
-              </div>
-            </Section>
-
-            <Section title="Job Visibility" description="Queue metrics and most recent failed/succeeded job payloads.">
-              {data.jobs.error ? (
-                <div className="mb-4 rounded-xl border border-rose-300/35 bg-rose-400/10 p-3 text-sm text-rose-100">
-                  {data.jobs.error}
-                </div>
-              ) : null}
-
-              <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
-                {Object.entries(data.jobs.counts).map(([key, value]) => (
-                  <StatCard key={key} label={key} value={value} />
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
-                <div>
-                  <h3 className="mb-3 text-lg font-semibold text-white">Recent failed jobs</h3>
-                  <DataTable rows={data.jobs.recentFailed} empty="No failed jobs found" />
-                </div>
-
-                <div>
-                  <h3 className="mb-3 text-lg font-semibold text-white">Recent succeeded jobs</h3>
-                  <DataTable rows={data.jobs.recentSucceeded} empty="No completed jobs found" />
-                </div>
               </div>
             </Section>
 
