@@ -190,6 +190,8 @@
 │   │   ├── _components
 │   │   │   └── RefreshButton.tsx
 │   │   ├── admin
+│   │   │   ├── control
+│   │   │   │   └── page.tsx
 │   │   │   └── review
 │   │   │       └── page.tsx
 │   │   ├── api
@@ -242,7 +244,10 @@
 │   │   │   └── writeAuditLog.ts
 │   │   ├── bull.ts
 │   │   ├── bullConnection.ts
+│   │   ├── control
+│   │   │   └── getControlPanelData.ts
 │   │   ├── dashboard
+│   │   │   ├── getControlPanelData.ts
 │   │   │   └── getDashboardData.ts
 │   │   ├── db
 │   │   │   ├── index.ts
@@ -253,6 +258,7 @@
 │   │   ├── db.ts
 │   │   ├── jobNames.ts
 │   │   ├── jobs
+│   │   │   ├── enqueueMarketplacePriceScan.ts
 │   │   │   ├── enqueueProductMatch.ts
 │   │   │   ├── enqueueTrendExpand.ts
 │   │   │   ├── jobNames.ts
@@ -315,4 +321,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-53 directories, 263 files
+55 directories, 267 files
