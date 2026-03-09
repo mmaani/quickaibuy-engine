@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { getDailyListingCap, reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
+import { publishToEbayListing } from "@/lib/marketplaces/ebayPublish";
 
 type RunListingExecutionInput =
   | number
@@ -34,6 +35,10 @@ function normalizeInput(input?: RunListingExecutionInput) {
     dryRun: input?.dryRun ?? true,
     actorId: input?.actorId ?? "listingExecute.worker",
   };
+}
+
+function isEbayLivePublishEnabled(): boolean {
+  return String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").trim().toLowerCase() === "true";
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -93,12 +98,14 @@ export async function runListingExecution(input?: RunListingExecutionInput) {
   const config = normalizeInput(input);
   const startedAt = Date.now();
   const runId = crypto.randomUUID();
+  const livePublishEnabled = isEbayLivePublishEnabled();
 
   await logWorkerRun({
     status: "STARTED",
     jobId: runId,
     actorId: config.actorId,
     dryRun: config.dryRun,
+    stats: { livePublishEnabled },
   });
 
   try {
@@ -135,6 +142,7 @@ export async function runListingExecution(input?: RunListingExecutionInput) {
         skipped: 0,
         failed: 0,
         dailyRemaining: 0,
+        livePublishEnabled,
       };
 
       await logWorkerRun({
@@ -159,6 +167,7 @@ export async function runListingExecution(input?: RunListingExecutionInput) {
       requestedLimit: config.limit,
       fetched: candidates.length,
       dailyRemaining: cap.remaining,
+      livePublishEnabled,
     });
 
     for (const row of candidates) {
@@ -281,11 +290,127 @@ export async function runListingExecution(input?: RunListingExecutionInput) {
           marketplaceKey: "ebay",
           dryRun: false,
           idempotencyKey: row.idempotencyKey,
+          livePublishEnabled,
         },
       });
 
       try {
-        throw new Error("live eBay publish is not enabled yet in v1 local execution path");
+        if (!livePublishEnabled) {
+          const drySafeResponse = {
+            dryRun: false,
+            liveApiCalled: false,
+            livePublishEnabled: false,
+            reason: "ENABLE_EBAY_LIVE_PUBLISH=false",
+            executionCheckedAt: new Date().toISOString(),
+          };
+
+          await db.execute(sql`
+            UPDATE listings
+            SET
+              status = 'ACTIVE',
+              publish_finished_ts = NOW(),
+              listing_date = NOW(),
+              response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify(drySafeResponse)}::jsonb,
+              updated_at = NOW()
+            WHERE id = ${listingId}
+          `);
+
+          await writeAuditLog({
+            actorType: "WORKER",
+            actorId: config.actorId,
+            entityType: "LISTING",
+            entityId: listingId,
+            eventType: "LISTING_PUBLISH_DRY_PATH_ACTIVE",
+            details: {
+              listingId,
+              candidateId,
+              marketplaceKey: "ebay",
+              dryRun: false,
+              liveApiCalled: false,
+              livePublishEnabled: false,
+            },
+          });
+
+          executed++;
+          continue;
+        }
+
+        const publishResult = await publishToEbayListing({
+          id: listingId,
+          marketplaceKey: row.marketplaceKey,
+          idempotencyKey: row.idempotencyKey,
+          payload: row.payload,
+        });
+
+        if (publishResult.success) {
+          await db.execute(sql`
+            UPDATE listings
+            SET
+              status = 'ACTIVE',
+              publish_finished_ts = NOW(),
+              listing_date = NOW(),
+              published_external_id = ${publishResult.externalListingId},
+              response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
+                livePublishEnabled: true,
+                liveApiCalled: true,
+                publishResult: publishResult.rawResponse,
+              })}::jsonb,
+              last_publish_error = NULL,
+              updated_at = NOW()
+            WHERE id = ${listingId}
+          `);
+
+          await writeAuditLog({
+            actorType: "WORKER",
+            actorId: config.actorId,
+            entityType: "LISTING",
+            entityId: listingId,
+            eventType: "LISTING_PUBLISH_SUCCEEDED",
+            details: {
+              listingId,
+              candidateId,
+              marketplaceKey: "ebay",
+              publishedExternalId: publishResult.externalListingId,
+            },
+          });
+
+          executed++;
+          continue;
+        }
+
+        const message = publishResult.errorMessage ?? "unknown eBay publish failure";
+
+        await db.execute(sql`
+          UPDATE listings
+          SET
+            status = 'PUBLISH_FAILED',
+            publish_finished_ts = NOW(),
+            last_publish_error = ${message},
+            response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
+              livePublishEnabled: true,
+              liveApiCalled: true,
+              publishResult: publishResult.rawResponse,
+              publishError: message,
+            })}::jsonb,
+            updated_at = NOW()
+          WHERE id = ${listingId}
+        `);
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: config.actorId,
+          entityType: "LISTING",
+          entityId: listingId,
+          eventType: "LISTING_PUBLISH_FAILED",
+          details: {
+            listingId,
+            candidateId,
+            marketplaceKey: "ebay",
+            error: message,
+          },
+        });
+
+        failed++;
       } catch (error) {
         const message = safeErrorMessage(error);
 
@@ -331,6 +456,7 @@ export async function runListingExecution(input?: RunListingExecutionInput) {
       skipped,
       failed,
       dailyRemaining: finalCap.remaining,
+      livePublishEnabled,
     };
 
     await logWorkerRun({
@@ -354,7 +480,7 @@ export async function runListingExecution(input?: RunListingExecutionInput) {
       dryRun: config.dryRun,
       durationMs: Date.now() - startedAt,
       error: message,
-      stats: { marketplaceKey: config.marketplaceKey },
+      stats: { marketplaceKey: config.marketplaceKey, livePublishEnabled },
     });
 
     throw error;

@@ -41,6 +41,13 @@ export const listings = pgTable(
 
     payload: jsonb("payload").notNull(),
     response: jsonb("response").$type<unknown>(),
+    publishMarketplace: text("publish_marketplace"),
+    publishStartedTs: timestamp("publish_started_ts"),
+    publishFinishedTs: timestamp("publish_finished_ts"),
+    publishedExternalId: text("published_external_id"),
+    publishAttemptCount: integer("publish_attempt_count").notNull().default(0),
+    lastPublishError: text("last_publish_error"),
+    listingDate: timestamp("listing_date"),
 
     idempotencyKey: text("idempotency_key").notNull(),
 
@@ -134,7 +141,32 @@ export const profitableCandidates = pgTable("profitable_candidates", {
   riskFlags: text("risk_flags").array(),
   decisionStatus: text("decision_status").notNull().default("PENDING"),
   reason: text("reason"),
+  approvedTs: timestamp("approved_ts"),
+  approvedBy: text("approved_by"),
+  listingEligible: boolean("listing_eligible").notNull().default(false),
+  listingEligibleTs: timestamp("listing_eligible_ts"),
+  listingBlockReason: text("listing_block_reason"),
 });
+
+export const listingDailyCaps = pgTable(
+  "listing_daily_caps",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    marketplaceKey: text("marketplace_key").notNull(),
+    capDate: timestamp("cap_date").notNull(),
+    capLimit: integer("cap_limit").notNull(),
+    capUsed: integer("cap_used").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    listingDailyCapsMarketplaceDateUnique: uniqueIndex("listing_daily_caps_marketplace_date_unique").on(
+      t.marketplaceKey,
+      t.capDate
+    ),
+    listingDailyCapsMarketplaceIdx: index("listing_daily_caps_marketplace_idx").on(t.marketplaceKey),
+  })
+);
 
 export const auditLog = pgTable("audit_log", {
   id: uuid("id").defaultRandom().primaryKey(),
