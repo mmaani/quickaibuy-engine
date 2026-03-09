@@ -322,7 +322,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     ? await columnExists("marketplace_prices", "snapshot_ts")
     : false;
 
-  const ebayWhere = pricesHasMarketplaceKey ? "where marketplace_key = 'ebay'" : "";
+  const ebayWhere = pricesHasMarketplaceKey ? "where lower(coalesce(marketplace_key, '')) = 'ebay'" : "";
 
   const totalEbayPrices = marketplacePricesExists
     ? toNum((await runQuery(`select count(*)::int as count from marketplace_prices ${ebayWhere}`))[0]?.count)
@@ -338,7 +338,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           await runQuery(`
             select count(*)::int as count
             from marketplace_prices
-            ${pricesHasMarketplaceKey ? "where marketplace_key = 'ebay' and" : "where"}
+            ${pricesHasMarketplaceKey ? "where lower(coalesce(marketplace_key, '')) = 'ebay' and" : "where"}
             snapshot_ts >= now() - interval '24 hours'
           `)
         )[0]?.count
@@ -356,7 +356,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
             count(*)::int as total_candidates,
             count(*) filter (where decision_status = 'APPROVED')::int as approved,
             count(*) filter (where decision_status = 'REJECTED')::int as rejected,
-            count(*) filter (where decision_status not in ('APPROVED', 'REJECTED'))::int as pending_review,
+            count(*) filter (where upper(coalesce(decision_status, '')) in ('PENDING', 'PENDING_REVIEW', 'RECHECK'))::int as pending_review,
             round(avg(estimated_profit)::numeric, 2) as avg_estimated_profit,
             round(avg(margin_pct)::numeric, 2) as avg_margin_pct,
             round(avg(roi_pct)::numeric, 2) as avg_roi_pct
@@ -390,7 +390,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           await runQuery(`
             select min(calc_ts) as oldest_pending
             from profitable_candidates
-            where decision_status not in ('APPROVED', 'REJECTED')
+            where upper(coalesce(decision_status, '')) in ('PENDING', 'PENDING_REVIEW', 'RECHECK')
           `)
         )[0]?.oldest_pending
       )
@@ -439,7 +439,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         await runQuery(`
           select cap_date, cap_limit::int as cap_limit, cap_used::int as cap_used
           from listing_daily_caps
-          where marketplace_key = 'ebay'
+          where lower(coalesce(marketplace_key, '')) = 'ebay'
           order by cap_date desc
           limit 1
         `)
@@ -558,13 +558,13 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           await runQuery(`
             select count(*)::int as count
             from profitable_candidates pc
-            where pc.marketplace_key = 'ebay'
+            where lower(coalesce(pc.marketplace_key, '')) = 'ebay'
               and pc.decision_status = 'APPROVED'
               and not exists (
                 select 1
                 from listings l
                 where l.candidate_id = pc.id
-                  and l.marketplace_key = 'ebay'
+                  and lower(coalesce(l.marketplace_key, '')) = 'ebay'
                   and l.status in ('PREVIEW', 'READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE', 'PUBLISH_FAILED', 'PAUSED', 'ENDED')
               )
           `)
