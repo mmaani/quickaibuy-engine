@@ -9,6 +9,7 @@ export type ListingExecutionCandidate = {
   price: string;
   status: string;
   idempotencyKey: string | null;
+  payload: unknown;
 };
 
 type GetListingExecutionCandidatesInput = {
@@ -30,7 +31,8 @@ export async function getListingExecutionCandidates(
       l.title,
       l.price::text AS price,
       l.status,
-      l.idempotency_key AS "idempotencyKey"
+      l.idempotency_key AS "idempotencyKey",
+      l.payload
     FROM listings l
     INNER JOIN profitable_candidates pc
       ON pc.id = l.candidate_id
