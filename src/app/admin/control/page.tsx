@@ -1,12 +1,12 @@
 import { headers } from "next/headers";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import RefreshButton from "@/app/_components/RefreshButton";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
 import { enqueueProductMatch } from "@/lib/jobs/enqueueProductMatch";
-import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueTrendExpand";
+import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { isAuthorizedReviewAuthorizationHeader, isReviewConsoleConfigured } from "@/lib/review/auth";
 
@@ -51,7 +51,7 @@ function one(value: string | string[] | undefined): string | null {
 async function requireAdmin() {
   const auth = (await headers()).get("authorization");
   if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(auth)) {
-    redirect("/");
+    notFound();
   }
 }
 
@@ -293,6 +293,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Sea
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <DataTable rows={data.workerQueueHealth.recentWorkerRuns} empty="worker_runs unavailable or empty." />
             <DataTable rows={data.workerQueueHealth.recentWorkerFailures} empty="No recent worker failures." />
+            <DataTable rows={data.workerQueueHealth.recentJobFailures} empty="No recent failed jobs." />
             <DataTable rows={data.workerQueueHealth.recentJobs} empty="jobs unavailable or empty." />
             <DataTable rows={data.workerQueueHealth.recentAuditEvents} empty="audit_log unavailable or empty." />
           </div>

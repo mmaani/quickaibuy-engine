@@ -71,31 +71,4 @@ export async function enqueueProductDiscoverTask(input: {
   );
 }
 
-export async function enqueueMarketplacePriceScan(input?: {
-  limit?: number;
-  productRawId?: string;
-  platform?: "amazon" | "ebay" | "all";
-}) {
-  const limit = Number(input?.limit ?? 100);
-  const productRawId = input?.productRawId ? String(input.productRawId).trim() : undefined;
-  const platform = (input?.platform ?? "all") as "amazon" | "ebay" | "all";
-
-  const jobId = productRawId
-    ? `marketplace-scan-${platform}-${productRawId}`
-    : `marketplace-scan-${platform}-${limit}`;
-
-  return jobsQueue.add(
-    JOB_NAMES.SCAN_MARKETPLACE_PRICE,
-    { limit, productRawId, platform },
-    {
-      jobId,
-      attempts: 3,
-      backoff: {
-        type: "exponential",
-        delay: 2000,
-      },
-      removeOnComplete: 1000,
-      removeOnFail: 5000,
-    }
-  );
-}
+export { enqueueMarketplacePriceScan } from "./enqueueMarketplacePriceScan";
