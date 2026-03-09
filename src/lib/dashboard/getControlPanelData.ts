@@ -1,3 +1,5 @@
+export { getControlPanelData } from "@/lib/control/getControlPanelData";
+export type { ControlPanelData } from "@/lib/control/getControlPanelData";
 import { sql } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { db } from "@/lib/db";
