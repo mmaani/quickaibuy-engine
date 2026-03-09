@@ -157,7 +157,7 @@ async function processCandidatePreviewRows(
       marketplaceKey: context.marketplace,
     });
 
-    const existing = await db
+    const existingPreview = await db
       .select({
         id: listings.id,
         status: listings.status,
@@ -167,18 +167,52 @@ async function processCandidatePreviewRows(
         and(
           eq(listings.candidateId, row.candidateId),
           eq(listings.marketplaceKey, context.marketplace),
-          inArray(listings.status, ["DRAFT", "PREVIEW"])
+          eq(listings.status, "PREVIEW")
         )
       )
       .limit(1);
 
-    if (existing.length && !context.forceRefresh) {
+    const existingLivePath = await db
+      .select({
+        id: listings.id,
+        status: listings.status,
+      })
+      .from(listings)
+      .where(
+        and(
+          eq(listings.candidateId, row.candidateId),
+          eq(listings.marketplaceKey, context.marketplace),
+          inArray(listings.status, ["READY_TO_PUBLISH", "PUBLISH_IN_PROGRESS", "ACTIVE"])
+        )
+      )
+      .limit(1);
+
+    if (existingLivePath.length) {
       skipped++;
       await writeAuditLog({
         actorType: context.actorType,
         actorId: context.actorId,
         entityType: "LISTING",
-        entityId: existing[0].id,
+        entityId: existingLivePath[0].id,
+        eventType: "LISTING_PREVIEW_SKIPPED_LIVE_PATH_EXISTS",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          existingStatus: existingLivePath[0].status,
+          idempotencyKey,
+          source: context.source,
+        },
+      });
+      continue;
+    }
+
+    if (existingPreview.length && !context.forceRefresh) {
+      skipped++;
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: existingPreview[0].id,
         eventType: "LISTING_PREVIEW_SKIPPED_DUPLICATE",
         details: {
           candidateId: row.candidateId,
@@ -234,7 +268,7 @@ async function processCandidatePreviewRows(
     const payloadJson = preview.payload;
     const responseJson = preview.response ?? null;
 
-    if (existing.length && context.forceRefresh) {
+    if (existingPreview.length && context.forceRefresh) {
       await db
         .update(listings)
         .set({
@@ -245,16 +279,22 @@ async function processCandidatePreviewRows(
           response: responseJson,
           idempotencyKey,
           status: "PREVIEW",
+          publish_marketplace: null,
+          publish_started_ts: null,
+          publish_finished_ts: null,
+          published_external_id: null,
+          last_publish_error: null,
+          listing_date: null,
           updatedAt: new Date(),
         })
-        .where(eq(listings.id, existing[0].id));
+        .where(eq(listings.id, existingPreview[0].id));
 
       updated++;
       await writeAuditLog({
         actorType: context.actorType,
         actorId: context.actorId,
         entityType: "LISTING",
-        entityId: existing[0].id,
+        entityId: existingPreview[0].id,
         eventType: "LISTING_PREVIEW_REFRESHED",
         details: {
           candidateId: row.candidateId,
