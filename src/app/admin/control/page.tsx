@@ -31,8 +31,8 @@ function one(value: string | string[] | undefined): string | null {
   return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
 }
 
-function requireAdmin() {
-  const auth = headers().get("authorization");
+async function requireAdmin() {
+  const auth = (await headers()).get("authorization");
   if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(auth)) {
     redirect("/admin/review");
   }
@@ -108,7 +108,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 async function runAction(action: string) {
   "use server";
 
-  requireAdmin();
+  await requireAdmin();
   let message = "Action completed.";
 
   if (action === "supplier") {
@@ -116,13 +116,13 @@ async function runAction(action: string) {
     message = `Supplier discover inserted ${result.insertedCount} rows.`;
   } else if (action === "match") {
     const result = await handleMatchProductsJob({ limit: 25 });
-    message = `Matching scanned ${result.scanned}; upserted ${result.upserted}.`;
+    message = `Matching scanned ${result.scanned}; inserted ${result.inserted}, updated ${result.updated} (total upserts ${result.inserted + result.updated}).`;
   } else if (action === "scan") {
     const result = await handleMarketplaceScanJob({ limit: 25, platform: "ebay" });
     message = `Marketplace scan (eBay) scanned ${result.scanned} rows.`;
   } else if (action === "profit") {
     const result = await runProfitEngine({ limit: 50 });
-    message = `Profit engine processed ${result.processed} matches.`;
+    message = `Profit engine scanned ${result.scanned}; upserted ${result.insertedOrUpdated}; skipped ${result.skipped}; stale deleted ${result.staleDeleted}.`;
   } else if (action === "prepare") {
     const result = await prepareListingPreviews({ limit: 25, marketplace: "ebay" });
     message = `Previews created ${result.created}, updated ${result.updated}, skipped ${result.skipped}.`;
@@ -191,7 +191,7 @@ async function runAction(action: string) {
 }
 
 export default async function ControlPage({ searchParams }: { searchParams?: SearchParams }) {
-  requireAdmin();
+  await requireAdmin();
   const data = await getControlPanelData();
   const message = one(searchParams?.actionMessage);
 
