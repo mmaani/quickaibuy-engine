@@ -163,7 +163,7 @@ async function searchPlatformWithRetry(
 
 export async function scanOneProductTrendMode(
   product: ProductRawLite,
-  requestedPlatform: "amazon" | "ebay" | "all" = "all"
+  requestedPlatform: "amazon" | "ebay" | "all" = "ebay"
 ): Promise<{
   matches: MarketplaceCandidate[];
   acceptedCount: number;
@@ -301,7 +301,7 @@ export async function runTrendMarketplaceScanner(input?: {
   platform?: "amazon" | "ebay" | "all";
 }) {
   const limit = Number(input?.limit ?? 100);
-  const platform = input?.platform ?? "all";
+  const platform = input?.platform ?? "ebay";
 
   const products = input?.productRawId
     ? (() => Promise.resolve(input.productRawId))().then(async (id) => {
