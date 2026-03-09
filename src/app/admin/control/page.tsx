@@ -176,6 +176,8 @@ async function runAction(action: string) {
       details: { rows: statusCounts.rows ?? [] },
     });
     message = "Listing monitor snapshot recorded.";
+  } else {
+    throw new Error(`Unsupported control panel action: ${action}`);
   }
 
   await writeAuditLog({

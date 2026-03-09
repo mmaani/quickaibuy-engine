@@ -57,20 +57,46 @@ async function logRun(args: {
 }
 
 async function handleScanSupplier(data: unknown) {
-  const payload = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
-  const source = String(payload.source ?? payload.supplierKey ?? "unknown");
-  const supplierProductId = String(payload.supplierProductId ?? payload.externalId ?? payload.url ?? nowIso());
-  const url = String(payload.url ?? "");
+  const payload =
+    typeof data === "object" && data !== null
+      ? (data as Record<string, unknown>)
+      : {};
 
-  if (!url) {
+  const supplierKey = String(payload.source ?? payload.supplierKey ?? "unknown");
+  const supplierProductId = String(
+    payload.supplierProductId ??
+      payload.externalId ??
+      payload.url ??
+      `manual-${Date.now()}`
+  );
+  const sourceUrl = String(payload.url ?? payload.sourceUrl ?? "");
+  const title = String(payload.title ?? "Manual supplier record");
+  const currency =
+    payload.currency == null ? null : String(payload.currency);
+  const price =
+    payload.price == null || payload.price === ""
+      ? null
+      : String(payload.price);
+  const snapshotTs = String(payload.snapshotTs ?? nowIso());
+
+  if (!sourceUrl) {
     throw new Error("SCAN_SUPPLIER requires payload.url");
   }
 
-  const raw = {
-    source,
-    url,
-    fetchedAt: nowIso(),
-    note: "placeholder raw record (replace with real crawler output)",
+  const images = Array.isArray(payload.images) ? payload.images : [];
+  const variants = Array.isArray(payload.variants) ? payload.variants : [];
+  const shippingEstimates = Array.isArray(payload.shippingEstimates)
+    ? payload.shippingEstimates
+    : [];
+
+  const rawPayload = {
+    ...payload,
+    normalizedAt: nowIso(),
+    jobType: "SCAN_SUPPLIER",
+    supplierKey,
+    supplierProductId,
+    sourceUrl,
+    snapshotTs,
   };
 
   await pool.query(
@@ -80,14 +106,54 @@ async function handleScanSupplier(data: unknown) {
         supplier_product_id,
         source_url,
         title,
-        raw_payload
+        images,
+        variants,
+        currency,
+        price_min,
+        price_max,
+        availability_status,
+        shipping_estimates,
+        raw_payload,
+        snapshot_ts
       )
-      VALUES ($1, $2, $3, $4, $5::jsonb)
+      VALUES (
+        $1, $2, $3, $4,
+        $5::jsonb,
+        $6::jsonb,
+        $7,
+        $8,
+        $9,
+        $10,
+        $11::jsonb,
+        $12::jsonb,
+        $13::timestamp
+      )
+      ON CONFLICT DO NOTHING
     `,
-    [source, supplierProductId, url, String(payload.title ?? ""), JSON.stringify(raw)]
+    [
+      supplierKey,
+      supplierProductId,
+      sourceUrl,
+      title,
+      JSON.stringify(images),
+      JSON.stringify(variants),
+      currency,
+      price,
+      price,
+      null,
+      JSON.stringify(shippingEstimates),
+      JSON.stringify(rawPayload),
+      snapshotTs,
+    ]
   );
 
-  return { inserted: true, source, supplierProductId, url };
+  return {
+    inserted: true,
+    supplierKey,
+    supplierProductId,
+    sourceUrl,
+    snapshotTs,
+  };
 }
 
 export async function main() {
