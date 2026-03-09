@@ -1,0 +1,318 @@
+.
+├── LICENSE
+├── README.md
+├── drizzle
+│   ├── 0000_even_iron_man.sql
+│   ├── 0001_concerned_skin.sql
+│   ├── 0002_breezy_wraith.sql
+│   ├── 0003_wild_kulan_gath.sql
+│   └── meta
+│       ├── 0000_snapshot.json
+│       ├── 0001_snapshot.json
+│       ├── 0002_snapshot.json
+│       ├── 0003_snapshot.json
+│       └── _journal.json
+├── drizzle.config.ts
+├── eslint.config.mjs
+├── migrations
+│   ├── 20260306_trend_candidates_dedupe_index.sql
+│   ├── 20260307_create_matches.sql
+│   ├── 20260307_marketplace_prices_trend_mode.sql
+│   ├── 20260308_approve_first_listing_readiness_candidate.sql
+│   ├── 20260308_create_listings_table.sql
+│   ├── 20260308_hard_cleanup_legacy_case_rows.sql
+│   ├── 20260308_marketplace_prices_add_image_url.sql
+│   ├── 20260308_match_profit_dedupe.sql
+│   ├── 20260308_normalize_products_raw_supplier_keys.sql
+│   ├── 20260308_normalize_supplier_keys_lowercase.sql
+│   ├── 20260308_rebuild_derived_tables_clean.sql
+│   ├── 20260309_controlled_listing_gate_v1.sql
+│   └── 20260309a_normalize_listing_statuses_for_gate.sql
+├── next-env.d.ts
+├── next.config.ts
+├── package.json
+├── pnpm-lock.yaml
+├── postcss.config.mjs
+├── public
+│   ├── favicon.svg
+│   ├── file.svg
+│   ├── globe.svg
+│   ├── next.svg
+│   ├── quickaibuy-logo.svg
+│   ├── vercel.svg
+│   └── window.svg
+├── repo_tree.txt
+├── review_files
+│   ├── db.ts
+│   ├── marketplacePrices.ts
+│   ├── run_marketplace_scan_direct.ts
+│   ├── schema.ts
+│   └── trendMarketplaceScanner.ts
+├── scripts
+│   ├── approve_profitable_candidate.ts
+│   ├── backfill_listing_gate_for_current_approved.ts
+│   ├── check_audit_log.mjs
+│   ├── check_controlled_listing_gate_v1.mjs
+│   ├── check_listing_execution_gate_v1.mjs
+│   ├── check_listing_lifecycle_counts.mjs
+│   ├── check_listing_previews_ready_source.mjs
+│   ├── check_listing_readiness_prereqs.mjs
+│   ├── check_listing_statuses_after_gate.mjs
+│   ├── check_marketplace_price_urls.mjs
+│   ├── check_marketplace_prices.mjs
+│   ├── check_match_duplicates.mjs
+│   ├── check_matches.mjs
+│   ├── check_matches_latest.mjs
+│   ├── check_missing_cmds.sh
+│   ├── check_monitoring_dashboard_v1.sh
+│   ├── check_products_raw_titles.mjs
+│   ├── check_profit_duplicates.mjs
+│   ├── check_profit_math.mjs
+│   ├── check_profitable_candidates.mjs
+│   ├── check_publish_queue_and_monitor_v1.mjs
+│   ├── check_runtime_db_fingerprint.mjs
+│   ├── check_supplier_queue.ts
+│   ├── check_trend_candidates.mjs
+│   ├── check_trend_candidates.sh
+│   ├── check_trend_candidates_for_signal.mjs
+│   ├── check_trend_signals.mjs
+│   ├── compare_local_and_vercel_env.mjs
+│   ├── confirm_env_local.sh
+│   ├── db_inspect.mjs
+│   ├── debug_marketplace_scan.ts
+│   ├── debug_profit_join.mjs
+│   ├── enqueue_listing_prepare.ts
+│   ├── enqueue_listing_prepare_approved.ts
+│   ├── enqueue_marketplace_scan.ts
+│   ├── enqueue_product_match.ts
+│   ├── enqueue_profit_eval.ts
+│   ├── enqueue_ready_to_publish_listings.ts
+│   ├── enqueue_supplier_discover.ts
+│   ├── enqueue_trend_expand.ts
+│   ├── find_db_file.sh
+│   ├── fix_env_local_missing.sh
+│   ├── inspect_products_raw_keys.mjs
+│   ├── inspect_trend_candidates.ts
+│   ├── install_psql.sh
+│   ├── load_env_local.sh
+│   ├── load_env_local_now.sh
+│   ├── make_matching_dirs.sh
+│   ├── make_needed_dirs.sh
+│   ├── monitor_pipeline.mjs
+│   ├── patch-package-json.mjs
+│   ├── patch_marketplace_scan_summary_labels.py
+│   ├── patch_marketplace_scan_summary_labels_v2.py
+│   ├── patch_marketplace_scan_summary_labels_v3.py
+│   ├── pipeline_dashboard.mjs
+│   ├── probe_runtime.ts
+│   ├── promote_listing_previews_ready.ts
+│   ├── promote_single_listing_ready.ts
+│   ├── pull_vercel_env.sh
+│   ├── push_pipeline_to_main.sh
+│   ├── reclassify_legacy_dry_run_active_listings.ts
+│   ├── reject_profitable_candidate.ts
+│   ├── remove_supplier_discover_job.ts
+│   ├── review_matches.mjs
+│   ├── run_check_audit_log.sh
+│   ├── run_check_marketplace_price_urls.sh
+│   ├── run_check_marketplace_prices.sh
+│   ├── run_check_match_duplicates.sh
+│   ├── run_check_matches.sh
+│   ├── run_check_profit_duplicates.sh
+│   ├── run_check_profitable_candidates.sh
+│   ├── run_check_trend_candidates.sh
+│   ├── run_check_trend_candidates_for_signal.sh
+│   ├── run_check_trend_signals.sh
+│   ├── run_controlled_listing_gate_migration.sh
+│   ├── run_controlled_listing_gate_migration_v2.sh
+│   ├── run_controlled_listing_gate_migration_v3.sh
+│   ├── run_enqueue_listing_prepare.sh
+│   ├── run_enqueue_marketplace_scan.sh
+│   ├── run_enqueue_product_match.sh
+│   ├── run_enqueue_supplier_discover.sh
+│   ├── run_enqueue_trend_expand.sh
+│   ├── run_listing_execution_direct.ts
+│   ├── run_listing_monitor_direct.ts
+│   ├── run_listing_prepare_direct.sh
+│   ├── run_listing_prepare_direct.ts
+│   ├── run_marketplace_prices_maintenance.ts
+│   ├── run_marketplace_scan_direct.ts
+│   ├── run_marketplace_scan_monitoring.ts
+│   ├── run_marketplace_scan_monitoring_latest.ts
+│   ├── run_matches_migration.sh
+│   ├── run_migration.sh
+│   ├── run_pipeline_dashboard.sh
+│   ├── run_product_matcher_direct.sh
+│   ├── run_product_matcher_direct.ts
+│   ├── run_profit_engine_direct.sh
+│   ├── run_profit_engine_direct.ts
+│   ├── run_sql_file.mjs
+│   ├── run_test_product_matcher.sh
+│   ├── run_test_trend_expand.sh
+│   ├── run_trend_candidates_index_migration.sh
+│   ├── run_trend_candidates_migration.sh
+│   ├── show_db_index.sh
+│   ├── sql
+│   │   ├── listings_allow_listed_status.sql
+│   │   ├── marketplace_prices_add_unique_index.sql
+│   │   ├── marketplace_prices_check_duplicates.sql
+│   │   └── marketplace_prices_dedupe.sql
+│   ├── sync_env_from_vercel_and_verify.sh
+│   ├── test_ebay_search.sh
+│   ├── test_ebay_token.sh
+│   ├── test_product_discover.mjs
+│   ├── test_product_matcher.mjs
+│   ├── test_query_budget_allocator.mjs
+│   ├── test_supplier_discover.ts
+│   ├── test_trend_expand.mjs
+│   ├── verify_profit_pipeline.ts
+│   ├── workers
+│   │   ├── check_approved_profitable_candidates.mjs
+│   │   ├── check_listing_gate_readiness.mjs
+│   │   ├── check_listing_prepare_candidates.mjs
+│   │   ├── check_listing_preview_candidate_links.mjs
+│   │   ├── check_listing_preview_duplicates.mjs
+│   │   ├── check_listing_preview_payloads.mjs
+│   │   ├── check_listing_previews_latest.mjs
+│   │   ├── check_listings_status_constraint.mjs
+│   │   ├── check_listings_table_columns.mjs
+│   │   ├── check_pipeline_survivors.mjs
+│   │   ├── check_products_raw_columns.mjs
+│   │   ├── check_profitable_candidates_latest.mjs
+│   │   ├── check_profitable_candidates_summary.mjs
+│   │   ├── delete_orphan_listing_previews.mjs
+│   │   └── trendIngest.ts
+│   ├── zip_existing_matcher_context.sh
+│   ├── zip_marketplace_scanner_review.sh
+│   └── zip_match_stage_context.sh
+├── src
+│   ├── app
+│   │   ├── _components
+│   │   │   └── RefreshButton.tsx
+│   │   ├── admin
+│   │   │   └── review
+│   │   │       └── page.tsx
+│   │   ├── api
+│   │   │   ├── admin
+│   │   │   │   ├── allocate-query-budget
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── enqueue-product-discover
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── enqueue-trend
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── pipeline
+│   │   │   │   │   ├── run-marketplace-scan
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── run-match-products
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── run-profit-engine
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   └── run-supplier-discover
+│   │   │   │   │       └── route.ts
+│   │   │   │   └── review
+│   │   │   │       ├── decision
+│   │   │   │       │   └── route.ts
+│   │   │   │       └── prepare-preview
+│   │   │   │           └── route.ts
+│   │   │   ├── health
+│   │   │   │   ├── review-debug
+│   │   │   │   │   └── route.ts
+│   │   │   │   └── route.ts
+│   │   │   └── queue
+│   │   │       ├── enqueue
+│   │   │       │   └── route.ts
+│   │   │       └── test
+│   │   │           └── route.ts
+│   │   ├── dashboard
+│   │   │   └── page.tsx
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   ├── robots.ts
+│   │   └── sitemap.ts
+│   ├── db
+│   │   ├── client.ts
+│   │   ├── migrations
+│   │   └── schema.ts
+│   ├── lib
+│   │   ├── admin
+│   │   │   └── requirePipelineAdmin.ts
+│   │   ├── audit
+│   │   │   └── writeAuditLog.ts
+│   │   ├── bull.ts
+│   │   ├── bullConnection.ts
+│   │   ├── dashboard
+│   │   │   └── getDashboardData.ts
+│   │   ├── db
+│   │   │   ├── index.ts
+│   │   │   ├── marketplacePrices.ts
+│   │   │   ├── productsRaw.ts
+│   │   │   ├── schema.ts
+│   │   │   └── trendCandidates.ts
+│   │   ├── db.ts
+│   │   ├── jobNames.ts
+│   │   ├── jobs
+│   │   │   ├── enqueueProductMatch.ts
+│   │   │   ├── enqueueTrendExpand.ts
+│   │   │   ├── jobNames.ts
+│   │   │   ├── marketplaceScan.ts
+│   │   │   ├── matchProducts.ts
+│   │   │   ├── supplierDiscover.ts
+│   │   │   └── types.ts
+│   │   ├── listings
+│   │   │   ├── build_amazon_preview.ts
+│   │   │   ├── build_ebay_preview.ts
+│   │   │   ├── build_listing_preview.ts
+│   │   │   ├── checkDailyListingCap.ts
+│   │   │   ├── enqueueReadyToPublishListings.ts
+│   │   │   ├── getListingExecutionCandidates.ts
+│   │   │   ├── idempotency.ts
+│   │   │   ├── markListingReadyToPublish.ts
+│   │   │   ├── prepareListingPreviews.ts
+│   │   │   ├── publishIdempotency.ts
+│   │   │   ├── statuses.ts
+│   │   │   ├── types.ts
+│   │   │   └── validate_listing_preview.ts
+│   │   ├── marketplaces
+│   │   │   ├── amazon.ts
+│   │   │   ├── ebay.ts
+│   │   │   ├── match.ts
+│   │   │   ├── normalizeMarketplaceKey.ts
+│   │   │   └── trendMarketplaceScanner.ts
+│   │   ├── matches
+│   │   │   └── ebayMatchEngine.ts
+│   │   ├── matching
+│   │   │   └── productMatcher.ts
+│   │   ├── products
+│   │   │   ├── discoverProducts.ts
+│   │   │   └── suppliers
+│   │   │       ├── alibaba.ts
+│   │   │       ├── aliexpress.ts
+│   │   │       ├── temu.ts
+│   │   │       └── types.ts
+│   │   ├── profit
+│   │   │   └── profitEngine.ts
+│   │   ├── queryBudget
+│   │   │   └── allocator.ts
+│   │   ├── queue
+│   │   │   └── bullmq.ts
+│   │   ├── queue.ts
+│   │   ├── redis.ts
+│   │   ├── review
+│   │   │   ├── auth.ts
+│   │   │   └── console.ts
+│   │   └── trends
+│   │       ├── expandTrendSignal.ts
+│   │       └── pullTrendSignals.ts
+│   ├── proxy.ts
+│   └── workers
+│       ├── engine.bootstrap.ts
+│       ├── engine.worker.ts
+│       ├── jobs.worker.ts
+│       ├── listingExecute.worker.ts
+│       └── listingMonitor.worker.ts
+├── tsconfig.json
+└── tsconfig.tsbuildinfo
+
+53 directories, 263 files
