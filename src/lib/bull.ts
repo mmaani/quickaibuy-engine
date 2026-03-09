@@ -20,6 +20,8 @@ export const queues = {
   }),
 };
 
+export const engineQueue = queues.engine;
+
 export const queueEvents = {
   engine: new QueueEvents(ENGINE_QUEUE_NAME, {
     connection: bullConnection,
@@ -30,6 +32,8 @@ export const queueEvents = {
 export function jobNameFromUnknown(v: unknown): JobName {
   const s = String(v ?? "");
   const vals = Object.values(JOBS) as string[];
-  if (!vals.includes(s)) throw new Error(`Invalid job name: ${s}`);
+  if (!vals.includes(s)) {
+    throw new Error(`Invalid job name: ${s}`);
+  }
   return s as JobName;
 }

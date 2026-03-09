@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { engineQueue } from "@/src/queue/queues";
+import { engineQueue } from "@/src/lib/bull";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

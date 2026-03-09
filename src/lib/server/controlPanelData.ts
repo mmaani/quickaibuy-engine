@@ -1,120 +1,82 @@
-import { getControlPanelData as getRawControlPanelData } from "@/lib/control/getControlPanelData";
+type JsonValue = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
-export type PanelSection<T = Record<string, unknown>> = {
+async function fetchJsonWithTimeout(url: string, timeoutMs = 4000): Promise<{
   ok: boolean;
   status: number | null;
+  data: JsonValue | null;
   error: string | null;
-  data: T | null;
-};
+}> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-export type SafeControlPanelData = {
-  generatedAt: string;
-  health: PanelSection;
-  queues: PanelSection;
-  workerRuns: PanelSection;
-};
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  return "Unknown error";
-}
-
-async function readHealth(): Promise<PanelSection> {
   try {
-    const raw = await getRawControlPanelData();
-    const queueCounts = raw.health.queue.counts ?? {};
-
-    const data = {
-      db: raw.health.db,
-      redis: raw.health.redis,
-      queue: {
-        status: raw.health.queue.status,
-        detail: raw.health.queue.detail ?? null,
-        counts: queueCounts,
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: {
+        "x-internal-control-panel": "1",
       },
-    };
+    });
 
-    const ok = raw.health.db.status === "ok" && raw.health.redis.status === "ok";
+    const text = await res.text();
+    let data: JsonValue | null = null;
+
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { raw: text };
+    }
 
     return {
-      ok,
-      status: ok ? 200 : 503,
-      error: null,
+      ok: res.ok,
+      status: res.status,
       data,
+      error: res.ok ? null : `HTTP ${res.status}`,
     };
-  } catch (error) {
+  } catch (e) {
     return {
       ok: false,
-      status: 500,
-      error: toErrorMessage(error),
+      status: null,
       data: null,
+      error: e instanceof Error ? e.message : String(e),
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-async function readQueues(): Promise<PanelSection> {
-  try {
-    const raw = await getRawControlPanelData();
-    const queue = raw.health.queue;
-
-    return {
-      ok: queue.status === "ok",
-      status: queue.status === "ok" ? 200 : 503,
-      error: queue.status === "ok" ? null : (queue.detail ?? "Queue degraded"),
-      data: {
-        status: queue.status,
-        detail: queue.detail ?? null,
-        counts: queue.counts ?? {},
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 500,
-      error: toErrorMessage(error),
-      data: null,
-    };
-  }
+function getBaseUrl() {
+  return (
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL?.startsWith("http")
+      ? process.env.VERCEL_PROJECT_PRODUCTION_URL
+      : process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : "http://localhost:3000"
+  );
 }
 
-async function readWorkerRuns(): Promise<PanelSection> {
-  try {
-    const raw = await getRawControlPanelData();
+export async function getControlPanelData() {
+  const baseUrl = getBaseUrl();
 
-    return {
-      ok: true,
-      status: 200,
-      error: null,
-      data: {
-        recentWorkerRuns: raw.workerQueueHealth.recentWorkerRuns,
-        recentWorkerFailures: raw.workerQueueHealth.recentWorkerFailures,
-        recentJobs: raw.workerQueueHealth.recentJobs,
-        recentJobFailures: raw.workerQueueHealth.recentJobFailures,
-        recentAuditEvents: raw.workerQueueHealth.recentAuditEvents,
-        recentWorkerActivityTs: raw.workerQueueHealth.recentWorkerActivityTs,
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 500,
-      error: toErrorMessage(error),
-      data: null,
-    };
-  }
-}
-
-export async function getControlPanelData(): Promise<SafeControlPanelData> {
-  const [health, queues, workerRuns] = await Promise.all([
-    readHealth(),
-    readQueues(),
-    readWorkerRuns(),
+  const [health, queues, workerRuns] = await Promise.allSettled([
+    fetchJsonWithTimeout(`${baseUrl}/api/health`, 4000),
+    fetchJsonWithTimeout(`${baseUrl}/api/ops/queues`, 4000),
+    fetchJsonWithTimeout(`${baseUrl}/api/ops/worker-runs`, 4000),
   ]);
 
   return {
     generatedAt: new Date().toISOString(),
-    health,
-    queues,
-    workerRuns,
+    health: health.status === "fulfilled"
+      ? health.value
+      : { ok: false, status: null, data: null, error: health.reason instanceof Error ? health.reason.message : String(health.reason) },
+
+    queues: queues.status === "fulfilled"
+      ? queues.value
+      : { ok: false, status: null, data: null, error: queues.reason instanceof Error ? queues.reason.message : String(queues.reason) },
+
+    workerRuns: workerRuns.status === "fulfilled"
+      ? workerRuns.value
+      : { ok: false, status: null, data: null, error: workerRuns.reason instanceof Error ? workerRuns.reason.message : String(workerRuns.reason) },
   };
 }
