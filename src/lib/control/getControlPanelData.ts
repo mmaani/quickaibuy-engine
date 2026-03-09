@@ -450,8 +450,19 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const capUsed = toNum(dailyCapRow?.cap_used);
   const capRemaining = capLimit == null || capUsed == null ? null : Math.max(0, capLimit - capUsed);
 
+  const workerRunsHasStartedAt = workerRunsExists ? await columnExists("worker_runs", "started_at") : false;
+  const workerRunsHasFinishedAt = workerRunsExists ? await columnExists("worker_runs", "finished_at") : false;
+  const workerRunsHasUpdatedAt = workerRunsExists ? await columnExists("worker_runs", "updated_at") : false;
+  const workerRunsHasCreatedAt = workerRunsExists ? await columnExists("worker_runs", "created_at") : false;
+
+  const workerRunsOrderExpr = workerRunsHasStartedAt || workerRunsHasFinishedAt
+    ? "coalesce(finished_at, started_at)"
+    : workerRunsHasUpdatedAt || workerRunsHasCreatedAt
+      ? "coalesce(updated_at, created_at)"
+      : "id";
+
   const recentWorkerRuns = workerRunsExists
-    ? await runQuery(`select * from worker_runs order by coalesce(updated_at, created_at) desc nulls last limit 15`)
+    ? await runQuery(`select * from worker_runs order by ${workerRunsOrderExpr} desc nulls last limit 15`)
     : [];
 
   const recentWorkerFailures = workerRunsExists
@@ -459,13 +470,13 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       select *
       from worker_runs
       where lower(coalesce(status, '')) like 'fail%'
-      order by coalesce(updated_at, created_at) desc nulls last
+      order by ${workerRunsOrderExpr} desc nulls last
       limit 10
     `)
     : [];
 
   const recentWorkerActivityTs = workerRunsExists
-    ? toStr((await runQuery(`select max(coalesce(updated_at, created_at)) as ts from worker_runs`))[0]?.ts)
+    ? toStr((await runQuery(`select max(${workerRunsOrderExpr}) as ts from worker_runs`))[0]?.ts)
     : null;
 
   const recentJobs = jobsExists
