@@ -1,20 +1,11 @@
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
 import { getControlPanelData } from "@/lib/server/controlPanelData";
-import { isAuthorizedReviewAuthorizationHeader, isReviewConsoleConfigured } from "@/lib/review/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-async function requireAdmin() {
-  const auth = (await headers()).get("authorization");
-  if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(auth)) {
-    notFound();
-  }
-}
-
-function StatusBadge({ ok }: { ok: boolean }) {
+function Badge({ ok }: { ok: boolean }) {
   return (
     <span
       style={{
@@ -22,7 +13,7 @@ function StatusBadge({ ok }: { ok: boolean }) {
         padding: "4px 10px",
         borderRadius: 999,
         fontSize: 12,
-        fontWeight: 600,
+        fontWeight: 700,
         background: ok ? "#DCFCE7" : "#FEE2E2",
         color: ok ? "#166534" : "#991B1B",
       }}
@@ -37,13 +28,13 @@ function Card({
   ok,
   status,
   error,
-  body,
+  children,
 }: {
   title: string;
   ok: boolean;
   status: number | null;
   error: string | null;
-  body: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <section
@@ -51,56 +42,51 @@ function Card({
         border: "1px solid #E5E7EB",
         borderRadius: 16,
         padding: 20,
-        background: "#FFFFFF",
+        background: "#fff",
         boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 18 }}>{title}</h2>
-        <StatusBadge ok={ok} />
+        <Badge ok={ok} />
       </div>
 
-      <div style={{ fontSize: 14, color: "#4B5563", marginBottom: 10 }}>
+      <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 10 }}>
         HTTP: {status ?? "n/a"}
       </div>
 
       {error ? (
-        <div style={{ marginBottom: 10, color: "#B91C1C", fontSize: 14 }}>
+        <div style={{ color: "#B91C1C", marginBottom: 10, fontSize: 13 }}>
           Error: {error}
         </div>
       ) : null}
 
-      <div>{body}</div>
+      {children}
     </section>
   );
 }
 
 export default async function AdminControlPage() {
-  await requireAdmin();
-
-  const data = await getControlPanelData();
-
-  const healthData = (data.health.data ?? {}) as Record<string, unknown>;
-  const queueData = (data.queues.data ?? {}) as Record<string, unknown>;
-  const workerRunsData = (data.workerRuns.data ?? {}) as Record<string, unknown>;
+  const authHeader = (await headers()).get("authorization");
+  const panel = await getControlPanelData(authHeader);
 
   return (
     <main
       style={{
-        fontFamily: "var(--font-inter, Arial, sans-serif)",
+        padding: 24,
         background: "#F9FAFB",
         minHeight: "100vh",
-        padding: 24,
+        fontFamily: "Arial, sans-serif",
       }}
     >
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+      <div style={{ maxWidth: 1400, margin: "0 auto" }}>
         <header style={{ marginBottom: 24 }}>
-          <h1 style={{ margin: 0, fontSize: 32 }}>Admin Control Panel</h1>
+          <h1 style={{ margin: 0, fontSize: 30 }}>QuickAIBuy Control Panel</h1>
           <p style={{ marginTop: 8, color: "#6B7280" }}>
-            Infrastructure status, queue visibility, and worker activity.
+            Live infrastructure and worker visibility.
           </p>
-          <p style={{ marginTop: 8, color: "#9CA3AF", fontSize: 13 }}>
-            Generated at: {data.generatedAt}
+          <p style={{ marginTop: 8, color: "#9CA3AF", fontSize: 12 }}>
+            Generated at: {panel.generatedAt}
           </p>
         </header>
 
@@ -113,39 +99,47 @@ export default async function AdminControlPage() {
         >
           <Card
             title="System Health"
-            ok={data.health.ok}
-            status={data.health.status}
-            error={data.health.error}
-            body={
-              <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontSize: 13 }}>
-                {JSON.stringify(healthData, null, 2)}
-              </pre>
-            }
-          />
+            ok={panel.health.ok}
+            status={panel.health.status}
+            error={panel.health.error}
+          >
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+              {JSON.stringify(panel.health.data, null, 2)}
+            </pre>
+          </Card>
 
           <Card
             title="Queue Status"
-            ok={data.queues.ok}
-            status={data.queues.status}
-            error={data.queues.error}
-            body={
-              <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontSize: 13 }}>
-                {JSON.stringify(queueData, null, 2)}
-              </pre>
-            }
-          />
+            ok={panel.queues.ok}
+            status={panel.queues.status}
+            error={panel.queues.error}
+          >
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+              {JSON.stringify(panel.queues.data, null, 2)}
+            </pre>
+          </Card>
 
           <Card
             title="Worker Runs"
-            ok={data.workerRuns.ok}
-            status={data.workerRuns.status}
-            error={data.workerRuns.error}
-            body={
-              <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontSize: 13 }}>
-                {JSON.stringify(workerRunsData, null, 2)}
-              </pre>
-            }
-          />
+            ok={panel.workerRuns.ok}
+            status={panel.workerRuns.status}
+            error={panel.workerRuns.error}
+          >
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+              {JSON.stringify(panel.workerRuns.data, null, 2)}
+            </pre>
+          </Card>
+
+          <Card
+            title="Recent Errors / Audit"
+            ok={panel.errors.ok}
+            status={panel.errors.status}
+            error={panel.errors.error}
+          >
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
+              {JSON.stringify(panel.errors.data, null, 2)}
+            </pre>
+          </Card>
         </div>
       </div>
     </main>

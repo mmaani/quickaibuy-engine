@@ -16,8 +16,8 @@ export function proxy(request: NextRequest) {
   const configured = getReviewConsoleCredentials();
 
   if (!configured) {
-    return new NextResponse("Review console auth is not configured.", {
-      status: 503,
+    return new NextResponse("Missing REVIEW_CONSOLE_USERNAME or REVIEW_CONSOLE_PASSWORD", {
+      status: 500,
       headers: {
         "Cache-Control": "no-store",
       },
@@ -35,7 +35,9 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/admin/review/:path*",
+    "/admin/control/:path*",
     "/api/admin/review/:path*",
     "/api/admin/pipeline/:path*",
+    "/api/ops/:path*",
   ],
 };

@@ -1,20 +1,23 @@
 import dotenv from "dotenv";
 
-// Load local env FIRST (Codespaces/local dev)
 dotenv.config({ path: ".env.local" });
+dotenv.config();
 
 import { Worker } from "bullmq";
 import { bullConnection } from "@/src/lib/bull";
 import { JOBS } from "@/src/lib/jobNames";
 import { BULL_PREFIX, ENGINE_QUEUE_NAME } from "@/src/lib/queue";
 import { pool } from "@/lib/db";
+import { log } from "@/lib/logger";
 
 function nowIso() {
   return new Date().toISOString();
 }
 
+type RunStatus = "STARTED" | "SUCCEEDED" | "FAILED";
+
 async function logRun(args: {
-  status: "STARTED" | "SUCCEEDED" | "FAILED";
+  status: RunStatus;
   jobName: string;
   jobId: string;
   durationMs?: number;
@@ -22,18 +25,33 @@ async function logRun(args: {
   meta?: unknown;
 }) {
   const { status, jobName, jobId, durationMs, error, meta } = args;
+
   await pool.query(
     `
-      INSERT INTO audit_log (actor_type, actor_id, entity_type, entity_id, event_type, details)
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+      INSERT INTO worker_runs (
+        worker,
+        job_name,
+        job_id,
+        status,
+        duration_ms,
+        ok,
+        error,
+        stats,
+        started_at,
+        finished_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW(), CASE WHEN $9 THEN NOW() ELSE NULL END)
     `,
     [
-      "worker",
       "engine.worker",
-      "job",
+      jobName,
       jobId,
       status,
-      JSON.stringify({ jobName, durationMs: durationMs ?? null, error: error ?? null, meta: meta ?? {} }),
+      durationMs ?? null,
+      status === "SUCCEEDED",
+      error ?? null,
+      JSON.stringify(meta ?? {}),
+      status !== "STARTED",
     ]
   );
 }
@@ -43,7 +61,10 @@ async function handleScanSupplier(data: unknown) {
   const source = String(payload.source ?? payload.supplierKey ?? "unknown");
   const supplierProductId = String(payload.supplierProductId ?? payload.externalId ?? payload.url ?? nowIso());
   const url = String(payload.url ?? "");
-  if (!url) throw new Error("SCAN_SUPPLIER requires payload.url");
+
+  if (!url) {
+    throw new Error("SCAN_SUPPLIER requires payload.url");
+  }
 
   const raw = {
     source,
@@ -70,8 +91,8 @@ async function handleScanSupplier(data: unknown) {
 }
 
 export async function main() {
-  console.log(`[engine.worker] starting at ${nowIso()}`);
-  console.log(`[engine.worker] env check`, {
+  log("info", "worker.starting", {
+    at: nowIso(),
     hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
     hasDatabaseUrlDirect: Boolean(process.env.DATABASE_URL_DIRECT),
     hasRedisUrl: Boolean(process.env.REDIS_URL),
@@ -81,7 +102,19 @@ export async function main() {
     ENGINE_QUEUE_NAME,
     async (job) => {
       const started = Date.now();
-      await logRun({ status: "STARTED", jobName: job.name, jobId: String(job.id) });
+      const jobId = String(job.id);
+
+      log("info", "job.started", {
+        jobId,
+        jobName: job.name,
+        data: job.data,
+      });
+
+      await logRun({
+        status: "STARTED",
+        jobName: job.name,
+        jobId,
+      });
 
       try {
         let result: unknown;
@@ -90,32 +123,48 @@ export async function main() {
           case JOBS.SCAN_SUPPLIER:
             result = await handleScanSupplier(job.data);
             break;
-
           default:
             throw new Error(`Unhandled job name: ${job.name}`);
         }
 
+        const durationMs = Date.now() - started;
+
         await logRun({
           status: "SUCCEEDED",
           jobName: job.name,
-          jobId: String(job.id),
-          durationMs: Date.now() - started,
+          jobId,
+          durationMs,
           meta: { result },
         });
 
+        log("info", "job.succeeded", {
+          jobId,
+          jobName: job.name,
+          durationMs,
+          result,
+        });
+
         return result;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const durationMs = Date.now() - started;
 
         await logRun({
           status: "FAILED",
           jobName: job.name,
-          jobId: String(job.id),
-          durationMs: Date.now() - started,
-          error: msg,
+          jobId,
+          durationMs,
+          error: message,
         });
 
-        throw e;
+        log("error", "job.failed", {
+          jobId,
+          jobName: job.name,
+          durationMs,
+          error: message,
+        });
+
+        throw error;
       }
     },
     {
@@ -126,17 +175,26 @@ export async function main() {
   );
 
   worker.on("failed", (job, err) => {
-    console.error(`[engine.worker] job failed`, { id: job?.id, name: job?.name, err: err?.message });
+    log("error", "worker.failed.event", {
+      jobId: job?.id ? String(job.id) : null,
+      jobName: job?.name ?? null,
+      error: err?.message ?? String(err),
+    });
   });
 
   worker.on("completed", (job) => {
-    console.log(`[engine.worker] job completed`, { id: job.id, name: job.name });
+    log("info", "worker.completed.event", {
+      jobId: String(job.id),
+      jobName: job.name,
+    });
   });
 
-  console.log(`[engine.worker] ready`);
+  log("info", "worker.ready");
 }
 
-main().catch((e) => {
-  console.error("[engine.worker] fatal", e);
+main().catch((error) => {
+  log("error", "worker.fatal", {
+    error: error instanceof Error ? error.message : String(error),
+  });
   process.exit(1);
 });

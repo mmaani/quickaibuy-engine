@@ -1,31 +1,36 @@
-type JsonValue = Record<string, unknown> | unknown[] | string | number | boolean | null;
-
-async function fetchJsonWithTimeout(url: string, timeoutMs = 4000): Promise<{
+type PanelResult = {
   ok: boolean;
   status: number | null;
-  data: JsonValue | null;
+  data: unknown;
   error: string | null;
-}> {
+};
+
+function getBaseUrl() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl) return appUrl;
+
+  const vercelUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (!vercelUrl) return "http://localhost:3000";
+
+  return vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
+}
+
+async function fetchJsonWithTimeout(
+  url: string,
+  authHeader: string | null,
+  timeoutMs = 4000
+): Promise<PanelResult> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
       cache: "no-store",
       signal: controller.signal,
-      headers: {
-        "x-internal-control-panel": "1",
-      },
+      headers: authHeader ? { authorization: authHeader } : undefined,
     });
 
-    const text = await res.text();
-    let data: JsonValue | null = null;
-
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { raw: text };
-    }
+    const data = await res.json().catch(() => null);
 
     return {
       ok: res.ok,
@@ -33,50 +38,43 @@ async function fetchJsonWithTimeout(url: string, timeoutMs = 4000): Promise<{
       data,
       error: res.ok ? null : `HTTP ${res.status}`,
     };
-  } catch (e) {
+  } catch (error) {
     return {
       ok: false,
       status: null,
       data: null,
-      error: e instanceof Error ? e.message : String(e),
+      error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(t);
   }
 }
 
-function getBaseUrl() {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.VERCEL_PROJECT_PRODUCTION_URL?.startsWith("http")
-      ? process.env.VERCEL_PROJECT_PRODUCTION_URL
-      : process.env.VERCEL_PROJECT_PRODUCTION_URL
-      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-      : "http://localhost:3000"
-  );
-}
-
-export async function getControlPanelData() {
+export async function getControlPanelData(authHeader: string | null) {
   const baseUrl = getBaseUrl();
 
-  const [health, queues, workerRuns] = await Promise.allSettled([
-    fetchJsonWithTimeout(`${baseUrl}/api/health`, 4000),
-    fetchJsonWithTimeout(`${baseUrl}/api/ops/queues`, 4000),
-    fetchJsonWithTimeout(`${baseUrl}/api/ops/worker-runs`, 4000),
+  const [health, queues, workerRuns, errors] = await Promise.allSettled([
+    fetchJsonWithTimeout(`${baseUrl}/api/health`, authHeader),
+    fetchJsonWithTimeout(`${baseUrl}/api/ops/queues`, authHeader),
+    fetchJsonWithTimeout(`${baseUrl}/api/ops/worker-runs`, authHeader),
+    fetchJsonWithTimeout(`${baseUrl}/api/ops/errors`, authHeader),
   ]);
+
+  const normalize = (result: PromiseSettledResult<PanelResult>): PanelResult => {
+    if (result.status === "fulfilled") return result.value;
+    return {
+      ok: false,
+      status: null,
+      data: null,
+      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+    };
+  };
 
   return {
     generatedAt: new Date().toISOString(),
-    health: health.status === "fulfilled"
-      ? health.value
-      : { ok: false, status: null, data: null, error: health.reason instanceof Error ? health.reason.message : String(health.reason) },
-
-    queues: queues.status === "fulfilled"
-      ? queues.value
-      : { ok: false, status: null, data: null, error: queues.reason instanceof Error ? queues.reason.message : String(queues.reason) },
-
-    workerRuns: workerRuns.status === "fulfilled"
-      ? workerRuns.value
-      : { ok: false, status: null, data: null, error: workerRuns.reason instanceof Error ? workerRuns.reason.message : String(workerRuns.reason) },
+    health: normalize(health),
+    queues: normalize(queues),
+    workerRuns: normalize(workerRuns),
+    errors: normalize(errors),
   };
 }

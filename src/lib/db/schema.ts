@@ -281,3 +281,50 @@ export const queryCache = pgTable(
     queryCacheMarketplaceLastRunIdx: index("query_cache_marketplace_last_run_idx").on(t.marketplace, t.lastRunAt),
   })
 );
+
+export const workerRuns = pgTable(
+  "worker_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    worker: text("worker").notNull(),
+    jobName: text("job_name").notNull(),
+    jobId: text("job_id").notNull(),
+    status: text("status").notNull(),
+    durationMs: integer("duration_ms"),
+    ok: boolean("ok").notNull().default(false),
+    error: text("error"),
+    stats: jsonb("stats").$type<unknown>(),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (t) => ({
+    workerRunsStartedIdx: index("worker_runs_started_idx").on(t.startedAt),
+    workerRunsStatusIdx: index("worker_runs_status_idx").on(t.status),
+    workerRunsJobIdx: index("worker_runs_job_idx").on(t.jobName, t.jobId),
+  })
+);
+
+export const orders = pgTable(
+  "orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    listingId: uuid("listing_id"),
+    marketplaceKey: text("marketplace_key").notNull(),
+    orderId: text("order_id").notNull(),
+    status: text("status").notNull().default("NEW"),
+    quantity: integer("quantity").notNull().default(1),
+    totalAmount: numeric("total_amount", { precision: 12, scale: 2 }),
+    currency: text("currency").default("USD"),
+    rawPayload: jsonb("raw_payload").$type<unknown>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    ordersMarketplaceIdx: index("orders_marketplace_idx").on(t.marketplaceKey),
+    ordersStatusIdx: index("orders_status_idx").on(t.status),
+    ordersUniqueMarketplaceOrder: uniqueIndex("orders_unique_marketplace_order").on(
+      t.marketplaceKey,
+      t.orderId
+    ),
+  })
+);

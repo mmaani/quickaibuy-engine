@@ -8,21 +8,10 @@ export async function GET() {
   try {
     const result = await pool.query(
       `
-        SELECT
-          id,
-          worker,
-          job_name,
-          job_id,
-          status,
-          duration_ms,
-          ok,
-          error,
-          stats,
-          started_at,
-          finished_at
-        FROM worker_runs
-        ORDER BY started_at DESC
-        LIMIT 20
+        SELECT id, event_ts, actor_type, actor_id, entity_type, entity_id, event_type, details
+        FROM audit_log
+        ORDER BY event_ts DESC
+        LIMIT 30
       `
     );
 
