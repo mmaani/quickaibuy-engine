@@ -10,6 +10,6 @@ export async function handleMarketplaceScanJob(data: MarketplaceScanJobData) {
   return runTrendMarketplaceScanner({
     limit: Number(data?.limit ?? 100),
     productRawId: data?.productRawId ? String(data.productRawId).trim() : undefined,
-    platform: (data?.platform ?? "all") as "amazon" | "ebay" | "all",
+    platform: (data?.platform ?? "ebay") as "amazon" | "ebay" | "all",
   });
 }

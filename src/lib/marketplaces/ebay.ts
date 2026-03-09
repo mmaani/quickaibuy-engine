@@ -147,10 +147,13 @@ export async function searchEbay(query: string, limit = 10): Promise<Marketplace
 
   return items.map((item: EbayItemSummary) => {
     const shipping = Array.isArray(item.shippingOptions) ? item.shippingOptions[0] : null;
+    const rawItemId = item.itemId ? String(item.itemId) : "";
+    const legacyItemId = extractLegacyItemId(item);
+    const marketplaceListingId = rawItemId || (legacyItemId ? `v1|${legacyItemId}|0` : "");
 
     return {
       marketplaceKey: "ebay",
-      marketplaceListingId: String(item.itemId || item.legacyItemId || ""),
+      marketplaceListingId,
       matchedTitle: String(item.title || ""),
       price: item.price?.value != null ? Number(item.price.value) : null,
       shippingPrice:

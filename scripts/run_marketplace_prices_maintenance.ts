@@ -18,14 +18,26 @@ async function main() {
   `);
   console.log(before.rows);
 
-  console.log("\n[2] Removing duplicates, keeping newest by snapshot_ts...");
+  console.log("\n[2] Removing duplicates, keeping newest valid row first...");
   const deleted = await db.execute(sql`
     WITH ranked AS (
       SELECT
         id,
         ROW_NUMBER() OVER (
           PARTITION BY marketplace_key, marketplace_listing_id, product_raw_id
-          ORDER BY snapshot_ts DESC, id DESC
+          ORDER BY
+            CASE
+              WHEN price IS NOT NULL
+                AND price > 0
+                AND currency IS NOT NULL
+                AND BTRIM(currency) <> ''
+                AND product_page_url IS NOT NULL
+                AND BTRIM(product_page_url) <> ''
+              THEN 1
+              ELSE 0
+            END DESC,
+            snapshot_ts DESC,
+            id DESC
         ) AS rn
       FROM marketplace_prices
     )
