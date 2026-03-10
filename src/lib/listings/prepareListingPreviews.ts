@@ -18,15 +18,24 @@ type PrepareListingPreviewForCandidateOptions = {
   forceRefresh?: boolean;
 };
 
-type PrepareListingPreviewResult = {
-  ok: boolean;
-  candidateId: string;
-  marketplace: ListingPreviewMarketplace;
+type PrepareListingPreviewCounters = {
   scanned: number;
   created: number;
   updated: number;
   skipped: number;
   failed: number;
+  };
+
+type PrepareListingPreviewResult = PrepareListingPreviewCounters & {
+  ok: boolean;
+  candidateId: string;
+  marketplace: ListingPreviewMarketplace;
+  forceRefresh: boolean;
+};
+
+type PrepareListingPreviewsResult = PrepareListingPreviewCounters & {
+  ok: boolean;
+  marketplace: ListingPreviewMarketplace;
   forceRefresh: boolean;
 };
 
@@ -392,7 +401,7 @@ async function processCandidatePreviewRows(
   };
 }
 
-export async function prepareListingPreviews(input?: PrepareListingPreviewsInput) {
+export async function prepareListingPreviews(input?: PrepareListingPreviewsInput): Promise<PrepareListingPreviewsResult> {
   const limit = Number(input?.limit ?? 20);
   const marketplace = (input?.marketplace ?? "ebay") as ListingPreviewMarketplace;
   const forceRefresh = Boolean(input?.forceRefresh);
