@@ -174,6 +174,12 @@ export default async function DashboardPage() {
                   Open Operational Control Panel
                 </a>
                 <a
+                  href="/admin/listings"
+                  className="rounded-2xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-100"
+                >
+                  Open Listings Console
+                </a>
+                <a
                   href="/admin/review"
                   className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100"
                 >
