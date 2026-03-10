@@ -61,3 +61,28 @@ For production, QuickAIBuy uses:
   - fetches inventory locations
   - verifies configured `EBAY_MERCHANT_LOCATION_KEY` exists
   - exits non-zero if missing
+
+## eBay 25018 Handoff Checklist (Account Readiness)
+
+If guarded publish fails with eBay error `25018` ("Incomplete account information"), complete seller-account setup directly in eBay before retrying.
+
+1. Confirm the seller account is fully activated in eBay Seller Hub.
+2. Confirm identity/KYC and payout onboarding are complete for the seller account.
+3. Confirm a valid primary return address and contact details exist.
+4. Confirm at least one enabled payment policy exists and matches `EBAY_PAYMENT_POLICY_ID`.
+5. Confirm at least one enabled return policy exists and matches `EBAY_RETURN_POLICY_ID`.
+6. Confirm at least one enabled fulfillment policy exists and matches `EBAY_FULFILLMENT_POLICY_ID`.
+7. Confirm the configured inventory location exists and is enabled:
+   - run `pnpm exec tsx scripts/check_ebay_inventory_location.ts`
+8. Confirm eBay User-token app consent is active for the same seller:
+   - `WEBSITE_URL/privacy`
+   - `WEBSITE_URL/ebay/auth/accepted`
+   - `WEBSITE_URL/ebay/auth/declined`
+9. Re-run one guarded single-row publish retry only after all checks pass.
+
+Recommended retry sequence:
+
+1. `pnpm exec tsx scripts/check_ebay_live_required_env.ts`
+2. `pnpm exec tsx scripts/fix_single_listing_payload_for_retry.ts <listing_id> China CN`
+3. `pnpm exec tsx scripts/promote_single_listing_ready.ts <listing_id>`
+4. `ENABLE_EBAY_LIVE_PUBLISH=true pnpm exec tsx scripts/run_first_guarded_live_publish.ts <listing_id>`
