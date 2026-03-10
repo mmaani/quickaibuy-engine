@@ -1,490 +1,137 @@
-import { db, pool } from "@/lib/db";
+import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { getDailyListingCap, reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { publishToEbayListing } from "@/lib/marketplaces/ebayPublish";
 
-type RunListingExecutionInput =
-  | number
-  | {
-      limit?: number;
-      dailyCap?: number;
-      marketplaceKey?: "ebay";
-      dryRun?: boolean;
-      actorId?: string;
-    };
-
-type WorkerRunStatus = "STARTED" | "SUCCEEDED" | "FAILED";
-
-function normalizeInput(input?: RunListingExecutionInput) {
-  if (typeof input === "number") {
-    return {
-      limit: input,
-      dailyCap: input,
-      marketplaceKey: "ebay" as const,
-      dryRun: true,
-      actorId: "run_listing_execution_direct",
-    };
-  }
-
-  return {
-    limit: Number(input?.limit ?? 10),
-    dailyCap: Number(input?.dailyCap ?? process.env.LISTING_DAILY_CAP ?? "10"),
-    marketplaceKey: (input?.marketplaceKey ?? "ebay") as "ebay",
-    dryRun: input?.dryRun ?? true,
-    actorId: input?.actorId ?? "listingExecute.worker",
-  };
+function isLivePublishEnabled(): boolean {
+  return String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").toLowerCase() === "true";
 }
 
-function isEbayLivePublishEnabled(): boolean {
-  return String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").trim().toLowerCase() === "true";
-}
-
-function safeErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  return String(error ?? "unknown publish error");
-}
-
-async function logWorkerRun(args: {
-  status: WorkerRunStatus;
-  jobId: string;
-  actorId: string;
-  dryRun: boolean;
-  durationMs?: number;
-  error?: string | null;
-  stats?: unknown;
+export async function runListingExecution(opts?: {
+  limit?: number
+  dryRun?: boolean
 }) {
-  await pool.query(
-    `
-      INSERT INTO worker_runs (
-        worker,
-        job_name,
-        job_id,
-        status,
-        duration_ms,
-        ok,
-        error,
-        stats,
-        started_at,
-        finished_at
-      )
-      VALUES (
-        'listingExecute.worker',
-        'LISTING_EXECUTE',
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6::jsonb,
-        NOW(),
-        CASE WHEN $7 THEN NOW() ELSE NULL END
-      )
-    `,
-    [
-      args.jobId,
-      args.status,
-      args.durationMs ?? null,
-      args.status === "SUCCEEDED",
-      args.error ?? null,
-      JSON.stringify({ actorId: args.actorId, dryRun: args.dryRun, ...(args.stats ?? {}) }),
-      args.status !== "STARTED",
-    ]
-  );
-}
 
-export async function runListingExecution(input?: RunListingExecutionInput) {
-  const config = normalizeInput(input);
-  const startedAt = Date.now();
-  const runId = crypto.randomUUID();
-  const livePublishEnabled = isEbayLivePublishEnabled();
+  const limit = opts?.limit ?? 5
+  const dryRun = opts?.dryRun ?? true
+  const livePublishEnabled = isLivePublishEnabled()
 
-  await logWorkerRun({
-    status: "STARTED",
-    jobId: runId,
-    actorId: config.actorId,
-    dryRun: config.dryRun,
-    stats: { livePublishEnabled },
-  });
+  const rows = await getListingExecutionCandidates({
+    marketplace: "ebay",
+    limit
+  })
 
-  try {
-    if (config.marketplaceKey !== "ebay") {
-      throw new Error("v1 live listing execution only supports ebay");
+  let executed = 0
+  let skipped = 0
+  let failed = 0
+
+  for (const row of rows) {
+
+    const listingId = row.id
+
+    if (!listingId) {
+      skipped++
+      continue
     }
 
-    const cap = await getDailyListingCap({
-      marketplaceKey: config.marketplaceKey,
-      dailyCap: config.dailyCap,
-    });
+    /**
+     * DRY RUN PATH
+     * never change lifecycle state
+     */
+    if (dryRun || !livePublishEnabled) {
 
-    const fetchLimit = Math.max(
-      0,
-      Math.min(
-        Number.isFinite(config.limit) ? config.limit : 10,
-        config.dryRun ? config.limit : cap.remaining
-      )
-    );
-
-    const candidates = await getListingExecutionCandidates({
-      limit: fetchLimit,
-      marketplace: "ebay",
-    });
-
-    if (!config.dryRun && cap.remaining === 0) {
-      console.log("[listing-execute] daily cap reached");
-      const capReached = {
-        ok: true,
-        marketplaceKey: "ebay",
-        dryRun: false,
-        eligible: candidates.length,
-        executed: 0,
-        skipped: 0,
-        failed: 0,
-        dailyRemaining: 0,
-        livePublishEnabled,
-      };
-
-      await logWorkerRun({
-        status: "SUCCEEDED",
-        jobId: runId,
-        actorId: config.actorId,
-        dryRun: config.dryRun,
-        durationMs: Date.now() - startedAt,
-        stats: capReached,
-      });
-
-      return capReached;
-    }
-
-    let executed = 0;
-    let skipped = 0;
-    let failed = 0;
-
-    console.log("[listing-execute] candidates", {
-      marketplaceKey: config.marketplaceKey,
-      dryRun: config.dryRun,
-      requestedLimit: config.limit,
-      fetched: candidates.length,
-      dailyRemaining: cap.remaining,
-      livePublishEnabled,
-    });
-
-    for (const row of candidates) {
-      if (!row?.id) {
-        skipped++;
-        continue;
-      }
-
-      const listingId = row.id;
-      const candidateId = row.candidateId;
-
-      if (config.dryRun) {
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: config.actorId,
-          entityType: "LISTING",
-          entityId: listingId,
-          eventType: "LISTING_PUBLISH_DRY_RUN_STARTED",
-          details: {
-            listingId,
-            candidateId,
-            marketplaceKey: "ebay",
-            status: row.status,
-            idempotencyKey: row.idempotencyKey,
-          },
-        });
-
-        const checked = await db.execute(sql`
-          UPDATE listings
-          SET
-            response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
-              dryRun: true,
-              liveApiCalled: false,
-              executionCheckedAt: new Date().toISOString(),
-            })}::jsonb,
-            updated_at = NOW(),
-            last_publish_error = NULL
-          WHERE id = ${listingId}
-            AND status = 'READY_TO_PUBLISH'
-          RETURNING id
-        `);
-
-        if (checked.rows.length === 0) {
-          skipped++;
-          continue;
-        }
-
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: config.actorId,
-          entityType: "LISTING",
-          entityId: listingId,
-          eventType: "LISTING_PUBLISH_DRY_RUN_OK",
-          details: {
-            listingId,
-            candidateId,
-            marketplaceKey: "ebay",
-            dryRun: true,
-            liveApiCalled: false,
-          },
-        });
-
-        executed++;
-        continue;
-      }
-
-      const reserved = await reserveDailyListingSlot({
-        marketplaceKey: "ebay",
-        dailyCap: config.dailyCap,
-      });
-
-      if (!reserved.allowed) {
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: config.actorId,
-          entityType: "LISTING",
-          entityId: listingId,
-          eventType: "LISTING_PUBLISH_SKIPPED_CAP_REACHED",
-          details: {
-            listingId,
-            candidateId,
-            marketplaceKey: "ebay",
-            dailyCap: reserved.dailyCap,
-            used: reserved.used,
-            remaining: reserved.remaining,
-          },
-        });
-        skipped++;
-        break;
-      }
-
-      const moved = await db.execute(sql`
+      await db.execute(sql`
         UPDATE listings
         SET
-          status = 'PUBLISH_IN_PROGRESS',
-          publish_marketplace = 'ebay',
-          publish_started_ts = NOW(),
-          publish_attempt_count = COALESCE(publish_attempt_count, 0) + 1,
-          last_publish_error = NULL,
+          response = COALESCE(response, '{}'::jsonb) || '{"dryRun":true,"liveApiCalled":false}'::jsonb,
           updated_at = NOW()
         WHERE id = ${listingId}
-          AND status = 'READY_TO_PUBLISH'
-        RETURNING id
-      `);
-
-      if (moved.rows.length === 0) {
-        skipped++;
-        continue;
-      }
+        AND status = 'READY_TO_PUBLISH'
+      `)
 
       await writeAuditLog({
         actorType: "WORKER",
-        actorId: config.actorId,
+        actorId: "listingExecute.worker",
         entityType: "LISTING",
         entityId: listingId,
-        eventType: "LISTING_PUBLISH_STARTED",
+        eventType: "LISTING_EXECUTION_DRY_RUN",
         details: {
-          listingId,
-          candidateId,
-          marketplaceKey: "ebay",
-          dryRun: false,
-          idempotencyKey: row.idempotencyKey,
-          livePublishEnabled,
-        },
-      });
-
-      try {
-        if (!livePublishEnabled) {
-          const drySafeResponse = {
-            dryRun: false,
-            liveApiCalled: false,
-            livePublishEnabled: false,
-            reason: "ENABLE_EBAY_LIVE_PUBLISH=false",
-            executionCheckedAt: new Date().toISOString(),
-          };
-
-          await db.execute(sql`
-            UPDATE listings
-            SET
-              status = 'ACTIVE',
-              publish_finished_ts = NOW(),
-              listing_date = NOW(),
-              response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify(drySafeResponse)}::jsonb,
-              updated_at = NOW()
-            WHERE id = ${listingId}
-          `);
-
-          await writeAuditLog({
-            actorType: "WORKER",
-            actorId: config.actorId,
-            entityType: "LISTING",
-            entityId: listingId,
-            eventType: "LISTING_PUBLISH_DRY_PATH_ACTIVE",
-            details: {
-              listingId,
-              candidateId,
-              marketplaceKey: "ebay",
-              dryRun: false,
-              liveApiCalled: false,
-              livePublishEnabled: false,
-            },
-          });
-
-          executed++;
-          continue;
+          dryRun: true,
+          liveApiCalled: false
         }
+      })
 
-        const publishResult = await publishToEbayListing({
-          id: listingId,
-          marketplaceKey: row.marketplaceKey,
-          idempotencyKey: row.idempotencyKey,
-          payload: row.payload,
-        });
-
-        if (publishResult.success) {
-          await db.execute(sql`
-            UPDATE listings
-            SET
-              status = 'ACTIVE',
-              publish_finished_ts = NOW(),
-              listing_date = NOW(),
-              published_external_id = ${publishResult.externalListingId},
-              response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
-                livePublishEnabled: true,
-                liveApiCalled: true,
-                publishResult: publishResult.rawResponse,
-              })}::jsonb,
-              last_publish_error = NULL,
-              updated_at = NOW()
-            WHERE id = ${listingId}
-          `);
-
-          await writeAuditLog({
-            actorType: "WORKER",
-            actorId: config.actorId,
-            entityType: "LISTING",
-            entityId: listingId,
-            eventType: "LISTING_PUBLISH_SUCCEEDED",
-            details: {
-              listingId,
-              candidateId,
-              marketplaceKey: "ebay",
-              publishedExternalId: publishResult.externalListingId,
-            },
-          });
-
-          executed++;
-          continue;
-        }
-
-        const message = publishResult.errorMessage ?? "unknown eBay publish failure";
-
-        await db.execute(sql`
-          UPDATE listings
-          SET
-            status = 'PUBLISH_FAILED',
-            publish_finished_ts = NOW(),
-            last_publish_error = ${message},
-            response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
-              livePublishEnabled: true,
-              liveApiCalled: true,
-              publishResult: publishResult.rawResponse,
-              publishError: message,
-            })}::jsonb,
-            updated_at = NOW()
-          WHERE id = ${listingId}
-        `);
-
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: config.actorId,
-          entityType: "LISTING",
-          entityId: listingId,
-          eventType: "LISTING_PUBLISH_FAILED",
-          details: {
-            listingId,
-            candidateId,
-            marketplaceKey: "ebay",
-            error: message,
-          },
-        });
-
-        failed++;
-      } catch (error) {
-        const message = safeErrorMessage(error);
-
-        await db.execute(sql`
-          UPDATE listings
-          SET
-            status = 'PUBLISH_FAILED',
-            publish_finished_ts = NOW(),
-            last_publish_error = ${message},
-            updated_at = NOW()
-          WHERE id = ${listingId}
-        `);
-
-        await writeAuditLog({
-          actorType: "WORKER",
-          actorId: config.actorId,
-          entityType: "LISTING",
-          entityId: listingId,
-          eventType: "LISTING_PUBLISH_FAILED",
-          details: {
-            listingId,
-            candidateId,
-            marketplaceKey: "ebay",
-            error: message,
-          },
-        });
-
-        failed++;
-      }
+      executed++
+      continue
     }
 
-    const finalCap = await getDailyListingCap({
-      marketplaceKey: "ebay",
-      dailyCap: config.dailyCap,
-    });
+    /**
+     * LIVE PUBLISH PATH
+     */
 
-    const result = {
-      ok: true,
-      marketplaceKey: "ebay",
-      dryRun: config.dryRun,
-      eligible: candidates.length,
-      executed,
-      skipped,
-      failed,
-      dailyRemaining: finalCap.remaining,
-      livePublishEnabled,
-    };
+    const reserved = await reserveDailyListingSlot({
+      marketplaceKey: "ebay"
+    })
 
-    await logWorkerRun({
-      status: "SUCCEEDED",
-      jobId: runId,
-      actorId: config.actorId,
-      dryRun: config.dryRun,
-      durationMs: Date.now() - startedAt,
-      stats: result,
-    });
+    if (!reserved.allowed) {
+      skipped++
+      continue
+    }
 
-    console.log("[listing-execute] completed", result);
-    return result;
-  } catch (error) {
-    const message = safeErrorMessage(error);
+    const locked = await db.execute(sql`
+      UPDATE listings
+      SET
+        status = 'PUBLISH_IN_PROGRESS',
+        publish_started_ts = NOW(),
+        updated_at = NOW()
+      WHERE id = ${listingId}
+      AND status = 'READY_TO_PUBLISH'
+      RETURNING id
+    `)
 
-    await logWorkerRun({
-      status: "FAILED",
-      jobId: runId,
-      actorId: config.actorId,
-      dryRun: config.dryRun,
-      durationMs: Date.now() - startedAt,
-      error: message,
-      stats: { marketplaceKey: config.marketplaceKey, livePublishEnabled },
-    });
+    if (locked.rows.length === 0) {
+      skipped++
+      continue
+    }
 
-    throw error;
+    try {
+
+      const result = await publishToEbayListing(row)
+
+      await db.execute(sql`
+        UPDATE listings
+        SET
+          status = 'ACTIVE',
+          published_external_id = ${result.externalId},
+          publish_finished_ts = NOW(),
+          listing_date = CURRENT_DATE,
+          updated_at = NOW()
+        WHERE id = ${listingId}
+      `)
+
+      executed++
+
+    } catch (err) {
+
+      await db.execute(sql`
+        UPDATE listings
+        SET
+          status = 'PUBLISH_FAILED',
+          last_publish_error = ${String(err)},
+          publish_finished_ts = NOW(),
+          updated_at = NOW()
+        WHERE id = ${listingId}
+      `)
+
+      failed++
+    }
+  }
+
+  return {
+    executed,
+    skipped,
+    failed
   }
 }
-
-export default runListingExecution;

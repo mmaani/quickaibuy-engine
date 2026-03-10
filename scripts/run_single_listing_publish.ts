@@ -1,62 +1,85 @@
 import dotenv from "dotenv";
+import pg from "pg";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-import pg from "pg";
-import { runListingExecution } from "../src/workers/listingExecute.worker";
-
 const { Client } = pg;
 
-async function main() {
-  const mode = String(process.argv[2] || "dry-run").trim().toLowerCase();
-  const requestedLive = mode === "live";
-  const envLiveEnabled = String(process.env.ENABLE_EBAY_LIVE_PUBLISH || "false").trim().toLowerCase() === "true";
+function isLivePublishEnabled(): boolean {
+  return String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").trim().toLowerCase() === "true";
+}
 
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+async function main() {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+
   await client.connect();
 
-  const ready = await client.query(`
+  const livePublishEnabled = isLivePublishEnabled();
+
+  const readyRows = await client.query(`
     SELECT
       id,
       candidate_id,
       marketplace_key,
       status,
+      idempotency_key,
+      publish_attempt_count,
       updated_at
     FROM listings
-    WHERE marketplace_key = 'ebay'
-      AND status = 'READY_TO_PUBLISH'
-    ORDER BY updated_at ASC
+    WHERE status = 'READY_TO_PUBLISH'
+      AND marketplace_key = 'ebay'
+    ORDER BY updated_at DESC, created_at DESC
     LIMIT 1
   `);
 
-  console.log("\nSelected READY_TO_PUBLISH row:");
-  console.table(ready.rows);
+  console.log("READY_TO_PUBLISH candidates:");
+  console.table(readyRows.rows);
 
-  await client.end();
-
-  if (ready.rows.length === 0) {
+  if (readyRows.rows.length === 0) {
     console.log("No READY_TO_PUBLISH rows found.");
+    await client.end();
     return;
   }
 
-  const dryRun = !(requestedLive && envLiveEnabled);
+  const row = readyRows.rows[0];
 
-  const result = await runListingExecution({
-    limit: 1,
-    dailyCap: 10,
-    marketplaceKey: "ebay",
-    dryRun,
-    actorId: requestedLive ? "run_single_listing_publish_live" : "run_single_listing_publish_dry_run",
-  });
+  if (!livePublishEnabled) {
+    const result = await client.query(
+      `
+        UPDATE listings
+        SET
+          response = COALESCE(response, '{}'::jsonb) || $2::jsonb,
+          updated_at = NOW(),
+          last_publish_error = NULL,
+          publish_attempt_count = COALESCE(publish_attempt_count, 0) + 1
+        WHERE id = $1
+          AND status = 'READY_TO_PUBLISH'
+        RETURNING id, candidate_id, marketplace_key, status, updated_at, publish_attempt_count
+      `,
+      [
+        row.id,
+        JSON.stringify({
+          dryRun: true,
+          liveApiCalled: false,
+          singleListingCheckedAt: new Date().toISOString(),
+          script: "run_single_listing_publish.ts",
+          featureFlagEnabled: false,
+        }),
+      ]
+    );
 
-  console.log("\nExecution result:");
-  console.log(JSON.stringify({
-    requestedMode: mode,
-    envLiveEnabled,
-    effectiveDryRun: dryRun,
-    result,
-  }, null, 2));
+    console.log("Dry-run result (feature flag OFF):");
+    console.table(result.rows);
+    await client.end();
+    return;
+  }
+
+  console.log("ENABLE_EBAY_LIVE_PUBLISH=true detected. Refusing broad execution from this guard script.");
+  await client.end();
 }
 
 main().catch((err) => {

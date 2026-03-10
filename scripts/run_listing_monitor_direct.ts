@@ -1,19 +1,91 @@
 import dotenv from "dotenv";
+import pg from "pg";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-async function main() {
-  const { runListingMonitor } = await import("../src/workers/listingMonitor.worker");
-  const limit = Number(process.argv[2] || "20");
+const { Client } = pg;
 
-  const result = await runListingMonitor({
-    limit,
-    marketplaceKey: "ebay",
-    actorId: "run_listing_monitor_direct",
+async function main() {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
   });
 
-  console.log(JSON.stringify(result, null, 2));
+  await client.connect();
+
+  const staleRows = await client.query(`
+    SELECT
+      id,
+      candidate_id,
+      marketplace_key,
+      status,
+      publish_started_ts,
+      publish_attempt_count,
+      last_publish_error,
+      updated_at
+    FROM listings
+    WHERE status = 'PUBLISH_IN_PROGRESS'
+      AND publish_started_ts < NOW() - INTERVAL '30 minutes'
+    ORDER BY publish_started_ts ASC
+  `);
+
+  const counts = await client.query(`
+    SELECT
+      status,
+      COUNT(*)::int AS count
+    FROM listings
+    WHERE marketplace_key = 'ebay'
+    GROUP BY status
+    ORDER BY status
+  `);
+
+  const failedRows = await client.query(`
+    SELECT
+      id,
+      candidate_id,
+      marketplace_key,
+      status,
+      publish_attempt_count,
+      last_publish_error,
+      publish_finished_ts,
+      updated_at
+    FROM listings
+    WHERE status = 'PUBLISH_FAILED'
+    ORDER BY updated_at DESC
+    LIMIT 20
+  `);
+
+  const activeRows = await client.query(`
+    SELECT
+      id,
+      candidate_id,
+      marketplace_key,
+      status,
+      published_external_id,
+      listing_date,
+      publish_finished_ts,
+      updated_at
+    FROM listings
+    WHERE status = 'ACTIVE'
+    ORDER BY updated_at DESC
+    LIMIT 20
+  `);
+
+  console.log("listing lifecycle counts:");
+  console.table(counts.rows);
+
+  console.log("stale PUBLISH_IN_PROGRESS rows:");
+  console.table(staleRows.rows);
+  console.log(`stale in-progress count (30m): ${staleRows.rows.length}`);
+
+  console.log("recent PUBLISH_FAILED rows:");
+  console.table(failedRows.rows);
+
+  console.log("recent ACTIVE rows:");
+  console.table(activeRows.rows);
+
+  await client.end();
 }
 
 main().catch((err) => {
