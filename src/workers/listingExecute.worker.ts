@@ -12,14 +12,19 @@ function isLivePublishEnabled(): boolean {
 export async function runListingExecution(opts?: {
   limit?: number;
   dryRun?: boolean;
+  dailyCap?: number;
+  marketplaceKey?: "ebay";
+  actorId?: string;
 }) {
 
-  const limit = opts?.limit ?? 5;
+  const limit = opts?.limit ?? opts?.dailyCap ?? 5;
   const dryRun = opts?.dryRun ?? true;
+  const marketplaceKey = (opts?.marketplaceKey ?? "ebay") as "ebay";
+  const actorId = opts?.actorId ?? "listingExecute.worker";
   const livePublishEnabled = isLivePublishEnabled();
 
   const rows = await getListingExecutionCandidates({
-    marketplace: "ebay",
+    marketplace: marketplaceKey,
     limit
   });
 
@@ -52,7 +57,7 @@ export async function runListingExecution(opts?: {
 
       await writeAuditLog({
         actorType: "WORKER",
-        actorId: "listingExecute.worker",
+        actorId,
         entityType: "LISTING",
         entityId: listingId,
         eventType: "LISTING_EXECUTION_DRY_RUN",
