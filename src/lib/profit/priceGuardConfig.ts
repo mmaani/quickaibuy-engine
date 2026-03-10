@@ -6,6 +6,7 @@ export type PriceGuardThresholds = {
   maxMarketplaceSnapshotAgeHours: number;
   maxSupplierSnapshotAgeHours: number;
   requireShippingData: boolean;
+  requireSupplierDriftData: boolean;
 };
 
 function toNumber(value: string | undefined, fallback: number): number {
@@ -36,5 +37,6 @@ export function getPriceGuardThresholds(): PriceGuardThresholds {
       72
     ),
     requireShippingData: toBoolean(process.env.PRICE_GUARD_REQUIRE_SHIPPING_DATA, false),
+    requireSupplierDriftData: toBoolean(process.env.PRICE_GUARD_REQUIRE_SUPPLIER_DRIFT_DATA, false),
   };
 }

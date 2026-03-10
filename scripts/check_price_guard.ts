@@ -49,6 +49,7 @@ async function main() {
       guard_decision: result.decision,
       allow: result.allow,
       reasons: result.reasons.join("|"),
+      reason_details: JSON.stringify(result.reasonDetails),
       profit: result.metrics.profit,
       margin_pct: result.metrics.margin_pct,
       roi_pct: result.metrics.roi_pct,
@@ -58,6 +59,8 @@ async function main() {
       supplier_drift_pct: result.metrics.supplier_price_drift_pct,
       supplier_age_h: result.metrics.supplier_snapshot_age_hours,
       market_age_h: result.metrics.marketplace_snapshot_age_hours,
+      cost_components: JSON.stringify(result.metrics.cost_components),
+      drift_hook: JSON.stringify(result.metrics.drift_hook),
     });
   }
 
