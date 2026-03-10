@@ -293,6 +293,63 @@ function buildEbayPublishConfigValidation(): EbayPublishEnvValidation {
   };
 }
 
+export function sanitizeEbayPayload(payload: unknown): Record<string, unknown> {
+  const raw = objectOrNull(payload) ?? {};
+  const source = objectOrNull(raw.source) ?? {};
+  const matchedMarketplace = objectOrNull(raw.matchedMarketplace) ?? {};
+  const economics = objectOrNull(raw.economics) ?? {};
+
+  const cleanedSource: Record<string, unknown> = {
+    candidateId: stringOrNull(source.candidateId),
+    supplierKey: stringOrNull(source.supplierKey),
+    supplierProductId: stringOrNull(source.supplierProductId),
+    supplierWarehouseCountry:
+      stringOrNull(source.supplierWarehouseCountry) ?? stringOrNull(source.shipFromCountry),
+    supplierImageUrl: stringOrNull(source.supplierImageUrl),
+  };
+
+  const cleanedMatchedMarketplace: Record<string, unknown> = {
+    marketplaceKey: stringOrNull(matchedMarketplace.marketplaceKey),
+    marketplacePrice: numberOrNull(matchedMarketplace.marketplacePrice),
+    marketplaceListingId: stringOrNull(matchedMarketplace.marketplaceListingId),
+    marketplaceTitle: stringOrNull(matchedMarketplace.marketplaceTitle),
+  };
+
+  const cleanedEconomics: Record<string, unknown> = {
+    estimatedProfit: numberOrNull(economics.estimatedProfit),
+    marginPct: numberOrNull(economics.marginPct),
+    roiPct: numberOrNull(economics.roiPct),
+  };
+
+  const description = stringOrNull(raw.description);
+  const sanitizedDescription = description
+    ? description.replace(/https?:\/\/[^\s]+/gi, "").replace(/\btemu\b/gi, "").trim()
+    : null;
+
+  const cleaned: Record<string, unknown> = {
+    marketplace: stringOrNull(raw.marketplace),
+    listingType: stringOrNull(raw.listingType),
+    title: stringOrNull(raw.title),
+    subtitle: stringOrNull(raw.subtitle),
+    description: sanitizedDescription,
+    condition: stringOrNull(raw.condition),
+    brand: stringOrNull(raw.brand),
+    mpn: stringOrNull(raw.mpn),
+    categoryId: stringOrNull(raw.categoryId),
+    shipFromCountry: stringOrNull(raw.shipFromCountry),
+    price: numberOrNull(raw.price),
+    quantity: numberOrNull(raw.quantity),
+    images: Array.isArray(raw.images)
+      ? raw.images.map((x) => stringOrNull(x)).filter(Boolean)
+      : [],
+    source: cleanedSource,
+    matchedMarketplace: cleanedMatchedMarketplace,
+    economics: cleanedEconomics,
+  };
+
+  return cleaned;
+}
+
 export function getEbayPublishEnvValidation(): EbayPublishEnvValidation {
   return buildEbayPublishConfigValidation();
 }
@@ -483,28 +540,26 @@ function safeSku(raw: string): string {
 }
 
 function buildDescription(payload: Record<string, unknown>, title: string): string {
-  const source = objectOrNull(payload.source) ?? {};
-  const economics = objectOrNull(payload.economics) ?? {};
+  const features: string[] = [];
 
-  const supplierTitle = stringOrNull(source.supplierTitle);
-  const supplierUrl = stringOrNull(source.supplierSourceUrl);
-  const supplierKey = stringOrNull(source.supplierKey);
-  const supplierProductId = stringOrNull(source.supplierProductId);
+  const matchedMarketplace = objectOrNull(payload.matchedMarketplace) ?? {};
+  const matchedTitle = stringOrNull(matchedMarketplace.marketplaceTitle);
 
-  const estimatedProfit = numberOrNull(economics.estimatedProfit);
-  const marginPct = numberOrNull(economics.marginPct);
-  const roiPct = numberOrNull(economics.roiPct);
+  if (matchedTitle && matchedTitle !== title) {
+    features.push(matchedTitle);
+  }
 
   const lines = [
     title,
-    supplierTitle ? `Source title: ${supplierTitle}` : null,
-    supplierKey && supplierProductId ? `Source: ${supplierKey}/${supplierProductId}` : null,
-    supplierUrl ? `Source URL: ${supplierUrl}` : null,
-    estimatedProfit != null ? `Estimated profit: ${estimatedProfit.toFixed(2)} USD` : null,
-    marginPct != null ? `Estimated margin: ${marginPct.toFixed(2)}%` : null,
-    roiPct != null ? `Estimated ROI: ${roiPct.toFixed(2)}%` : null,
-    "Prepared by QuickAIBuy guarded v1 publish flow.",
-  ].filter(Boolean) as string[];
+    "",
+    "Key features:",
+    features.length > 0 ? `- ${features.join("\n- ")}` : "- Compact and practical design\n- Everyday-use convenience\n- Ready for immediate dispatch",
+    "",
+    "Package includes:",
+    "- 1 item",
+    "",
+    "Condition: New",
+  ];
 
   return lines.join("\n").slice(0, 4000);
 }
@@ -606,7 +661,7 @@ function resolveCategoryId(payload: Record<string, unknown>, config: EbayPublish
 }
 
 export async function validateEbayPublishPreflight(payloadInput: unknown): Promise<EbayPublishPreflightResult> {
-  const payload = objectOrNull(payloadInput) ?? {};
+  const payload = sanitizeEbayPayload(payloadInput);
   const shipFromCountry = resolveShipFromCountry(payload);
 
   const envValidation = buildEbayPublishConfigValidation();
@@ -679,7 +734,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     };
   }
 
-  const payload = objectOrNull(listing.payload) ?? {};
+  const payload = sanitizeEbayPayload(listing.payload);
   const preflight = await validateEbayPublishPreflight(payload);
 
   if (!preflight.ok || !preflight.config) {
@@ -726,6 +781,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
   const raw: Record<string, unknown> = {
     inventoryItemKey,
     shipFromCountry,
+    sanitizedPayload: payload,
     publishInput: {
       marketplaceId: config.marketplaceId,
       merchantLocationKey: config.merchantLocationKey,
@@ -762,8 +818,8 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
             description,
             imageUrls,
             aspects: {
-              Brand: ["Unbranded"],
-              MPN: ["Does Not Apply"],
+              Brand: [stringOrNull(payload.brand) ?? "Unbranded"],
+              MPN: [stringOrNull(payload.mpn) ?? "Does Not Apply"],
               Type: ["Does Not Apply"],
               CountryOfOrigin: [shipFromCountry],
             },
