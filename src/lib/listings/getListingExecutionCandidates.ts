@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
+import type { EbayListingPreviewPayload } from "./types";
 
 export type ListingExecutionCandidate = {
   id: string;
@@ -9,7 +10,7 @@ export type ListingExecutionCandidate = {
   price: string;
   status: string;
   idempotencyKey: string | null;
-  payload: unknown;
+  payload: EbayListingPreviewPayload | Record<string, unknown>;
 };
 
 type GetListingExecutionCandidatesInput = {

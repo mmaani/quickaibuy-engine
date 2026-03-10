@@ -1,3 +1,5 @@
+import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
+
 export type EbayListingPayload = {
   id: string;
   marketplaceKey: string;
@@ -15,7 +17,8 @@ export type EbayPublishResult = {
   errorMessage?: string | null;
 };
 
-type EbayPublishConfig = {
+export type EbayPublishConfig = {
+  websiteUrl: string;
   clientId: string;
   clientSecret: string;
   refreshToken: string;
@@ -25,6 +28,40 @@ type EbayPublishConfig = {
   returnPolicyId: string;
   fulfillmentPolicyId: string;
   defaultCategoryId: string;
+};
+
+export type EbayInventoryLocationSummary = {
+  merchantLocationKey: string;
+  name: string | null;
+  merchantLocationStatus: string | null;
+  locationTypes: string[];
+};
+
+export type EbayPublishEnvValidation = {
+  ok: boolean;
+  errors: string[];
+  config: EbayPublishConfig | null;
+  redacted: Record<string, string | null>;
+  publicUrls: {
+    privacyPolicyUrl: string | null;
+    authAcceptedUrl: string | null;
+    authDeclinedUrl: string | null;
+  };
+};
+
+export type EbayPublishPreflightResult = {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  shipFromCountry: string | null;
+  config: EbayPublishConfig | null;
+  publicUrls: {
+    privacyPolicyUrl: string | null;
+    authAcceptedUrl: string | null;
+    authDeclinedUrl: string | null;
+  };
+  inventoryLocationFound: boolean;
+  inventoryLocations: EbayInventoryLocationSummary[];
 };
 
 type EbayApiErrorShape = {
@@ -55,6 +92,11 @@ class EbayApiError extends Error {
   }
 }
 
+const EBAY_SELL_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/sell.inventory " +
+  "https://api.ebay.com/oauth/api_scope/sell.account " +
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment";
+
 let cachedSellToken: { token: string; expiresAt: number } | null = null;
 
 function stringOrNull(value: unknown): string | null {
@@ -77,8 +119,56 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function extractRequiredEnv(): { config: EbayPublishConfig | null; missing: string[] } {
+function redactSecret(value: string | null): string | null {
+  if (!value) return null;
+  return `set(len=${value.length})`;
+}
+
+function normalizeWebsiteUrl(input: string | null): string | null {
+  const candidate = input ?? "https://quickaibuy.com";
+  try {
+    const parsed = new URL(candidate);
+    if (!parsed.protocol || !parsed.hostname) return null;
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    parsed.hash = "";
+    parsed.search = "";
+    parsed.pathname = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/+$/, "");
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function buildPublicUrls(websiteUrl: string | null): {
+  privacyPolicyUrl: string | null;
+  authAcceptedUrl: string | null;
+  authDeclinedUrl: string | null;
+} {
+  if (!websiteUrl) {
+    return {
+      privacyPolicyUrl: null,
+      authAcceptedUrl: null,
+      authDeclinedUrl: null,
+    };
+  }
+  return {
+    privacyPolicyUrl: `${websiteUrl}/privacy`,
+    authAcceptedUrl: `${websiteUrl}/ebay/auth/accepted`,
+    authDeclinedUrl: `${websiteUrl}/ebay/auth/declined`,
+  };
+}
+
+function parseTokenError(body: unknown): { code: string | null; description: string | null } {
+  const parsed = objectOrNull(body) ?? {};
+  return {
+    code: stringOrNull(parsed.error),
+    description: stringOrNull(parsed.error_description),
+  };
+}
+
+function buildEbayPublishConfigValidation(): EbayPublishEnvValidation {
   const values = {
+    websiteUrl: normalizeWebsiteUrl(stringOrNull(process.env.WEBSITE_URL)),
     clientId: stringOrNull(process.env.EBAY_CLIENT_ID),
     clientSecret: stringOrNull(process.env.EBAY_CLIENT_SECRET),
     refreshToken:
@@ -103,37 +193,115 @@ function extractRequiredEnv(): { config: EbayPublishConfig | null; missing: stri
       stringOrNull(process.env.EBAY_CATEGORY_ID),
   };
 
-  const missing: string[] = [];
+  const errors: string[] = [];
+  const publicUrls = buildPublicUrls(values.websiteUrl);
 
-  if (!values.clientId) missing.push("EBAY_CLIENT_ID");
-  if (!values.clientSecret) missing.push("EBAY_CLIENT_SECRET");
-  if (!values.refreshToken) missing.push("EBAY_REFRESH_TOKEN (or EBAY_USER_REFRESH_TOKEN)");
-  if (!values.marketplaceId) missing.push("EBAY_MARKETPLACE_ID");
-  if (!values.merchantLocationKey) missing.push("EBAY_MERCHANT_LOCATION_KEY (or EBAY_LOCATION_KEY)");
-  if (!values.paymentPolicyId) missing.push("EBAY_PAYMENT_POLICY_ID (or EBAY_POLICY_PAYMENT_ID)");
-  if (!values.returnPolicyId) missing.push("EBAY_RETURN_POLICY_ID (or EBAY_POLICY_RETURN_ID)");
-  if (!values.fulfillmentPolicyId)
-    missing.push("EBAY_FULFILLMENT_POLICY_ID (or EBAY_POLICY_FULFILLMENT_ID / EBAY_SHIPPING_POLICY_ID)");
-  if (!values.defaultCategoryId) missing.push("EBAY_DEFAULT_CATEGORY_ID (or EBAY_CATEGORY_ID)");
-
-  if (missing.length > 0) {
-    return { config: null, missing };
+  if (!values.websiteUrl) {
+    errors.push(
+      "Missing or invalid WEBSITE_URL. Set WEBSITE_URL to your public site origin, for example https://quickaibuy.com."
+    );
   }
 
+  if (!values.clientId) {
+    errors.push("Missing EBAY_CLIENT_ID. Set your eBay app client ID for live publish.");
+  }
+  if (!values.clientSecret) {
+    errors.push("Missing EBAY_CLIENT_SECRET. Set your eBay app client secret for live publish.");
+  }
+  if (!values.refreshToken) {
+    errors.push(
+      "Missing EBAY_REFRESH_TOKEN (or EBAY_USER_REFRESH_TOKEN). Generate a user refresh token with sell scopes."
+    );
+  } else if (values.refreshToken.length < 20) {
+    errors.push(
+      "Invalid EBAY_REFRESH_TOKEN: value is too short to be a valid eBay refresh token. Re-generate and store the full token."
+    );
+  }
+  if (!values.merchantLocationKey) {
+    errors.push(
+      "Missing EBAY_MERCHANT_LOCATION_KEY (or EBAY_LOCATION_KEY). Configure the seller base inventory location key in eBay."
+    );
+  }
+
+  if (!values.paymentPolicyId) {
+    errors.push("Missing EBAY_PAYMENT_POLICY_ID (or EBAY_POLICY_PAYMENT_ID).");
+  } else if (!/^\d+$/.test(values.paymentPolicyId)) {
+    errors.push("Invalid EBAY_PAYMENT_POLICY_ID: expected numeric policy ID string.");
+  }
+
+  if (!values.returnPolicyId) {
+    errors.push("Missing EBAY_RETURN_POLICY_ID (or EBAY_POLICY_RETURN_ID).");
+  } else if (!/^\d+$/.test(values.returnPolicyId)) {
+    errors.push("Invalid EBAY_RETURN_POLICY_ID: expected numeric policy ID string.");
+  }
+
+  if (!values.fulfillmentPolicyId) {
+    errors.push(
+      "Missing EBAY_FULFILLMENT_POLICY_ID (or EBAY_POLICY_FULFILLMENT_ID / EBAY_SHIPPING_POLICY_ID)."
+    );
+  } else if (!/^\d+$/.test(values.fulfillmentPolicyId)) {
+    errors.push("Invalid EBAY_FULFILLMENT_POLICY_ID: expected numeric policy ID string.");
+  }
+
+  if (!values.defaultCategoryId) {
+    errors.push("Missing EBAY_DEFAULT_CATEGORY_ID (or EBAY_CATEGORY_ID).");
+  } else if (!/^\d+$/.test(values.defaultCategoryId)) {
+    errors.push("Invalid EBAY_DEFAULT_CATEGORY_ID: expected numeric eBay category ID string.");
+  }
+
+  if (!values.marketplaceId) {
+    errors.push("Missing EBAY_MARKETPLACE_ID.");
+  }
+
+  const config: EbayPublishConfig | null = errors.length
+    ? null
+    : {
+        clientId: values.clientId!,
+        clientSecret: values.clientSecret!,
+        websiteUrl: values.websiteUrl!,
+        refreshToken: values.refreshToken!,
+        marketplaceId: values.marketplaceId!,
+        merchantLocationKey: values.merchantLocationKey!,
+        paymentPolicyId: values.paymentPolicyId!,
+        returnPolicyId: values.returnPolicyId!,
+        fulfillmentPolicyId: values.fulfillmentPolicyId!,
+        defaultCategoryId: values.defaultCategoryId!,
+      };
+
   return {
-    config: {
-      clientId: values.clientId!,
-      clientSecret: values.clientSecret!,
-      refreshToken: values.refreshToken!,
-      marketplaceId: values.marketplaceId!,
-      merchantLocationKey: values.merchantLocationKey!,
-      paymentPolicyId: values.paymentPolicyId!,
-      returnPolicyId: values.returnPolicyId!,
-      fulfillmentPolicyId: values.fulfillmentPolicyId!,
-      defaultCategoryId: values.defaultCategoryId!,
+    ok: errors.length === 0,
+    errors,
+    config,
+    redacted: {
+      EBAY_CLIENT_ID: values.clientId,
+      WEBSITE_URL: values.websiteUrl,
+      EBAY_CLIENT_SECRET: redactSecret(values.clientSecret),
+      EBAY_REFRESH_TOKEN: redactSecret(values.refreshToken),
+      EBAY_MARKETPLACE_ID: values.marketplaceId,
+      EBAY_MERCHANT_LOCATION_KEY: values.merchantLocationKey,
+      EBAY_PAYMENT_POLICY_ID: values.paymentPolicyId,
+      EBAY_RETURN_POLICY_ID: values.returnPolicyId,
+      EBAY_FULFILLMENT_POLICY_ID: values.fulfillmentPolicyId,
+      EBAY_DEFAULT_CATEGORY_ID: values.defaultCategoryId,
+      ENABLE_EBAY_LIVE_PUBLISH: stringOrNull(process.env.ENABLE_EBAY_LIVE_PUBLISH) ?? "false",
+      PRIVACY_POLICY_URL: publicUrls.privacyPolicyUrl,
+      EBAY_AUTH_ACCEPTED_URL: publicUrls.authAcceptedUrl,
+      EBAY_AUTH_DECLINED_URL: publicUrls.authDeclinedUrl,
     },
-    missing,
+    publicUrls,
   };
+}
+
+export function getEbayPublishEnvValidation(): EbayPublishEnvValidation {
+  return buildEbayPublishConfigValidation();
+}
+
+function requireEbayPublishConfig(): EbayPublishConfig {
+  const validation = buildEbayPublishConfigValidation();
+  if (!validation.config) {
+    throw new Error(`eBay live publish config invalid: ${validation.errors.join(" | ")}`);
+  }
+  return validation.config;
 }
 
 async function readApiBody(res: Response): Promise<unknown> {
@@ -146,8 +314,12 @@ async function readApiBody(res: Response): Promise<unknown> {
 
 function formatApiErrors(body: unknown): string {
   const obj = objectOrNull(body);
-  const errors = Array.isArray(obj?.errors) ? (obj?.errors as EbayApiErrorShape[]) : [];
+  const errors = Array.isArray(obj?.errors) ? (obj.errors as EbayApiErrorShape[]) : [];
   if (errors.length === 0) {
+    const tokenErr = parseTokenError(body);
+    if (tokenErr.code) {
+      return [tokenErr.code, tokenErr.description].filter(Boolean).join(": ");
+    }
     if (typeof body === "string") return body;
     return "unknown eBay API error";
   }
@@ -176,17 +348,18 @@ async function ebayJsonRequest(
   return objectOrNull(body) ?? { raw: body };
 }
 
-async function getEbaySellAccessToken(config: EbayPublishConfig): Promise<string> {
+export async function getEbaySellAccessToken(configInput?: EbayPublishConfig): Promise<string> {
+  const config = configInput ?? requireEbayPublishConfig();
+  if (!config.refreshToken) {
+    throw new Error("eBay token refresh requires EBAY_REFRESH_TOKEN (or EBAY_USER_REFRESH_TOKEN).");
+  }
+
   const now = Date.now();
   if (cachedSellToken && cachedSellToken.expiresAt > now + 60_000) {
     return cachedSellToken.token;
   }
 
   const auth = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64");
-  const scope =
-    "https://api.ebay.com/oauth/api_scope/sell.inventory " +
-    "https://api.ebay.com/oauth/api_scope/sell.account";
-
   const res = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
     method: "POST",
     headers: {
@@ -196,7 +369,7 @@ async function getEbaySellAccessToken(config: EbayPublishConfig): Promise<string
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: config.refreshToken,
-      scope,
+      scope: EBAY_SELL_SCOPE,
     }),
     cache: "no-store",
   });
@@ -204,15 +377,36 @@ async function getEbaySellAccessToken(config: EbayPublishConfig): Promise<string
   const body = await readApiBody(res);
 
   if (!res.ok) {
+    const tokenErr = parseTokenError(body);
+    if (tokenErr.code === "invalid_client") {
+      throw new Error(
+        "eBay token refresh failed: invalid_client. Verify EBAY_CLIENT_ID and EBAY_CLIENT_SECRET for the active eBay app."
+      );
+    }
+    if (tokenErr.code === "invalid_scope") {
+      throw new Error(
+        "eBay token refresh failed: invalid_scope. Ensure the refresh token was granted sell.inventory/sell.account/sell.fulfillment scopes."
+      );
+    }
+    if (tokenErr.code === "invalid_grant") {
+      throw new Error(
+        "eBay token refresh failed: invalid_grant. Refresh EBAY_REFRESH_TOKEN because it is expired, revoked, or mismatched to this app."
+      );
+    }
+
     throw new EbayApiError(`eBay token refresh failed: ${res.status} ${formatApiErrors(body)}`, res.status, body);
   }
 
   const parsed = objectOrNull(body) ?? {};
   const token = stringOrNull(parsed.access_token);
-  const expiresIn = Number(parsed.expires_in ?? 7200);
+  const expiresIn = numberOrNull(parsed.expires_in);
 
   if (!token) {
-    throw new Error("eBay token refresh returned no access_token");
+    throw new Error("eBay token refresh returned malformed response: missing access_token.");
+  }
+
+  if (expiresIn == null || expiresIn <= 0) {
+    throw new Error("eBay token refresh returned malformed response: invalid expires_in.");
   }
 
   cachedSellToken = {
@@ -221,6 +415,54 @@ async function getEbaySellAccessToken(config: EbayPublishConfig): Promise<string
   };
 
   return token;
+}
+
+function summarizeInventoryLocation(entry: unknown): EbayInventoryLocationSummary | null {
+  const item = objectOrNull(entry);
+  if (!item) return null;
+
+  const merchantLocationKey = stringOrNull(item.merchantLocationKey);
+  if (!merchantLocationKey) return null;
+
+  return {
+    merchantLocationKey,
+    name: stringOrNull(item.name),
+    merchantLocationStatus: stringOrNull(item.merchantLocationStatus),
+    locationTypes: Array.isArray(item.locationTypes)
+      ? item.locationTypes.map((value) => String(value)).filter(Boolean)
+      : [],
+  };
+}
+
+export async function getInventoryLocations(
+  tokenInput?: string,
+  configInput?: EbayPublishConfig
+): Promise<EbayInventoryLocationSummary[]> {
+  const config = configInput ?? requireEbayPublishConfig();
+  const token = tokenInput ?? (await getEbaySellAccessToken(config));
+
+  const body = await ebayJsonRequest(
+    "https://api.ebay.com/sell/inventory/v1/location?limit=200",
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    },
+    "inventory locations lookup"
+  );
+
+  const locationsRaw = Array.isArray(body.locations) ? body.locations : [];
+  const locations: EbayInventoryLocationSummary[] = [];
+
+  for (const entry of locationsRaw) {
+    const summary = summarizeInventoryLocation(entry);
+    if (summary) locations.push(summary);
+  }
+
+  return locations;
 }
 
 function safeSku(raw: string): string {
@@ -330,8 +572,81 @@ async function findExistingOfferIdBySku(
 
 function isDuplicateOfferError(body: unknown): boolean {
   const obj = objectOrNull(body);
-  const errors = Array.isArray(obj?.errors) ? (obj?.errors as EbayApiErrorShape[]) : [];
+  const errors = Array.isArray(obj?.errors) ? (obj.errors as EbayApiErrorShape[]) : [];
   return errors.some((e) => String(e.errorId ?? "") === "25018" || /offer/i.test(String(e.message ?? "")));
+}
+
+function resolveShipFromCountry(payload: Record<string, unknown>): string | null {
+  const source = objectOrNull(payload.source) ?? {};
+  const preferred =
+    stringOrNull(payload.shipFromCountry) ??
+    stringOrNull(source.supplierWarehouseCountry) ??
+    stringOrNull(source.shipFromCountry);
+
+  return normalizeWarehouseCountry(preferred);
+}
+
+function resolveCategoryId(payload: Record<string, unknown>, config: EbayPublishConfig): string {
+  const payloadCategoryId = stringOrNull(payload.categoryId);
+  if (payloadCategoryId && /^\d+$/.test(payloadCategoryId)) {
+    return payloadCategoryId;
+  }
+  return config.defaultCategoryId;
+}
+
+export async function validateEbayPublishPreflight(payloadInput: unknown): Promise<EbayPublishPreflightResult> {
+  const payload = objectOrNull(payloadInput) ?? {};
+  const shipFromCountry = resolveShipFromCountry(payload);
+
+  const envValidation = buildEbayPublishConfigValidation();
+  const errors = [...envValidation.errors];
+  const warnings: string[] = [];
+
+  if (!shipFromCountry) {
+    errors.push(
+      "Missing normalized supplier ship-from country. Provide supplier_warehouse_country (preferred) or ship_from_country so eBay publish can set item origin explicitly."
+    );
+  }
+
+  let inventoryLocationFound = false;
+  let inventoryLocations: EbayInventoryLocationSummary[] = [];
+
+  if (envValidation.config && errors.length === 0) {
+    try {
+      const config = envValidation.config;
+      const token = await getEbaySellAccessToken(config);
+      inventoryLocations = await getInventoryLocations(token, config);
+      inventoryLocationFound = inventoryLocations.some(
+        (location) => location.merchantLocationKey === config.merchantLocationKey
+      );
+
+      if (!inventoryLocationFound) {
+        errors.push(
+          `Configured EBAY_MERCHANT_LOCATION_KEY '${config.merchantLocationKey}' was not found in seller inventory locations. Run scripts/check_ebay_inventory_location.ts and fix eBay account setup.`
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`Unable to validate eBay inventory locations: ${message}`);
+    }
+  }
+
+  if (envValidation.config && !inventoryLocations.length) {
+    warnings.push(
+      "No inventory locations were returned from eBay during preflight. Verify seller account inventory-location setup."
+    );
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+    shipFromCountry,
+    config: envValidation.config,
+    publicUrls: envValidation.publicUrls,
+    inventoryLocationFound,
+    inventoryLocations,
+  };
 }
 
 export async function publishToEbayListing(listing: EbayListingPayload): Promise<EbayPublishResult> {
@@ -353,20 +668,25 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     };
   }
 
-  const { config, missing } = extractRequiredEnv();
-  if (!config) {
+  const payload = objectOrNull(listing.payload) ?? {};
+  const preflight = await validateEbayPublishPreflight(payload);
+
+  if (!preflight.ok || !preflight.config) {
     return {
       success: false,
       externalListingId: null,
-      raw: { missingEnv: missing },
-      errorMessage: `missing required eBay publish env/config: ${missing.join(", ")}`,
+      raw: {
+        preflight,
+      },
+      errorMessage: `eBay live publish preflight failed: ${preflight.errors.join(" | ")}`,
     };
   }
 
-  const payload = objectOrNull(listing.payload) ?? {};
+  const config = preflight.config;
   const title = stringOrNull(payload.title) ?? `QuickAIBuy Listing ${listing.id}`;
   const price = numberOrNull(payload.price) ?? numberOrNull(listing.price) ?? null;
   const quantity = Math.max(1, Math.floor(numberOrNull(payload.quantity) ?? 1));
+  const shipFromCountry = preflight.shipFromCountry;
 
   if (price == null || price <= 0) {
     return {
@@ -377,12 +697,33 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     };
   }
 
+  if (!shipFromCountry) {
+    return {
+      success: false,
+      externalListingId: null,
+      raw: { payload },
+      errorMessage:
+        "supplier ship-from country is unknown. Refusing live publish instead of guessing seller base country.",
+    };
+  }
+
   const inventoryItemKey = safeSku(`qab-${listing.id}`);
   const imageUrls = extractImageUrls(payload);
   const description = buildDescription(payload, title);
+  const categoryId = resolveCategoryId(payload, config);
 
   const raw: Record<string, unknown> = {
     inventoryItemKey,
+    shipFromCountry,
+    publishInput: {
+      marketplaceId: config.marketplaceId,
+      merchantLocationKey: config.merchantLocationKey,
+      categoryId,
+      paymentPolicyId: config.paymentPolicyId,
+      returnPolicyId: config.returnPolicyId,
+      fulfillmentPolicyId: config.fulfillmentPolicyId,
+      shipFromCountry,
+    },
   };
 
   try {
@@ -413,6 +754,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
             aspects: {
               Brand: ["Unbranded"],
               MPN: ["Does Not Apply"],
+              CountryOfOrigin: [shipFromCountry],
             },
           },
         }),
@@ -440,7 +782,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
             marketplaceId: config.marketplaceId,
             format: "FIXED_PRICE",
             availableQuantity: quantity,
-            categoryId: config.defaultCategoryId,
+            categoryId,
             merchantLocationKey: config.merchantLocationKey,
             listingDescription: description,
             pricingSummary: {

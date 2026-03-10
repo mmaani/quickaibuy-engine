@@ -42,6 +42,9 @@ type CandidatePreviewSourceRow = {
   supplierTitle: string | null;
   supplierSourceUrl: string | null;
   supplierImages: unknown;
+  supplierRawPayload: unknown;
+  supplierWarehouseCountry: string | null;
+  shipFromCountry: string | null;
   supplierPrice: unknown;
   marketplacePrice: unknown;
   matchId: string | null;
@@ -79,6 +82,46 @@ function toNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function extractSupplierShipFromCountry(row: CandidatePreviewSourceRow): {
+  supplierWarehouseCountry: string | null;
+  shipFromCountry: string | null;
+} {
+  const fromColumns = {
+    supplierWarehouseCountry: cleanString(row.supplierWarehouseCountry),
+    shipFromCountry: cleanString(row.shipFromCountry),
+  };
+
+  const payload = objectOrNull(row.supplierRawPayload);
+  if (!payload) return fromColumns;
+
+  const shippingEstimates = objectOrNull(payload.shipping_estimates);
+  const shipping = objectOrNull(payload.shipping);
+
+  return {
+    supplierWarehouseCountry:
+      fromColumns.supplierWarehouseCountry ??
+      cleanString(payload.supplier_warehouse_country) ??
+      cleanString(payload.warehouse_country),
+    shipFromCountry:
+      fromColumns.shipFromCountry ??
+      cleanString(payload.ship_from_country) ??
+      cleanString(payload.shipFromCountry) ??
+      cleanString(shippingEstimates?.ship_from_country) ??
+      cleanString(shipping?.ship_from_country),
+  };
+}
+
 function dedupeRows(rows: CandidatePreviewSourceRow[]): CandidatePreviewSourceRow[] {
   return Array.from(
     new Map(rows.map((row) => [`${row.candidateId}:${row.marketplaceKey}:${row.marketplaceListingId}`, row])).values()
@@ -99,6 +142,9 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
       supplierTitle: productsRaw.title,
       supplierSourceUrl: productsRaw.sourceUrl,
       supplierImages: productsRaw.images,
+      supplierRawPayload: productsRaw.rawPayload,
+      supplierWarehouseCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'supplier_warehouse_country'), '')`,
+      shipFromCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'ship_from_country'), '')`,
       supplierPrice: productsRaw.priceMin,
       marketplacePrice: marketplacePrices.price,
       matchId: matches.id,
@@ -227,6 +273,7 @@ async function processCandidatePreviewRows(
     const supplierImageUrl = Array.isArray(row.supplierImages)
       ? ((row.supplierImages.find((v) => typeof v === "string") as string | undefined) ?? null)
       : null;
+    const supplierCountry = extractSupplierShipFromCountry(row);
 
     const preview = buildListingPreview(context.marketplace, {
       candidateId: row.candidateId,
@@ -236,6 +283,8 @@ async function processCandidatePreviewRows(
       supplierSourceUrl: row.supplierSourceUrl,
       supplierImageUrl,
       supplierPrice: toNum(row.supplierPrice),
+      supplierWarehouseCountry: supplierCountry.supplierWarehouseCountry,
+      shipFromCountry: supplierCountry.shipFromCountry,
       marketplaceKey: row.marketplaceKey,
       marketplaceListingId: row.marketplaceListingId,
       marketplaceTitle: null,

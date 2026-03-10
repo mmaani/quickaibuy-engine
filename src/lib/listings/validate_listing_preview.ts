@@ -2,6 +2,10 @@ import type { ListingPreviewOutput } from "./types";
 
 export function validateListingPreview(preview: ListingPreviewOutput) {
   const errors: string[] = [];
+  const payload =
+    preview.payload && typeof preview.payload === "object"
+      ? (preview.payload as Record<string, unknown>)
+      : null;
 
   if (!preview.marketplaceKey) errors.push("marketplaceKey required");
   if (!preview.title?.trim()) errors.push("title required");
@@ -12,6 +16,12 @@ export function validateListingPreview(preview: ListingPreviewOutput) {
   if (!(preview.quantity > 0)) errors.push("quantity must be > 0");
   if (!preview.payload || typeof preview.payload !== "object") {
     errors.push("payload required");
+  }
+  if (preview.marketplaceKey === "ebay" && payload?.shipFromCountry != null) {
+    const shipFromCountry = String(payload.shipFromCountry ?? "").trim();
+    if (shipFromCountry && !/^[A-Z]{2}$/.test(shipFromCountry)) {
+      errors.push("ebay shipFromCountry must be ISO-3166-1 alpha-2");
+    }
   }
 
   return {

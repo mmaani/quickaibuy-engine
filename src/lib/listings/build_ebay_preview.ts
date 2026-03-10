@@ -1,4 +1,5 @@
-import type { ListingPreviewInput, ListingPreviewOutput } from "./types";
+import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
+import type { EbayListingPreviewPayload, ListingPreviewInput, ListingPreviewOutput } from "./types";
 
 function cleanTitle(input: string): string {
   return input
@@ -30,40 +31,46 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
   const title = pickTitle(input);
   const price = pickPrice(input);
   const quantity = 1;
+  const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
+
+  const payload: EbayListingPreviewPayload = {
+    dryRun: true,
+    marketplace: "ebay",
+    listingType: "fixed_price",
+    title,
+    price,
+    quantity,
+    condition: "NEW",
+    shipFromCountry,
+    source: {
+      candidateId: input.candidateId,
+      supplierKey: input.supplierKey,
+      supplierProductId: input.supplierProductId,
+      supplierTitle: input.supplierTitle,
+      supplierSourceUrl: input.supplierSourceUrl,
+      supplierImageUrl: input.supplierImageUrl,
+      supplierWarehouseCountry: input.supplierWarehouseCountry,
+      shipFromCountry: input.shipFromCountry,
+    },
+    matchedMarketplace: {
+      marketplaceKey: input.marketplaceKey,
+      marketplaceListingId: input.marketplaceListingId,
+      marketplaceTitle: input.marketplaceTitle,
+      marketplacePrice: input.marketplacePrice,
+    },
+    economics: {
+      estimatedProfit: input.estimatedProfit,
+      marginPct: input.marginPct,
+      roiPct: input.roiPct,
+    },
+  };
 
   return {
     marketplaceKey: "ebay",
     title,
     price,
     quantity,
-    payload: {
-      dryRun: true,
-      marketplace: "ebay",
-      listingType: "fixed_price",
-      title,
-      price,
-      quantity,
-      condition: "NEW",
-      source: {
-        candidateId: input.candidateId,
-        supplierKey: input.supplierKey,
-        supplierProductId: input.supplierProductId,
-        supplierTitle: input.supplierTitle,
-        supplierSourceUrl: input.supplierSourceUrl,
-        supplierImageUrl: input.supplierImageUrl,
-      },
-      matchedMarketplace: {
-        marketplaceKey: input.marketplaceKey,
-        marketplaceListingId: input.marketplaceListingId,
-        marketplaceTitle: input.marketplaceTitle,
-        marketplacePrice: input.marketplacePrice,
-      },
-      economics: {
-        estimatedProfit: input.estimatedProfit,
-        marginPct: input.marginPct,
-        roiPct: input.roiPct,
-      },
-    },
+    payload,
     response: {
       preview: true,
       previewVersion: "v1",

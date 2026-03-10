@@ -1,5 +1,9 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## eBay Live Publish
+
+For QuickAIBuy live-publish prerequisites and supplier ship-from country rules, see [docs/ebay-live-publish.md](docs/ebay-live-publish.md).
+
 ## Getting Started
 
 First, run the development server:
