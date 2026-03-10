@@ -3,17 +3,33 @@ import localFont from "next/font/local";
 import "./globals.css";
 
 const inter = localFont({
-  src: "../../public/fonts/inter.woff2",
+  src: [
+    { path: "../../public/fonts/inter-latin-100-normal.woff2", weight: "100", style: "normal" },
+    { path: "../../public/fonts/inter-latin-200-normal.woff2", weight: "200", style: "normal" },
+    { path: "../../public/fonts/inter-latin-300-normal.woff2", weight: "300", style: "normal" },
+    { path: "../../public/fonts/inter-latin-400-normal.woff2", weight: "400", style: "normal" },
+    { path: "../../public/fonts/inter-latin-500-normal.woff2", weight: "500", style: "normal" },
+    { path: "../../public/fonts/inter-latin-600-normal.woff2", weight: "600", style: "normal" },
+    { path: "../../public/fonts/inter-latin-700-normal.woff2", weight: "700", style: "normal" },
+    { path: "../../public/fonts/inter-latin-800-normal.woff2", weight: "800", style: "normal" },
+    { path: "../../public/fonts/inter-latin-900-normal.woff2", weight: "900", style: "normal" },
+  ],
   variable: "--font-inter",
   display: "swap",
-  weight: "100 900",
 });
 
 const manrope = localFont({
-  src: "../../public/fonts/manrope.woff2",
+  src: [
+    { path: "../../public/fonts/manrope-latin-200-normal.woff2", weight: "200", style: "normal" },
+    { path: "../../public/fonts/manrope-latin-300-normal.woff2", weight: "300", style: "normal" },
+    { path: "../../public/fonts/manrope-latin-400-normal.woff2", weight: "400", style: "normal" },
+    { path: "../../public/fonts/manrope-latin-500-normal.woff2", weight: "500", style: "normal" },
+    { path: "../../public/fonts/manrope-latin-600-normal.woff2", weight: "600", style: "normal" },
+    { path: "../../public/fonts/manrope-latin-700-normal.woff2", weight: "700", style: "normal" },
+    { path: "../../public/fonts/manrope-latin-800-normal.woff2", weight: "800", style: "normal" },
+  ],
   variable: "--font-manrope",
   display: "swap",
-  weight: "200 800",
 });
 
 export const metadata: Metadata = {

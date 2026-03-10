@@ -192,10 +192,11 @@ async function runAction(action: string) {
   redirect(`/admin/control?actionMessage=${encodeURIComponent(message)}`);
 }
 
-export default async function ControlPage({ searchParams }: { searchParams?: SearchParams }) {
+export default async function ControlPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   await requireAdmin();
+  const resolvedSearchParams = await searchParams;
   const data = await getControlPanelData();
-  const message = one(searchParams?.actionMessage);
+  const message = one(resolvedSearchParams?.actionMessage);
 
   return (
     <main className="relative min-h-screen bg-app text-white">

@@ -373,9 +373,9 @@ function EmptyDetailPane() {
 export default async function ReviewPage({
   searchParams,
 }: {
-  searchParams?: Promise<SearchParams> | SearchParams;
+  searchParams?: Promise<SearchParams>;
 }) {
-  const resolvedSearchParams = searchParams instanceof Promise ? await searchParams : searchParams;
+  const resolvedSearchParams = await searchParams;
   const previewUpdated = String(resolvedSearchParams?.previewUpdated ?? "").trim() === "1";
   const previewError = String(resolvedSearchParams?.previewError ?? "").trim();
   const filters = getReviewFiltersFromSearchParams(resolvedSearchParams);
