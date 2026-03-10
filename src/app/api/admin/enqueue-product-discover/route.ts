@@ -23,8 +23,26 @@ export async function POST(req: Request) {
       idempotencyKey,
       payload: { candidateId },
       status: "QUEUED",
+      attempt: 0,
+      maxAttempts: 3,
+      scheduledTs: new Date(),
+      startedTs: null,
+      finishedTs: null,
+      lastError: null,
     })
-    .onConflictDoNothing({ target: [jobs.jobType, jobs.idempotencyKey] });
+    .onConflictDoUpdate({
+      target: [jobs.jobType, jobs.idempotencyKey],
+      set: {
+        payload: { candidateId },
+        status: "QUEUED",
+        attempt: 0,
+        maxAttempts: 3,
+        scheduledTs: new Date(),
+        startedTs: null,
+        finishedTs: null,
+        lastError: null,
+      },
+    });
 
   const job = await enqueueProductDiscover(candidateId);
 

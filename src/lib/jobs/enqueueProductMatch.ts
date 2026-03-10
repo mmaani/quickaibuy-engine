@@ -1,6 +1,7 @@
 import { Queue } from "bullmq";
 import { BULL_PREFIX, JOBS_QUEUE_NAME, JOB_NAMES } from "./jobNames";
 import { bullConnection } from "../bull";
+import { markJobQueued } from "./jobLedger";
 
 export const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
@@ -12,13 +13,15 @@ export async function enqueueProductMatch(params?: {
   marketplaceLimit?: number;
   minConfidence?: number;
 }) {
-  return jobsQueue.add(
-    JOB_NAMES.MATCH_PRODUCT,
-    {
+  const payload = {
       supplierLimit: params?.supplierLimit ?? 250,
       marketplaceLimit: params?.marketplaceLimit ?? 1000,
       minConfidence: params?.minConfidence ?? 0.75,
-    },
+    };
+
+  const job = await jobsQueue.add(
+    JOB_NAMES.MATCH_PRODUCT,
+    payload,
     {
       attempts: 3,
       backoff: {
@@ -29,4 +32,14 @@ export async function enqueueProductMatch(params?: {
       removeOnFail: 5000,
     }
   );
+
+  await markJobQueued({
+    jobType: JOB_NAMES.MATCH_PRODUCT,
+    idempotencyKey: String(job.id),
+    payload,
+    attempt: 0,
+    maxAttempts: 3,
+  });
+
+  return job;
 }

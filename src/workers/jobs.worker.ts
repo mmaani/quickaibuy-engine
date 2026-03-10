@@ -9,13 +9,67 @@ import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 import { handleMatchProductsJob } from "../lib/jobs/matchProducts";
 import { runProfitEngine } from "../lib/profit/profitEngine";
 import { prepareListingPreviews } from "../lib/listings/prepareListingPreviews";
+import { markJobFailed, markJobQueued, markJobRunning, markJobSucceeded } from "../lib/jobs/jobLedger";
+import { pool } from "../lib/db";
 
 const jobsQueue = new Queue("jobs", { connection: bullConnection });
 console.log("[jobs.worker] booted and waiting for jobs");
 
+
+async function logWorkerRun(args: {
+  status: "STARTED" | "SUCCEEDED" | "FAILED";
+  jobName: string;
+  jobId: string;
+  durationMs?: number;
+  error?: string | null;
+}) {
+  await pool.query(
+    `
+      INSERT INTO worker_runs (
+        worker,
+        job_name,
+        job_id,
+        status,
+        duration_ms,
+        ok,
+        error,
+        stats,
+        started_at,
+        finished_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, '{}'::jsonb, NOW(), CASE WHEN $8 THEN NOW() ELSE NULL END)
+    `,
+    [
+      "jobs.worker",
+      args.jobName,
+      args.jobId,
+      args.status,
+      args.durationMs ?? null,
+      args.status === "SUCCEEDED",
+      args.error ?? null,
+      args.status !== "STARTED",
+    ]
+  );
+}
+
 export const jobsWorker = new Worker(
   "jobs",
   async (job) => {
+    const startedAtMs = Date.now();
+    const idempotencyKey = String(job.id ?? `${job.name}-${Date.now()}`);
+    const attempt = Number(job.attemptsMade ?? 0);
+    const maxAttempts = Number(job.opts?.attempts ?? 1);
+
+    await logWorkerRun({ status: "STARTED", jobName: job.name, jobId: idempotencyKey });
+
+    await markJobRunning({
+      jobType: job.name,
+      idempotencyKey,
+      payload: job.data,
+      attempt,
+      maxAttempts,
+    });
+
     console.log("[jobs.worker] starting job", {
       id: job.id,
       name: job.name,
@@ -60,12 +114,22 @@ export const jobsWorker = new Worker(
           },
         });
 
-        return {
+        const output = {
           ok: true,
           trendSignalId,
           generatedCount: result.generatedCount,
           insertedCount: result.insertedCount,
         };
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return output;
       }
 
       case JOB_NAMES.PRODUCT_DISCOVER: {
@@ -98,12 +162,22 @@ export const jobsWorker = new Worker(
           result,
         });
 
-        return {
+        const output = {
           ok: true,
           candidateId,
           insertedCount: result.insertedCount,
           markets: result.markets,
         };
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return output;
       }
 
       case JOB_NAMES.SUPPLIER_DISCOVER: {
@@ -132,10 +206,20 @@ export const jobsWorker = new Worker(
           result,
         });
 
-        return {
+        const output = {
           ok: true,
           ...result,
         };
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return output;
       }
 
       case JOB_NAMES.SCAN_MARKETPLACE_PRICE: {
@@ -170,6 +254,17 @@ export const jobsWorker = new Worker(
           }
         );
 
+        await markJobQueued({
+          jobType: JOB_NAMES.MATCH_PRODUCT,
+          idempotencyKey: String(nextJob.id),
+          payload: {
+            limit: Number(job.data?.limit ?? 100),
+            productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
+          },
+          attempt: 0,
+          maxAttempts: 1,
+        });
+
         console.log("[jobs.worker] enqueued follow-up", {
           fromJob: job.name,
           nextJobName: JOB_NAMES.MATCH_PRODUCT,
@@ -180,6 +275,14 @@ export const jobsWorker = new Worker(
           id: job.id,
           name: job.name,
           result,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
         });
 
         return result;
@@ -213,6 +316,14 @@ export const jobsWorker = new Worker(
           }
         );
 
+        await markJobQueued({
+          jobType: JOB_NAMES.EVAL_PROFIT,
+          idempotencyKey: String(nextJob.id),
+          payload: { limit: Number(job.data?.limit ?? 50) },
+          attempt: 0,
+          maxAttempts: 1,
+        });
+
         console.log("[jobs.worker] enqueued follow-up", {
           fromJob: job.name,
           nextJobName: JOB_NAMES.EVAL_PROFIT,
@@ -223,6 +334,14 @@ export const jobsWorker = new Worker(
           id: job.id,
           name: job.name,
           result,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
         });
 
         return result;
@@ -250,6 +369,14 @@ export const jobsWorker = new Worker(
           id: job.id,
           name: job.name,
           result,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
         });
 
         return result;
@@ -280,6 +407,14 @@ export const jobsWorker = new Worker(
           result,
         });
 
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
         return result;
       }
 
@@ -294,6 +429,23 @@ export const jobsWorker = new Worker(
 );
 
 jobsWorker.on("failed", (job, err) => {
+  if (job) {
+    const failedJobId = String(job.id ?? `${job.name}-unknown`);
+    void markJobFailed({
+      jobType: job.name,
+      idempotencyKey: failedJobId,
+      attempt: Number(job.attemptsMade ?? 0),
+      maxAttempts: Number(job.opts?.attempts ?? 1),
+      lastError: err.message,
+    });
+    void logWorkerRun({
+      status: "FAILED",
+      jobName: job.name,
+      jobId: failedJobId,
+      error: err.message,
+    });
+  }
+
   console.error("[jobs.worker] failed job", {
     id: job?.id,
     name: job?.name,

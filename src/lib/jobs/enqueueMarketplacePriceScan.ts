@@ -1,6 +1,7 @@
 import { Queue } from "bullmq";
 import { bullConnection } from "@/lib/bull";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
+import { markJobQueued } from "@/lib/jobs/jobLedger";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
@@ -20,7 +21,7 @@ export async function enqueueMarketplacePriceScan(input?: {
     ? `marketplace-scan-${platform}-${productRawId}`
     : `marketplace-scan-${platform}-${limit}`;
 
-  return jobsQueue.add(
+  const job = await jobsQueue.add(
     JOB_NAMES.SCAN_MARKETPLACE_PRICE,
     { limit, productRawId, platform },
     {
@@ -34,4 +35,14 @@ export async function enqueueMarketplacePriceScan(input?: {
       removeOnFail: 5000,
     }
   );
+
+  await markJobQueued({
+    jobType: JOB_NAMES.SCAN_MARKETPLACE_PRICE,
+    idempotencyKey: String(job.id),
+    payload: { limit, productRawId, platform },
+    attempt: 0,
+    maxAttempts: 3,
+  });
+
+  return job;
 }

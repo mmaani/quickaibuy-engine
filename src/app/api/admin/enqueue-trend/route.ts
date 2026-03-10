@@ -27,12 +27,33 @@ export async function POST(req: Request) {
     payload.region ?? "global"
   }`;
 
-  await db.insert(jobs).values({
-    jobType: "trend:ingest",
-    idempotencyKey,
-    payload,
-    status: "QUEUED",
-  });
+  await db
+    .insert(jobs)
+    .values({
+      jobType: "trend:ingest",
+      idempotencyKey,
+      payload,
+      status: "QUEUED",
+      attempt: 0,
+      maxAttempts: 3,
+      scheduledTs: new Date(),
+      startedTs: null,
+      finishedTs: null,
+      lastError: null,
+    })
+    .onConflictDoUpdate({
+      target: [jobs.jobType, jobs.idempotencyKey],
+      set: {
+        payload,
+        status: "QUEUED",
+        attempt: 0,
+        maxAttempts: 3,
+        scheduledTs: new Date(),
+        startedTs: null,
+        finishedTs: null,
+        lastError: null,
+      },
+    });
 
   const q = getQueue("trend-ingest");
   await q.add("trend:ingest", payload, { jobId: idempotencyKey });

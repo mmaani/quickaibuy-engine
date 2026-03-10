@@ -1,6 +1,7 @@
 import { Queue } from "bullmq";
 import { BULL_PREFIX, JOBS_QUEUE_NAME, JOB_NAMES } from "./jobNames";
 import { bullConnection } from "../bull";
+import { markJobQueued } from "./jobLedger";
 
 export const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
@@ -8,9 +9,10 @@ export const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
 });
 
 export async function enqueueTrendExpand(trendSignalId: string) {
-  return jobsQueue.add(
+  const payload = { trendSignalId };
+  const job = await jobsQueue.add(
     JOB_NAMES.TREND_EXPAND,
-    { trendSignalId },
+    payload,
     {
       attempts: 3,
       backoff: {
@@ -21,15 +23,26 @@ export async function enqueueTrendExpand(trendSignalId: string) {
       removeOnFail: 5000,
     }
   );
+
+  await markJobQueued({
+    jobType: JOB_NAMES.TREND_EXPAND,
+    idempotencyKey: String(job.id),
+    payload,
+    attempt: 0,
+    maxAttempts: 3,
+  });
+
+  return job;
 }
 
 export async function enqueueProductDiscover(candidateId: string) {
   const normalizedCandidateId = String(candidateId).trim();
   const jobId = `product-discover-${normalizedCandidateId}`;
+  const payload = { candidateId: normalizedCandidateId };
 
-  return jobsQueue.add(
+  const job = await jobsQueue.add(
     JOB_NAMES.PRODUCT_DISCOVER,
-    { candidateId: normalizedCandidateId },
+    payload,
     {
       jobId,
       attempts: 3,
@@ -41,6 +54,16 @@ export async function enqueueProductDiscover(candidateId: string) {
       removeOnFail: 5000,
     }
   );
+
+  await markJobQueued({
+    jobType: JOB_NAMES.PRODUCT_DISCOVER,
+    idempotencyKey: String(job.id),
+    payload,
+    attempt: 0,
+    maxAttempts: 3,
+  });
+
+  return job;
 }
 
 export async function enqueueProductDiscoverTask(input: {
@@ -54,10 +77,11 @@ export async function enqueueProductDiscoverTask(input: {
   const keyword = String(input.keyword).trim();
   const queryTaskId = String(input.queryTaskId).trim();
   const jobId = `product-discover-${queryTaskId}`;
+  const payload = { candidateId, marketplace, keyword, queryTaskId };
 
-  return jobsQueue.add(
+  const job = await jobsQueue.add(
     JOB_NAMES.PRODUCT_DISCOVER,
-    { candidateId, marketplace, keyword, queryTaskId },
+    payload,
     {
       jobId,
       attempts: 3,
@@ -69,6 +93,16 @@ export async function enqueueProductDiscoverTask(input: {
       removeOnFail: 5000,
     }
   );
+
+  await markJobQueued({
+    jobType: JOB_NAMES.PRODUCT_DISCOVER,
+    idempotencyKey: String(job.id),
+    payload,
+    attempt: 0,
+    maxAttempts: 3,
+  });
+
+  return job;
 }
 
 export { enqueueMarketplacePriceScan } from "./enqueueMarketplacePriceScan";

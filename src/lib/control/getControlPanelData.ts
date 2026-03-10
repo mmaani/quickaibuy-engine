@@ -469,7 +469,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     ? await runQuery(`
       select *
       from worker_runs
-      where lower(coalesce(status, '')) like 'fail%'
+      where upper(coalesce(status, '')) = 'FAILED'
       order by ${workerRunsOrderExpr} desc nulls last
       limit 10
     `)
