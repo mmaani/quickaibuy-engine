@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { sql } from "drizzle-orm";
+import { calculateRealProfit } from "./realProfitCalculator";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -30,8 +31,6 @@ export async function runProfitEngine(input?: {
   const limit = Number(input?.limit ?? 50);
   const minRoiPct = Number(process.env.MIN_ROI_PCT || "15");
   const minMatchConfidence = Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.50");
-  const assumedFeePct = Number(process.env.MARKETPLACE_FEE_PCT || "12");
-  const assumedOtherCost = Number(process.env.OTHER_COST_USD || "2");
 
   const supplierKeyFilter =
     input?.supplierKey && String(input.supplierKey).trim()
@@ -164,14 +163,14 @@ export async function runProfitEngine(input?: {
       continue;
     }
 
-    const estimatedFees = Number(((marketPrice * assumedFeePct) / 100).toFixed(2));
-    const estimatedShipping = Number(shipping.toFixed(2));
-    const estimatedCogs = Number((supplierCost + assumedOtherCost).toFixed(2));
-    const estimatedProfit = Number(
-      (marketPrice - estimatedFees - estimatedShipping - estimatedCogs).toFixed(2)
-    );
-    const roiPct =
-      estimatedCogs > 0 ? Number(((estimatedProfit / estimatedCogs) * 100).toFixed(2)) : 0;
+    const economics = calculateRealProfit({
+      marketplaceKey: row.marketplaceKey,
+      supplierPriceUsd: supplierCost,
+      marketplacePriceUsd: marketPrice,
+      shippingPriceUsd: shipping,
+    });
+
+    const roiPct = economics.roiPct;
 
     if (roiPct < minRoiPct) {
       skipped++;
@@ -237,25 +236,35 @@ export async function runProfitEngine(input?: {
     const marketPrice = toNum(row.marketPrice) ?? 0;
     const shipping = toNum(row.shippingPrice) ?? 0;
 
-    const estimatedFees = Number(((marketPrice * assumedFeePct) / 100).toFixed(2));
-    const estimatedShipping = Number(shipping.toFixed(2));
-    const estimatedCogs = Number((supplierCost + assumedOtherCost).toFixed(2));
-    const estimatedProfit = Number(
-      (marketPrice - estimatedFees - estimatedShipping - estimatedCogs).toFixed(2)
-    );
-    const marginPct =
-      marketPrice > 0 ? Number(((estimatedProfit / marketPrice) * 100).toFixed(2)) : 0;
-    const roiPct =
-      estimatedCogs > 0 ? Number(((estimatedProfit / estimatedCogs) * 100).toFixed(2)) : 0;
+    const economics = calculateRealProfit({
+      marketplaceKey,
+      supplierPriceUsd: supplierCost,
+      marketplacePriceUsd: marketPrice,
+      shippingPriceUsd: shipping,
+    });
+
+    const estimatedFees = economics.estimatedFeesUsd;
+    const estimatedShipping = economics.estimatedShippingUsd;
+    const estimatedCogs = economics.estimatedCogsUsd;
+    const estimatedProfit = economics.estimatedProfitUsd;
+    const marginPct = economics.marginPct;
+    const roiPct = economics.roiPct;
 
     const estimatedFeesJson = {
-      feePct: assumedFeePct,
+      feePct: economics.assumptions.ebayFeeRatePct,
       feeUsd: estimatedFees,
-      otherCostUsd: assumedOtherCost,
+      otherCostUsd: economics.assumptions.fixedCostUsd,
+      payoutReservePct: economics.assumptions.payoutReservePct,
+      paymentReservePct: economics.assumptions.paymentReservePct,
+      fxReservePct: economics.assumptions.fxReservePct,
+      shippingVariancePct: economics.assumptions.shippingVariancePct,
+      costBreakdown: economics.costs,
       matchConfidence,
       matchType: row.matchType,
       selectionMode: "latest_best_active_match_per_supplier_product",
       matchId: row.matchId,
+      country: economics.assumptions.country,
+      economicsModel: "jordan_ebay_deterministic_v1",
     };
 
     await db.execute(sql`
