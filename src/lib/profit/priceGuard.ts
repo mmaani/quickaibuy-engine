@@ -6,6 +6,28 @@ import { calculateRealProfit } from "./realProfitCalculator";
 import { getProfitAssumptions, type ProfitAssumptions } from "./profitAssumptions";
 
 export type PriceGuardDecision = "ALLOW" | "BLOCK" | "MANUAL_REVIEW";
+export type PriceGuardReasonSeverity = "BLOCK" | "MANUAL_REVIEW";
+
+export type PriceGuardReasonCode =
+  | "MISSING_SUPPLIER_PRICE"
+  | "MISSING_MARKETPLACE_PRICE"
+  | "MISSING_FEE_ASSUMPTIONS"
+  | "MISSING_SHIPPING_DATA"
+  | "STALE_SUPPLIER_SNAPSHOT"
+  | "STALE_MARKETPLACE_SNAPSHOT"
+  | "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE"
+  | "SUPPLIER_DRIFT_DATA_UNAVAILABLE"
+  | "INCOMPLETE_ECONOMICS"
+  | "PROFIT_BELOW_MINIMUM"
+  | "MARGIN_BELOW_MINIMUM"
+  | "ROI_BELOW_MINIMUM";
+
+export type PriceGuardReason = {
+  code: PriceGuardReasonCode;
+  severity: PriceGuardReasonSeverity;
+  message: string;
+  meta?: Record<string, unknown>;
+};
 
 export type PriceGuardMetrics = {
   profit: number | null;
@@ -20,12 +42,18 @@ export type PriceGuardMetrics = {
   supplier_price_drift_pct: number | null;
   supplier_snapshot_age_hours: number | null;
   marketplace_snapshot_age_hours: number | null;
+  drift_hook: {
+    available: boolean;
+    tolerance_pct: number;
+    required: boolean;
+  };
 };
 
 export type PriceGuardResult = {
   allow: boolean;
   decision: PriceGuardDecision;
   reasons: string[];
+  reasonDetails: PriceGuardReason[];
   metrics: PriceGuardMetrics;
   thresholds: PriceGuardThresholds;
   context: {
@@ -52,24 +80,15 @@ type PriceGuardRow = {
 
   estimatedFees: unknown;
   estimatedShipping: string | null;
-  estimatedCogs: string | null;
-  estimatedProfit: string | null;
-  marginPct: string | null;
-  roiPct: string | null;
 
-  originalSupplierSnapshotId: string | null;
-  originalMarketSnapshotId: string | null;
   originalSupplierPrice: string | null;
   originalSupplierSnapshotTs: Date | string | null;
   originalMarketPrice: string | null;
   originalMarketShipping: string | null;
-  originalMarketSnapshotTs: Date | string | null;
 
-  latestSupplierSnapshotId: string | null;
   latestSupplierPrice: string | null;
   latestSupplierSnapshotTs: Date | string | null;
 
-  latestMarketSnapshotId: string | null;
   latestMarketPrice: string | null;
   latestMarketShipping: string | null;
   latestMarketSnapshotTs: Date | string | null;
@@ -160,10 +179,19 @@ function computePctChange(original: number | null, latest: number | null): numbe
   return round2(((latest - original) / original) * 100);
 }
 
-function decideFromReasons(hardBlockReasons: string[], reviewReasons: string[]): PriceGuardDecision {
-  if (hardBlockReasons.length > 0) return "BLOCK";
-  if (reviewReasons.length > 0) return "MANUAL_REVIEW";
+function decideFromReasons(reasonDetails: PriceGuardReason[]): PriceGuardDecision {
+  if (reasonDetails.some((reason) => reason.severity === "BLOCK")) return "BLOCK";
+  if (reasonDetails.some((reason) => reason.severity === "MANUAL_REVIEW")) return "MANUAL_REVIEW";
   return "ALLOW";
+}
+
+function addReason(
+  reasons: PriceGuardReason[],
+  reason: PriceGuardReason
+): void {
+  if (!reasons.some((existing) => existing.code === reason.code)) {
+    reasons.push(reason);
+  }
 }
 
 export async function validateProfitSafety(input: {
@@ -190,41 +218,26 @@ export async function validateProfitSafety(input: {
       pc.marketplace_listing_id AS "marketplaceListingId",
       pc.decision_status AS "decisionStatus",
       pc.listing_eligible AS "listingEligible",
-
       pc.estimated_fees AS "estimatedFees",
       pc.estimated_shipping::text AS "estimatedShipping",
-      pc.estimated_cogs::text AS "estimatedCogs",
-      pc.estimated_profit::text AS "estimatedProfit",
-      pc.margin_pct::text AS "marginPct",
-      pc.roi_pct::text AS "roiPct",
 
-      ps.id AS "originalSupplierSnapshotId",
       ps.price_min::text AS "originalSupplierPrice",
       ps.snapshot_ts AS "originalSupplierSnapshotTs",
 
-      mp.id AS "originalMarketSnapshotId",
       mp.price::text AS "originalMarketPrice",
       mp.shipping_price::text AS "originalMarketShipping",
-      mp.snapshot_ts AS "originalMarketSnapshotTs",
 
-      latest_ps.id AS "latestSupplierSnapshotId",
       latest_ps.price_min::text AS "latestSupplierPrice",
       latest_ps.snapshot_ts AS "latestSupplierSnapshotTs",
 
-      latest_mp.id AS "latestMarketSnapshotId",
       latest_mp.price::text AS "latestMarketPrice",
       latest_mp.shipping_price::text AS "latestMarketShipping",
       latest_mp.snapshot_ts AS "latestMarketSnapshotTs"
     FROM profitable_candidates pc
-    LEFT JOIN products_raw ps
-      ON ps.id = pc.supplier_snapshot_id
-    LEFT JOIN marketplace_prices mp
-      ON mp.id = pc.market_price_snapshot_id
+    LEFT JOIN products_raw ps ON ps.id = pc.supplier_snapshot_id
+    LEFT JOIN marketplace_prices mp ON mp.id = pc.market_price_snapshot_id
     LEFT JOIN LATERAL (
-      SELECT
-        pr.id,
-        pr.price_min,
-        pr.snapshot_ts
+      SELECT pr.price_min, pr.snapshot_ts
       FROM products_raw pr
       WHERE pr.supplier_key = pc.supplier_key
         AND pr.supplier_product_id = pc.supplier_product_id
@@ -232,11 +245,7 @@ export async function validateProfitSafety(input: {
       LIMIT 1
     ) latest_ps ON TRUE
     LEFT JOIN LATERAL (
-      SELECT
-        mp2.id,
-        mp2.price,
-        mp2.shipping_price,
-        mp2.snapshot_ts
+      SELECT mp2.price, mp2.shipping_price, mp2.snapshot_ts
       FROM marketplace_prices mp2
       WHERE LOWER(mp2.marketplace_key) = LOWER(pc.marketplace_key)
         AND mp2.marketplace_listing_id = pc.marketplace_listing_id
@@ -292,69 +301,143 @@ export async function validateProfitSafety(input: {
   const marketplaceSnapshotAgeHours = hoursBetween(now, toDate(row.latestMarketSnapshotTs));
   const supplierPriceDriftPct = computePctChange(originalSupplierPrice, latestSupplierPrice);
 
-  const hardBlockReasons: string[] = [];
-  const reviewReasons: string[] = [];
+  const reasonDetails: PriceGuardReason[] = [];
 
   if (latestSupplierPrice == null || latestSupplierPrice <= 0) {
-    hardBlockReasons.push("MISSING_SUPPLIER_PRICE");
+    addReason(reasonDetails, {
+      code: "MISSING_SUPPLIER_PRICE",
+      severity: "BLOCK",
+      message: "Supplier price is missing or invalid.",
+    });
   }
 
   if (latestMarketPrice == null || latestMarketPrice <= 0) {
-    hardBlockReasons.push("MISSING_MARKETPLACE_PRICE");
+    addReason(reasonDetails, {
+      code: "MISSING_MARKETPLACE_PRICE",
+      severity: "BLOCK",
+      message: "Marketplace price is missing or invalid.",
+    });
   }
 
   if (estimatedFees == null) {
-    reviewReasons.push("MISSING_FEE_ASSUMPTIONS");
+    addReason(reasonDetails, {
+      code: "MISSING_FEE_ASSUMPTIONS",
+      severity: "MANUAL_REVIEW",
+      message: "Fee assumptions are incomplete for deterministic recomputation.",
+    });
   }
 
-  if (shippingCost == null) {
-    if (thresholds.requireShippingData) {
-      reviewReasons.push("MISSING_SHIPPING_DATA");
-    }
+  if (shippingCost == null && thresholds.requireShippingData) {
+    addReason(reasonDetails, {
+      code: "MISSING_SHIPPING_DATA",
+      severity: "MANUAL_REVIEW",
+      message: "Shipping data is required but missing.",
+    });
   }
 
   if (
     supplierSnapshotAgeHours != null &&
     supplierSnapshotAgeHours > thresholds.maxSupplierSnapshotAgeHours
   ) {
-    reviewReasons.push("STALE_SUPPLIER_SNAPSHOT");
+    addReason(reasonDetails, {
+      code: "STALE_SUPPLIER_SNAPSHOT",
+      severity: "MANUAL_REVIEW",
+      message: "Supplier snapshot is stale and should be reviewed.",
+      meta: {
+        ageHours: supplierSnapshotAgeHours,
+        maxAgeHours: thresholds.maxSupplierSnapshotAgeHours,
+      },
+    });
   }
 
   if (
     marketplaceSnapshotAgeHours != null &&
     marketplaceSnapshotAgeHours > thresholds.maxMarketplaceSnapshotAgeHours
   ) {
-    reviewReasons.push("STALE_MARKETPLACE_SNAPSHOT");
+    addReason(reasonDetails, {
+      code: "STALE_MARKETPLACE_SNAPSHOT",
+      severity: "MANUAL_REVIEW",
+      message: "Marketplace snapshot is stale and should be reviewed.",
+      meta: {
+        ageHours: marketplaceSnapshotAgeHours,
+        maxAgeHours: thresholds.maxMarketplaceSnapshotAgeHours,
+      },
+    });
   }
 
-  if (
-    supplierPriceDriftPct != null &&
-    Math.abs(supplierPriceDriftPct) > thresholds.maxSupplierDriftPct
-  ) {
-    reviewReasons.push("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE");
+  if (supplierPriceDriftPct != null) {
+    if (Math.abs(supplierPriceDriftPct) > thresholds.maxSupplierDriftPct) {
+      addReason(reasonDetails, {
+        code: "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE",
+        severity: "MANUAL_REVIEW",
+        message: "Supplier price drift exceeds configured tolerance.",
+        meta: {
+          driftPct: supplierPriceDriftPct,
+          tolerancePct: thresholds.maxSupplierDriftPct,
+        },
+      });
+    }
+  } else if (thresholds.requireSupplierDriftData) {
+    addReason(reasonDetails, {
+      code: "SUPPLIER_DRIFT_DATA_UNAVAILABLE",
+      severity: "MANUAL_REVIEW",
+      message: "Supplier drift data is unavailable but required for this guard profile.",
+      meta: {
+        originalSupplierPrice,
+        latestSupplierPrice,
+      },
+    });
   }
 
   if (recomputedProfit == null) {
-    reviewReasons.push("INCOMPLETE_ECONOMICS");
+    addReason(reasonDetails, {
+      code: "INCOMPLETE_ECONOMICS",
+      severity: "MANUAL_REVIEW",
+      message: "Economics could not be fully recomputed with deterministic assumptions.",
+    });
   } else if (recomputedProfit < thresholds.minProfitUsd) {
-    hardBlockReasons.push("PROFIT_BELOW_MINIMUM");
+    addReason(reasonDetails, {
+      code: "PROFIT_BELOW_MINIMUM",
+      severity: "BLOCK",
+      message: "Recomputed profit is below minimum threshold.",
+      meta: {
+        minProfitUsd: thresholds.minProfitUsd,
+        recomputedProfit,
+      },
+    });
   }
 
   if (recomputedMarginPct != null && recomputedMarginPct < thresholds.minMarginPct) {
-    hardBlockReasons.push("MARGIN_BELOW_MINIMUM");
+    addReason(reasonDetails, {
+      code: "MARGIN_BELOW_MINIMUM",
+      severity: "BLOCK",
+      message: "Recomputed margin is below minimum threshold.",
+      meta: {
+        minMarginPct: thresholds.minMarginPct,
+        recomputedMarginPct,
+      },
+    });
   }
 
   if (recomputedRoiPct != null && recomputedRoiPct < thresholds.minRoiPct) {
-    hardBlockReasons.push("ROI_BELOW_MINIMUM");
+    addReason(reasonDetails, {
+      code: "ROI_BELOW_MINIMUM",
+      severity: "BLOCK",
+      message: "Recomputed ROI is below minimum threshold.",
+      meta: {
+        minRoiPct: thresholds.minRoiPct,
+        recomputedRoiPct,
+      },
+    });
   }
 
-  const decision = decideFromReasons(hardBlockReasons, reviewReasons);
-  const reasons = [...hardBlockReasons, ...reviewReasons];
+  const decision = decideFromReasons(reasonDetails);
 
   return {
     allow: decision === "ALLOW",
     decision,
-    reasons,
+    reasons: reasonDetails.map((reason) => reason.code),
+    reasonDetails,
     metrics: {
       profit: recomputedProfit,
       margin_pct: recomputedMarginPct,
@@ -368,6 +451,11 @@ export async function validateProfitSafety(input: {
       supplier_price_drift_pct: supplierPriceDriftPct,
       supplier_snapshot_age_hours: supplierSnapshotAgeHours,
       marketplace_snapshot_age_hours: marketplaceSnapshotAgeHours,
+      drift_hook: {
+        available: supplierPriceDriftPct != null,
+        tolerance_pct: thresholds.maxSupplierDriftPct,
+        required: thresholds.requireSupplierDriftData,
+      },
     },
     thresholds,
     context: {
