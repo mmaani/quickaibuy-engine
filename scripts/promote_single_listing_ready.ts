@@ -3,9 +3,8 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-import { markListingReadyToPublish } from "../src/lib/listings/markListingReadyToPublish";
-
 async function main() {
+  const { markListingReadyToPublish } = await import("../src/lib/listings/markListingReadyToPublish");
   const listingId = String(process.argv[2] || "").trim();
 
   if (!listingId) {

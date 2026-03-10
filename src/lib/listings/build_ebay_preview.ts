@@ -32,6 +32,9 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
   const price = pickPrice(input);
   const quantity = 1;
   const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
+  const images = [input.supplierImageUrl, input.marketplaceImageUrl].filter(
+    (v): v is string => typeof v === "string" && v.trim().length > 0
+  );
 
   const payload: EbayListingPreviewPayload = {
     dryRun: true,
@@ -42,6 +45,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
     quantity,
     condition: "NEW",
     shipFromCountry,
+    images,
     source: {
       candidateId: input.candidateId,
       supplierKey: input.supplierKey,

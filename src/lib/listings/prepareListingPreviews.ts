@@ -45,6 +45,7 @@ type CandidatePreviewSourceRow = {
   supplierRawPayload: unknown;
   supplierWarehouseCountry: string | null;
   shipFromCountry: string | null;
+  marketplaceImageUrl: string | null;
   supplierPrice: unknown;
   marketplacePrice: unknown;
   matchId: string | null;
@@ -145,6 +146,7 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
       supplierRawPayload: productsRaw.rawPayload,
       supplierWarehouseCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'supplier_warehouse_country'), '')`,
       shipFromCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'ship_from_country'), '')`,
+      marketplaceImageUrl: sql<string | null>`NULLIF(BTRIM(COALESCE(${marketplacePrices.imageUrl}, ${marketplacePrices.rawPayload} -> 'image' ->> 'imageUrl')), '')`,
       supplierPrice: productsRaw.priceMin,
       marketplacePrice: marketplacePrices.price,
       matchId: matches.id,
@@ -285,6 +287,7 @@ async function processCandidatePreviewRows(
       supplierPrice: toNum(row.supplierPrice),
       supplierWarehouseCountry: supplierCountry.supplierWarehouseCountry,
       shipFromCountry: supplierCountry.shipFromCountry,
+      marketplaceImageUrl: cleanString(row.marketplaceImageUrl),
       marketplaceKey: row.marketplaceKey,
       marketplaceListingId: row.marketplaceListingId,
       marketplaceTitle: null,

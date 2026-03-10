@@ -98,6 +98,7 @@ const EBAY_SELL_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment";
 
 let cachedSellToken: { token: string; expiresAt: number } | null = null;
+const EBAY_LANGUAGE_HEADER = "en-US";
 
 function stringOrNull(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -334,8 +335,18 @@ async function ebayJsonRequest(
   init: RequestInit,
   context: string
 ): Promise<EbayApiResponse> {
+  const baseHeaders: Record<string, string> = {
+    "Accept-Language": EBAY_LANGUAGE_HEADER,
+    "Content-Language": EBAY_LANGUAGE_HEADER,
+  };
+  const mergedHeaders = {
+    ...baseHeaders,
+    ...(init.headers as Record<string, string> | undefined),
+  };
+
   const res = await fetch(url, {
     ...init,
+    headers: mergedHeaders,
     cache: "no-store",
   });
 
@@ -737,7 +748,6 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
-          "Content-Language": "en-US",
         },
         body: JSON.stringify({
           sku: inventoryItemKey,
@@ -754,6 +764,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
             aspects: {
               Brand: ["Unbranded"],
               MPN: ["Does Not Apply"],
+              Type: ["Does Not Apply"],
               CountryOfOrigin: [shipFromCountry],
             },
           },
@@ -775,7 +786,6 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
             Authorization: `Bearer ${token}`,
             Accept: "application/json",
             "Content-Type": "application/json",
-            "Content-Language": "en-US",
           },
           body: JSON.stringify({
             sku: inventoryItemKey,
@@ -832,7 +842,6 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
-          "Content-Language": "en-US",
         },
       },
       "offer publish"
