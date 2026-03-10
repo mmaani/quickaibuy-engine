@@ -143,9 +143,9 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("Executing single guarded live publish via scripts/publish_one_ready_listing.ts ...");
+  console.log("Executing single guarded live publish via scripts/run_single_listing_publish.ts ...");
 
-  execSync("pnpm exec tsx scripts/publish_one_ready_listing.ts", {
+  execSync(`pnpm exec tsx scripts/run_single_listing_publish.ts ${selectedId}`, {
     stdio: "inherit",
     env: {
       ...process.env,

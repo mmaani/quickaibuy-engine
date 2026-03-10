@@ -16,6 +16,7 @@ export type ListingExecutionCandidate = {
 type GetListingExecutionCandidatesInput = {
   limit?: number;
   marketplace?: "ebay";
+  listingId?: string;
 };
 
 export async function getListingExecutionCandidates(
@@ -23,6 +24,7 @@ export async function getListingExecutionCandidates(
 ): Promise<ListingExecutionCandidate[]> {
   const limit = Number(input?.limit ?? 10);
   const marketplace = (input?.marketplace ?? "ebay") as "ebay";
+  const listingId = String(input?.listingId ?? "").trim();
 
   const result = await db.execute(sql`
     SELECT
@@ -42,6 +44,7 @@ export async function getListingExecutionCandidates(
       AND pc.marketplace_key = ${marketplace}
       AND pc.decision_status = 'APPROVED'
       AND pc.listing_eligible = TRUE
+      AND (${listingId} = '' OR l.id = ${listingId})
     ORDER BY l.updated_at ASC, l.created_at ASC
     LIMIT ${limit}
   `);
