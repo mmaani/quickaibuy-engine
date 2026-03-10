@@ -57,6 +57,7 @@
 ├── scripts
 │   ├── approve_profitable_candidate.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
+│   ├── backfill_listing_previews_for_approved.ts
 │   ├── check-db-tables.mjs
 │   ├── check-products-raw.mjs
 │   ├── check_active_missing_external_id_rows.mjs
@@ -147,6 +148,7 @@
 │   ├── run_enqueue_product_match.sh
 │   ├── run_enqueue_supplier_discover.sh
 │   ├── run_enqueue_trend_expand.sh
+│   ├── run_first_guarded_live_publish.ts
 │   ├── run_listing_execution_direct.ts
 │   ├── run_listing_monitor_direct.ts
 │   ├── run_listing_prepare_direct.sh
@@ -349,4 +351,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-62 directories, 288 files
+62 directories, 290 files

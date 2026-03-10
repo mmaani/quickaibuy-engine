@@ -6,29 +6,25 @@ dotenv.config();
 async function main() {
   const { runListingExecution } = await import("../src/workers/listingExecute.worker");
 
-  const mode = String(process.argv[2] || "dry-run").trim().toLowerCase();
-  const allowLiveArg = mode === "live";
-  const liveFlag = String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").trim().toLowerCase() === "true";
-  const effectiveDryRun = !(allowLiveArg && liveFlag);
+  const liveFlag =
+    String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").trim().toLowerCase() === "true";
 
-  if (allowLiveArg && !liveFlag) {
-    console.warn("[publish-one-ready-listing] live arg provided but ENABLE_EBAY_LIVE_PUBLISH is false; forcing safe path");
-  }
+  const requestedMode = liveFlag ? "live" : "dry-run";
+  const dryRun = !liveFlag;
 
   const result = await runListingExecution({
     limit: 1,
-    dailyCap: 1,
     marketplaceKey: "ebay",
-    dryRun: effectiveDryRun,
-    actorId: "publish_one_ready_listing_direct",
+    dryRun,
+    actorId: "publish_one_ready_listing",
   });
 
   console.log(
     JSON.stringify(
       {
-        requestedMode: mode,
+        requestedMode,
         liveFlag,
-        effectiveMode: effectiveDryRun ? "dry-run" : "live",
+        effectiveMode: dryRun ? "dry-run" : "live",
         result,
       },
       null,

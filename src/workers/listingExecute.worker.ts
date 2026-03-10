@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
-import { getDailyListingCap, reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
+import { reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { publishToEbayListing } from "@/lib/marketplaces/ebayPublish";
 
@@ -10,35 +10,34 @@ function isLivePublishEnabled(): boolean {
 }
 
 export async function runListingExecution(opts?: {
-  limit?: number
-  dryRun?: boolean
+  limit?: number;
+  dryRun?: boolean;
 }) {
 
-  const limit = opts?.limit ?? 5
-  const dryRun = opts?.dryRun ?? true
-  const livePublishEnabled = isLivePublishEnabled()
+  const limit = opts?.limit ?? 5;
+  const dryRun = opts?.dryRun ?? true;
+  const livePublishEnabled = isLivePublishEnabled();
 
   const rows = await getListingExecutionCandidates({
     marketplace: "ebay",
     limit
-  })
+  });
 
-  let executed = 0
-  let skipped = 0
-  let failed = 0
+  let executed = 0;
+  let skipped = 0;
+  let failed = 0;
 
   for (const row of rows) {
 
-    const listingId = row.id
+    const listingId = row.id;
 
     if (!listingId) {
-      skipped++
-      continue
+      skipped++;
+      continue;
     }
 
     /**
      * DRY RUN PATH
-     * never change lifecycle state
      */
     if (dryRun || !livePublishEnabled) {
 
@@ -49,7 +48,7 @@ export async function runListingExecution(opts?: {
           updated_at = NOW()
         WHERE id = ${listingId}
         AND status = 'READY_TO_PUBLISH'
-      `)
+      `);
 
       await writeAuditLog({
         actorType: "WORKER",
@@ -61,10 +60,10 @@ export async function runListingExecution(opts?: {
           dryRun: true,
           liveApiCalled: false
         }
-      })
+      });
 
-      executed++
-      continue
+      executed++;
+      continue;
     }
 
     /**
@@ -73,11 +72,11 @@ export async function runListingExecution(opts?: {
 
     const reserved = await reserveDailyListingSlot({
       marketplaceKey: "ebay"
-    })
+    });
 
     if (!reserved.allowed) {
-      skipped++
-      continue
+      skipped++;
+      continue;
     }
 
     const locked = await db.execute(sql`
@@ -89,29 +88,41 @@ export async function runListingExecution(opts?: {
       WHERE id = ${listingId}
       AND status = 'READY_TO_PUBLISH'
       RETURNING id
-    `)
+    `);
 
     if (locked.rows.length === 0) {
-      skipped++
-      continue
+      skipped++;
+      continue;
     }
 
     try {
 
-      const result = await publishToEbayListing(row)
+      const result = await publishToEbayListing(row);
+
+      /**
+       * STRICT SUCCESS VALIDATION
+       */
+
+      if (!result.success) {
+        throw new Error(result.errorMessage || "publish returned unsuccessful result");
+      }
+
+      if (!result.externalListingId) {
+        throw new Error("publish succeeded but externalListingId missing");
+      }
 
       await db.execute(sql`
         UPDATE listings
         SET
           status = 'ACTIVE',
-          published_external_id = ${result.externalId},
+          published_external_id = ${result.externalListingId},
           publish_finished_ts = NOW(),
           listing_date = CURRENT_DATE,
           updated_at = NOW()
         WHERE id = ${listingId}
-      `)
+      `);
 
-      executed++
+      executed++;
 
     } catch (err) {
 
@@ -123,9 +134,9 @@ export async function runListingExecution(opts?: {
           publish_finished_ts = NOW(),
           updated_at = NOW()
         WHERE id = ${listingId}
-      `)
+      `);
 
-      failed++
+      failed++;
     }
   }
 
@@ -133,5 +144,5 @@ export async function runListingExecution(opts?: {
     executed,
     skipped,
     failed
-  }
+  };
 }
