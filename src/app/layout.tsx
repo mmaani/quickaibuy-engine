@@ -1,5 +1,20 @@
 import type { Metadata } from "next";
+import localFont from "next/font/local";
 import "./globals.css";
+
+const inter = localFont({
+  src: "../../public/fonts/inter.woff2",
+  variable: "--font-inter",
+  display: "swap",
+  weight: "100 900",
+});
+
+const manrope = localFont({
+  src: "../../public/fonts/manrope.woff2",
+  variable: "--font-manrope",
+  display: "swap",
+  weight: "200 800",
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://quickaibuy.com"),
@@ -18,7 +33,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className={`${inter.variable} ${manrope.variable}`}>{children}</body>
     </html>
   );
 }
