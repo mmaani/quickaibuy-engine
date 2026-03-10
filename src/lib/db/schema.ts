@@ -3,6 +3,7 @@ import {
   uuid,
   text,
   timestamp,
+  date,
   jsonb,
   numeric,
   boolean,
@@ -27,6 +28,7 @@ export const productsRaw = pgTable("products_raw", {
   rawPayload: jsonb("raw_payload").notNull(),
   snapshotTs: timestamp("snapshot_ts").notNull().defaultNow(),
 });
+
 export const listings = pgTable(
   "listings",
   {
@@ -47,7 +49,7 @@ export const listings = pgTable(
     publishedExternalId: text("published_external_id"),
     publishAttemptCount: integer("publish_attempt_count").notNull().default(0),
     lastPublishError: text("last_publish_error"),
-    listingDate: timestamp("listing_date"),
+    listingDate: date("listing_date"),
 
     idempotencyKey: text("idempotency_key").notNull(),
 
@@ -65,6 +67,7 @@ export const listings = pgTable(
     ),
   })
 );
+
 export const marketplacePrices = pgTable(
   "marketplace_prices",
   {

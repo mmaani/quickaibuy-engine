@@ -6,11 +6,13 @@
 │   ├── 0001_concerned_skin.sql
 │   ├── 0002_breezy_wraith.sql
 │   ├── 0003_wild_kulan_gath.sql
+│   ├── 0004_aromatic_reavers.sql
 │   └── meta
 │       ├── 0000_snapshot.json
 │       ├── 0001_snapshot.json
 │       ├── 0002_snapshot.json
 │       ├── 0003_snapshot.json
+│       ├── 0004_snapshot.json
 │       └── _journal.json
 ├── drizzle.config.ts
 ├── eslint.config.mjs
@@ -26,6 +28,7 @@
 │   ├── 20260308_normalize_products_raw_supplier_keys.sql
 │   ├── 20260308_normalize_supplier_keys_lowercase.sql
 │   ├── 20260308_rebuild_derived_tables_clean.sql
+│   ├── 20260309_add_worker_runs_orders_if_missing.sql
 │   ├── 20260309_controlled_listing_gate_v1.sql
 │   └── 20260309a_normalize_listing_statuses_for_gate.sql
 ├── next-env.d.ts
@@ -36,6 +39,9 @@
 ├── public
 │   ├── favicon.svg
 │   ├── file.svg
+│   ├── fonts
+│   │   ├── inter.woff2
+│   │   └── manrope.woff2
 │   ├── globe.svg
 │   ├── next.svg
 │   ├── quickaibuy-logo.svg
@@ -51,6 +57,9 @@
 ├── scripts
 │   ├── approve_profitable_candidate.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
+│   ├── check-db-tables.mjs
+│   ├── check-products-raw.mjs
+│   ├── check_active_missing_external_id_rows.mjs
 │   ├── check_audit_log.mjs
 │   ├── check_controlled_listing_gate_v1.mjs
 │   ├── check_listing_execution_gate_v1.mjs
@@ -70,12 +79,16 @@
 │   ├── check_profit_math.mjs
 │   ├── check_profitable_candidates.mjs
 │   ├── check_publish_queue_and_monitor_v1.mjs
+│   ├── check_publish_result_rows.mjs
+│   ├── check_ready_to_publish_rows.mjs
 │   ├── check_runtime_db_fingerprint.mjs
+│   ├── check_stale_publish_in_progress_rows.mjs
 │   ├── check_supplier_queue.ts
 │   ├── check_trend_candidates.mjs
 │   ├── check_trend_candidates.sh
 │   ├── check_trend_candidates_for_signal.mjs
 │   ├── check_trend_signals.mjs
+│   ├── cleanup_stale_publish_in_progress.ts
 │   ├── compare_local_and_vercel_env.mjs
 │   ├── confirm_env_local.sh
 │   ├── db_inspect.mjs
@@ -91,6 +104,7 @@
 │   ├── enqueue_trend_expand.ts
 │   ├── find_db_file.sh
 │   ├── fix_env_local_missing.sh
+│   ├── inspect-products-raw-columns.mjs
 │   ├── inspect_products_raw_keys.mjs
 │   ├── inspect_trend_candidates.ts
 │   ├── install_psql.sh
@@ -103,10 +117,12 @@
 │   ├── patch_marketplace_scan_summary_labels.py
 │   ├── patch_marketplace_scan_summary_labels_v2.py
 │   ├── patch_marketplace_scan_summary_labels_v3.py
+│   ├── peek-products-raw.mjs
 │   ├── pipeline_dashboard.mjs
 │   ├── probe_runtime.ts
 │   ├── promote_listing_previews_ready.ts
 │   ├── promote_single_listing_ready.ts
+│   ├── publish_one_ready_listing.ts
 │   ├── pull_vercel_env.sh
 │   ├── push_pipeline_to_main.sh
 │   ├── reclassify_legacy_dry_run_active_listings.ts
@@ -146,6 +162,7 @@
 │   ├── run_product_matcher_direct.ts
 │   ├── run_profit_engine_direct.sh
 │   ├── run_profit_engine_direct.ts
+│   ├── run_single_listing_publish.ts
 │   ├── run_sql_file.mjs
 │   ├── run_test_product_matcher.sh
 │   ├── run_test_trend_expand.sh
@@ -165,26 +182,24 @@
 │   ├── test_query_budget_allocator.mjs
 │   ├── test_supplier_discover.ts
 │   ├── test_trend_expand.mjs
+│   ├── validate_listing_schema_alignment.mjs
 │   ├── verify_profit_pipeline.ts
-│   ├── workers
-│   │   ├── check_approved_profitable_candidates.mjs
-│   │   ├── check_listing_gate_readiness.mjs
-│   │   ├── check_listing_prepare_candidates.mjs
-│   │   ├── check_listing_preview_candidate_links.mjs
-│   │   ├── check_listing_preview_duplicates.mjs
-│   │   ├── check_listing_preview_payloads.mjs
-│   │   ├── check_listing_previews_latest.mjs
-│   │   ├── check_listings_status_constraint.mjs
-│   │   ├── check_listings_table_columns.mjs
-│   │   ├── check_pipeline_survivors.mjs
-│   │   ├── check_products_raw_columns.mjs
-│   │   ├── check_profitable_candidates_latest.mjs
-│   │   ├── check_profitable_candidates_summary.mjs
-│   │   ├── delete_orphan_listing_previews.mjs
-│   │   └── trendIngest.ts
-│   ├── zip_existing_matcher_context.sh
-│   ├── zip_marketplace_scanner_review.sh
-│   └── zip_match_stage_context.sh
+│   └── workers
+│       ├── check_approved_profitable_candidates.mjs
+│       ├── check_listing_gate_readiness.mjs
+│       ├── check_listing_prepare_candidates.mjs
+│       ├── check_listing_preview_candidate_links.mjs
+│       ├── check_listing_preview_duplicates.mjs
+│       ├── check_listing_preview_payloads.mjs
+│       ├── check_listing_previews_latest.mjs
+│       ├── check_listings_status_constraint.mjs
+│       ├── check_listings_table_columns.mjs
+│       ├── check_pipeline_survivors.mjs
+│       ├── check_products_raw_columns.mjs
+│       ├── check_profitable_candidates_latest.mjs
+│       ├── check_profitable_candidates_summary.mjs
+│       ├── delete_orphan_listing_previews.mjs
+│       └── trendIngest.ts
 ├── src
 │   ├── app
 │   │   ├── _components
@@ -220,6 +235,13 @@
 │   │   │   │   ├── review-debug
 │   │   │   │   │   └── route.ts
 │   │   │   │   └── route.ts
+│   │   │   ├── ops
+│   │   │   │   ├── errors
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── queues
+│   │   │   │   │   └── route.ts
+│   │   │   │   └── worker-runs
+│   │   │   │       └── route.ts
 │   │   │   └── queue
 │   │   │       ├── enqueue
 │   │   │       │   └── route.ts
@@ -280,9 +302,11 @@
 │   │   │   ├── statuses.ts
 │   │   │   ├── types.ts
 │   │   │   └── validate_listing_preview.ts
+│   │   ├── logger.ts
 │   │   ├── marketplaces
 │   │   │   ├── amazon.ts
 │   │   │   ├── ebay.ts
+│   │   │   ├── ebayPublish.ts
 │   │   │   ├── match.ts
 │   │   │   ├── normalizeMarketplaceKey.ts
 │   │   │   └── trendMarketplaceScanner.ts
@@ -308,10 +332,14 @@
 │   │   ├── review
 │   │   │   ├── auth.ts
 │   │   │   └── console.ts
+│   │   ├── server
+│   │   │   └── controlPanelData.ts
 │   │   └── trends
 │   │       ├── expandTrendSignal.ts
 │   │       └── pullTrendSignals.ts
 │   ├── proxy.ts
+│   ├── types
+│   │   └── next-headers-js.d.ts
 │   └── workers
 │       ├── engine.bootstrap.ts
 │       ├── engine.worker.ts
@@ -321,4 +349,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-55 directories, 267 files
+62 directories, 288 files
