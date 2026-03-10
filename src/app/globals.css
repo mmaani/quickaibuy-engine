@@ -19,12 +19,15 @@
 :root {
   --font-inter: "InterLocal";
   --font-manrope: "ManropeLocal";
-  --background: #040816;
-  --foreground: #f6f8fc;
-  --panel: rgba(255, 255, 255, 0.05);
-  --panel-strong: rgba(255, 255, 255, 0.08);
-  --border: rgba(255, 255, 255, 0.1);
-  --shadow: 0 20px 70px rgba(0, 0, 0, 0.28);
+  --background: #05151b;
+  --foreground: #f5fbfd;
+  --panel: rgba(255, 255, 255, 0.06);
+  --panel-strong: rgba(255, 255, 255, 0.1);
+  --border: rgba(160, 230, 224, 0.2);
+  --shadow: 0 24px 68px rgba(0, 0, 0, 0.34);
+  --accent-cyan: #6de7d6;
+  --accent-amber: #f2c267;
+  --accent-mint: #9cf6d7;
 }
 
 @theme inline {
@@ -46,7 +49,10 @@ html,
 body {
   margin: 0;
   min-height: 100%;
-  background: var(--background);
+  background:
+    radial-gradient(circle at 12% -18%, rgba(109, 231, 214, 0.24), transparent 46%),
+    radial-gradient(circle at 90% -12%, rgba(242, 194, 103, 0.2), transparent 40%),
+    var(--background);
   color: var(--foreground);
   font-family: var(--font-inter), Arial, sans-serif;
 }
@@ -86,13 +92,13 @@ summary::-webkit-details-marker {
 }
 
 ::selection {
-  background: rgba(125, 211, 252, 0.25);
+  background: rgba(109, 231, 214, 0.3);
   color: white;
 }
 
 .bg-app {
   background:
-    radial-gradient(circle at top, rgba(18, 33, 69, 0.96) 0%, rgba(7, 11, 24, 1) 42%, rgba(3, 6, 16, 1) 100%);
+    radial-gradient(circle at top, rgba(13, 48, 58, 0.94) 0%, rgba(6, 26, 34, 1) 44%, rgba(4, 15, 21, 1) 100%);
 }
 
 .section-block {
@@ -101,31 +107,31 @@ summary::-webkit-details-marker {
 }
 
 .glass-card {
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(160, 230, 224, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
   box-shadow:
     var(--shadow),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(14px);
 }
 
 .glass-panel {
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: linear-gradient(180deg, rgba(7, 14, 32, 0.92), rgba(8, 15, 30, 0.78));
+  border: 1px solid rgba(160, 230, 224, 0.18);
+  background: linear-gradient(180deg, rgba(8, 32, 40, 0.92), rgba(7, 27, 34, 0.8));
   box-shadow:
-    0 28px 80px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    0 28px 80px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(18px);
 }
 
 .dashboard-frame {
-  border: 1px solid rgba(125, 211, 252, 0.15);
+  border: 1px solid rgba(109, 231, 214, 0.24);
   background:
-    linear-gradient(135deg, rgba(125, 211, 252, 0.08), rgba(16, 185, 129, 0.04)),
+    linear-gradient(135deg, rgba(109, 231, 214, 0.14), rgba(242, 194, 103, 0.06)),
     rgba(255, 255, 255, 0.03);
   box-shadow:
-    0 24px 80px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    0 24px 80px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .contact-input {
@@ -148,13 +154,13 @@ summary::-webkit-details-marker {
 }
 
 .contact-input:hover {
-  border-color: rgba(125, 211, 252, 0.22);
+  border-color: rgba(109, 231, 214, 0.35);
 }
 
 .contact-input:focus {
-  border-color: rgba(125, 211, 252, 0.45);
+  border-color: rgba(109, 231, 214, 0.58);
   background: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.08);
+  box-shadow: 0 0 0 4px rgba(109, 231, 214, 0.15);
 }
 
 .contact-input option {
@@ -182,12 +188,12 @@ summary::-webkit-details-marker {
   border: 1px solid rgba(125, 211, 252, 0.2);
   background: linear-gradient(
     135deg,
-    rgba(125, 211, 252, 0.16),
-    rgba(59, 130, 246, 0.11),
-    rgba(16, 185, 129, 0.08)
+    rgba(109, 231, 214, 0.2),
+    rgba(67, 201, 186, 0.14),
+    rgba(242, 194, 103, 0.14)
   );
   box-shadow:
-    0 10px 28px rgba(14, 165, 233, 0.16),
+    0 10px 28px rgba(73, 213, 194, 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
@@ -216,7 +222,7 @@ summary::-webkit-details-marker {
   width: 0.45rem;
   border-radius: 999px;
   background: linear-gradient(135deg, #67e8f9, #34d399);
-  box-shadow: 0 0 14px rgba(103, 232, 249, 0.65);
+  box-shadow: 0 0 14px rgba(109, 231, 214, 0.68);
 }
 
 .hero-orb {
@@ -232,7 +238,7 @@ summary::-webkit-details-marker {
   top: 80px;
   height: 320px;
   width: 320px;
-  background: rgba(34, 211, 238, 0.11);
+  background: rgba(109, 231, 214, 0.16);
 }
 
 .hero-orb-b {
@@ -240,7 +246,7 @@ summary::-webkit-details-marker {
   top: 40px;
   height: 360px;
   width: 360px;
-  background: rgba(59, 130, 246, 0.11);
+  background: rgba(242, 194, 103, 0.14);
   animation-delay: 0.8s;
 }
 
@@ -249,7 +255,7 @@ summary::-webkit-details-marker {
   left: 12%;
   height: 220px;
   width: 220px;
-  background: rgba(16, 185, 129, 0.09);
+  background: rgba(156, 246, 215, 0.1);
   animation-delay: 1.4s;
 }
 
