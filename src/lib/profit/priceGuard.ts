@@ -2,6 +2,8 @@ import { db } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { sql } from "drizzle-orm";
 import { getPriceGuardThresholds, type PriceGuardThresholds } from "./priceGuardConfig";
+import { calculateRealProfit } from "./realProfitCalculator";
+import { getProfitAssumptions, type ProfitAssumptions } from "./profitAssumptions";
 
 export type PriceGuardDecision = "ALLOW" | "BLOCK" | "MANUAL_REVIEW";
 
@@ -14,6 +16,7 @@ export type PriceGuardMetrics = {
   shipping_cost: number | null;
   estimated_fees: number | null;
   estimated_cogs: number | null;
+  cost_components: Record<string, number> | null;
   supplier_price_drift_pct: number | null;
   supplier_snapshot_age_hours: number | null;
   marketplace_snapshot_age_hours: number | null;
@@ -107,6 +110,10 @@ function extractFeeAssumptions(value: unknown): {
   feePct: number | null;
   otherCostUsd: number | null;
   feeUsd: number | null;
+  payoutReservePct: number | null;
+  paymentReservePct: number | null;
+  fxReservePct: number | null;
+  shippingVariancePct: number | null;
 } {
   const obj = asObject(value);
   if (!obj) {
@@ -114,6 +121,10 @@ function extractFeeAssumptions(value: unknown): {
       feePct: null,
       otherCostUsd: null,
       feeUsd: null,
+      payoutReservePct: null,
+      paymentReservePct: null,
+      fxReservePct: null,
+      shippingVariancePct: null,
     };
   }
 
@@ -121,6 +132,26 @@ function extractFeeAssumptions(value: unknown): {
     feePct: toNumber(obj.feePct),
     otherCostUsd: toNumber(obj.otherCostUsd),
     feeUsd: toNumber(obj.feeUsd),
+    payoutReservePct: toNumber(obj.payoutReservePct),
+    paymentReservePct: toNumber(obj.paymentReservePct),
+    fxReservePct: toNumber(obj.fxReservePct),
+    shippingVariancePct: toNumber(obj.shippingVariancePct),
+  };
+}
+
+function buildAssumptionsFromStoredFees(
+  marketplaceKey: string,
+  feeAssumptions: ReturnType<typeof extractFeeAssumptions>
+): ProfitAssumptions {
+  const defaults = getProfitAssumptions({ marketplaceKey });
+  return {
+    ...defaults,
+    ebayFeeRatePct: feeAssumptions.feePct ?? defaults.ebayFeeRatePct,
+    payoutReservePct: feeAssumptions.payoutReservePct ?? defaults.payoutReservePct,
+    paymentReservePct: feeAssumptions.paymentReservePct ?? defaults.paymentReservePct,
+    fxReservePct: feeAssumptions.fxReservePct ?? defaults.fxReservePct,
+    shippingVariancePct: feeAssumptions.shippingVariancePct ?? defaults.shippingVariancePct,
+    fixedCostUsd: feeAssumptions.otherCostUsd ?? defaults.fixedCostUsd,
   };
 }
 
@@ -238,34 +269,24 @@ export async function validateProfitSafety(input: {
     originalMarketShipping ??
     null;
 
-  const feePct = feeAssumptions.feePct;
-  const otherCostUsd = feeAssumptions.otherCostUsd ?? 0;
+  const assumptions = buildAssumptionsFromStoredFees(row.marketplaceKey, feeAssumptions);
 
-  const estimatedFees =
-    latestMarketPrice != null && feePct != null
-      ? round2((latestMarketPrice * feePct) / 100)
-      : feeAssumptions.feeUsd;
-
-  const estimatedCogs =
-    latestSupplierPrice != null ? round2(latestSupplierPrice + otherCostUsd) : null;
-
-  const recomputedProfit =
-    latestMarketPrice != null &&
-    estimatedFees != null &&
-    estimatedCogs != null &&
-    shippingCost != null
-      ? round2(latestMarketPrice - estimatedFees - shippingCost - estimatedCogs)
+  const economics =
+    latestMarketPrice != null && latestSupplierPrice != null && shippingCost != null
+      ? calculateRealProfit({
+          marketplaceKey: row.marketplaceKey,
+          marketplacePriceUsd: latestMarketPrice,
+          supplierPriceUsd: latestSupplierPrice,
+          shippingPriceUsd: shippingCost,
+          assumptions,
+        })
       : null;
 
-  const recomputedMarginPct =
-    recomputedProfit != null && latestMarketPrice != null && latestMarketPrice > 0
-      ? round2((recomputedProfit / latestMarketPrice) * 100)
-      : null;
-
-  const recomputedRoiPct =
-    recomputedProfit != null && estimatedCogs != null && estimatedCogs > 0
-      ? round2((recomputedProfit / estimatedCogs) * 100)
-      : null;
+  const estimatedFees = economics?.estimatedFeesUsd ?? feeAssumptions.feeUsd ?? null;
+  const estimatedCogs = economics?.estimatedCogsUsd ?? null;
+  const recomputedProfit = economics?.estimatedProfitUsd ?? null;
+  const recomputedMarginPct = economics?.marginPct ?? null;
+  const recomputedRoiPct = economics?.roiPct ?? null;
 
   const supplierSnapshotAgeHours = hoursBetween(now, toDate(row.latestSupplierSnapshotTs));
   const marketplaceSnapshotAgeHours = hoursBetween(now, toDate(row.latestMarketSnapshotTs));
@@ -343,6 +364,7 @@ export async function validateProfitSafety(input: {
       shipping_cost: shippingCost,
       estimated_fees: estimatedFees,
       estimated_cogs: estimatedCogs,
+      cost_components: economics?.costs ?? null,
       supplier_price_drift_pct: supplierPriceDriftPct,
       supplier_snapshot_age_hours: supplierSnapshotAgeHours,
       marketplace_snapshot_age_hours: marketplaceSnapshotAgeHours,
