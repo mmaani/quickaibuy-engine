@@ -57,10 +57,16 @@ export async function POST(request: Request) {
   if (candidateId) redirectUrl.searchParams.set("candidateId", candidateId);
 
   if (!result.ok) {
-    redirectUrl.searchParams.set("promoteError", result.reason ?? "Re-evaluation failed");
+    redirectUrl.searchParams.set("reevaluateBlocked", "1");
+    redirectUrl.searchParams.set("reevaluateReason", result.reason ?? "Re-evaluation failed");
+    if (result.recoveryState) redirectUrl.searchParams.set("reevaluateState", result.recoveryState);
+    if (result.nextAction) redirectUrl.searchParams.set("reevaluateNextAction", result.nextAction);
     return NextResponse.redirect(redirectUrl, { status: 303 });
   }
 
-  redirectUrl.searchParams.set("promoteUpdated", "1");
+  redirectUrl.searchParams.set("reevaluateUpdated", "1");
+  redirectUrl.searchParams.set("reevaluateDecision", result.decision ?? "READY_FOR_REPROMOTION");
+  if (result.recoveryState) redirectUrl.searchParams.set("reevaluateState", result.recoveryState);
+  if (result.nextAction) redirectUrl.searchParams.set("reevaluateNextAction", result.nextAction);
   return NextResponse.redirect(redirectUrl, { status: 303 });
 }

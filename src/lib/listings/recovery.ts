@@ -16,6 +16,14 @@ export type ReevaluateListingRecoveryResult = {
   listingId: string;
   candidateId?: string;
   decision?: "READY_FOR_REPROMOTION" | "REMAIN_BLOCKED";
+  recoveryState?:
+    | "BLOCKED_STALE_MARKETPLACE"
+    | "BLOCKED_STALE_SUPPLIER"
+    | "BLOCKED_SUPPLIER_DRIFT"
+    | "BLOCKED_OTHER_FAIL_CLOSED"
+    | "READY_FOR_REPROMOTION";
+  nextAction?: string;
+  reasons?: string[];
   reason?: string;
 };
 
@@ -82,6 +90,10 @@ export async function reevaluateListingForRecovery(
   if (!priceGuard.allow) {
     const staleMarketplace = priceGuard.reasons.includes("STALE_MARKETPLACE_SNAPSHOT");
     const staleSupplier = priceGuard.reasons.includes("STALE_SUPPLIER_SNAPSHOT");
+    const supplierDrift =
+      priceGuard.reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
+      priceGuard.reasons.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE") ||
+      priceGuard.reasons.includes("SUPPLIER_DRIFT_DATA_REQUIRED");
     let marketJobId: string | null = null;
     let supplierJobId: string | null = null;
 
@@ -142,6 +154,17 @@ export async function reevaluateListingForRecovery(
       listingId,
       candidateId,
       decision: "REMAIN_BLOCKED",
+      recoveryState: staleMarketplace
+        ? "BLOCKED_STALE_MARKETPLACE"
+        : staleSupplier
+          ? "BLOCKED_STALE_SUPPLIER"
+          : supplierDrift
+            ? "BLOCKED_SUPPLIER_DRIFT"
+            : "BLOCKED_OTHER_FAIL_CLOSED",
+      nextAction: staleMarketplace || staleSupplier
+        ? "Wait for refresh jobs, then run explicit re-evaluation again."
+        : "Review block reasons and run explicit re-evaluation again.",
+      reasons: priceGuard.reasons,
       reason: `still blocked: ${priceGuard.reasons.join(", ")}`,
     };
   }
@@ -176,5 +199,8 @@ export async function reevaluateListingForRecovery(
     listingId,
     candidateId,
     decision: "READY_FOR_REPROMOTION",
+    recoveryState: "READY_FOR_REPROMOTION",
+    nextAction: "Operator can explicitly promote back to READY_TO_PUBLISH.",
+    reasons: [],
   };
 }

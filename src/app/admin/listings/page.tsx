@@ -10,6 +10,7 @@ import {
   type QueueListItem,
 } from "@/lib/listings/getApprovedListingsQueueData";
 import { LISTING_STATUSES } from "@/lib/listings/statuses";
+import type { RecoveryState } from "@/lib/listings/recoveryState";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
 
 export const runtime = "nodejs";
@@ -75,6 +76,30 @@ function KeyValue({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function recoveryStateLabel(state: RecoveryState): string {
+  if (state === "BLOCKED_STALE_MARKETPLACE") return "BLOCKED_STALE_MARKETPLACE";
+  if (state === "BLOCKED_SUPPLIER_DRIFT") return "BLOCKED_SUPPLIER_DRIFT";
+  if (state === "BLOCKED_STALE_SUPPLIER") return "BLOCKED_STALE_SUPPLIER";
+  if (state === "BLOCKED_OTHER_FAIL_CLOSED") return "BLOCKED_OTHER_FAIL_CLOSED";
+  if (state === "READY_FOR_REEVALUATION") return "READY_FOR_REEVALUATION";
+  if (state === "READY_FOR_REPROMOTION") return "READY_FOR_REPROMOTION";
+  return "NONE";
+}
+
+function recoveryTone(state: RecoveryState): string {
+  if (
+    state === "BLOCKED_STALE_MARKETPLACE" ||
+    state === "BLOCKED_SUPPLIER_DRIFT" ||
+    state === "BLOCKED_STALE_SUPPLIER" ||
+    state === "BLOCKED_OTHER_FAIL_CLOSED"
+  ) {
+    return "text-rose-100";
+  }
+  if (state === "READY_FOR_REEVALUATION") return "text-amber-100";
+  if (state === "READY_FOR_REPROMOTION") return "text-emerald-100";
+  return "text-white/55";
+}
+
 export default async function ListingsPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   const resolvedSearchParams = await searchParams;
   const filters = getListingsQueueFiltersFromSearchParams(resolvedSearchParams);
@@ -82,6 +107,12 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
   const promoteError = String(resolvedSearchParams?.promoteError ?? "").trim();
   const previewUpdated = String(resolvedSearchParams?.previewUpdated ?? "").trim() === "1";
   const previewError = String(resolvedSearchParams?.previewError ?? "").trim();
+  const reevaluateUpdated = String(resolvedSearchParams?.reevaluateUpdated ?? "").trim() === "1";
+  const reevaluateBlocked = String(resolvedSearchParams?.reevaluateBlocked ?? "").trim() === "1";
+  const reevaluateReason = String(resolvedSearchParams?.reevaluateReason ?? "").trim();
+  const reevaluateDecision = String(resolvedSearchParams?.reevaluateDecision ?? "").trim();
+  const reevaluateState = String(resolvedSearchParams?.reevaluateState ?? "").trim();
+  const reevaluateNextAction = String(resolvedSearchParams?.reevaluateNextAction ?? "").trim();
 
   const [overview, filterOptions, rows] = await Promise.all([
     getListingsQueueOverview(),
@@ -114,6 +145,20 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
 
           {previewUpdated ? <div className="mt-4 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">Listing preview prepared/updated.</div> : null}
           {previewError ? <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{previewError}</div> : null}
+          {reevaluateUpdated ? (
+            <div className="mt-4 rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">
+              Re-evaluation completed. Decision: {reevaluateDecision || "READY_FOR_REPROMOTION"}. Promotion remains operator-triggered.
+              {reevaluateState ? ` State: ${reevaluateState}.` : ""}
+              {reevaluateNextAction ? ` Next action: ${reevaluateNextAction}` : ""}
+            </div>
+          ) : null}
+          {reevaluateBlocked ? (
+            <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              Re-evaluation completed: listing remains blocked. {reevaluateReason || "Run refresh and re-check again."}
+              {reevaluateState ? ` State: ${reevaluateState}.` : ""}
+              {reevaluateNextAction ? ` Next action: ${reevaluateNextAction}` : ""}
+            </div>
+          ) : null}
           {promoteUpdated ? <div className="mt-4 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">Preview promoted to READY_TO_PUBLISH.</div> : null}
           {promoteError ? <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{promoteError}</div> : null}
         </header>
@@ -202,7 +247,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                           <td className="border-b border-white/5 px-3 py-3">{row.listingStatus ?? "-"}</td>
                           <td className="border-b border-white/5 px-3 py-3">
                             {row.recoveryState !== "NONE" ? (
-                              <span className="text-amber-100">{row.recoveryState}</span>
+                              <div>
+                                <div className={recoveryTone(row.recoveryState)}>{recoveryStateLabel(row.recoveryState)}</div>
+                                {row.recoveryBlockReasonCode ? <div className="text-xs text-white/50">{row.recoveryBlockReasonCode}</div> : null}
+                              </div>
                             ) : (
                               <span className="text-white/55">-</span>
                             )}
@@ -241,13 +289,18 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Approved by" value={detail.item.approvedBy ?? "-"} />
                     <KeyValue label="Listing eligible" value={detail.item.listingEligible ? "YES" : "NO"} />
                     <KeyValue label="Eligibility reasons" value={detail.item.listingEligibilityReasons.length ? detail.item.listingEligibilityReasons.join("; ") : "Passed"} />
-                    <KeyValue label="Recovery state" value={detail.item.recoveryState} />
+                    <KeyValue label="Recovery state" value={recoveryStateLabel(detail.item.recoveryState)} />
+                    <KeyValue label="Recovery block reason code" value={detail.item.recoveryBlockReasonCode ?? "-"} />
+                    <KeyValue label="Recovery reason codes" value={detail.item.recoveryReasonCodes.length ? detail.item.recoveryReasonCodes.join(", ") : "-"} />
+                    <KeyValue label="Re-evaluation needed" value={detail.item.reEvaluationNeeded ? "YES" : "NO"} />
+                    <KeyValue label="Re-promotion ready" value={detail.item.rePromotionReady ? "YES" : "NO"} />
                     <KeyValue label="Recovery next action" value={detail.item.recoveryNextAction} />
                     <KeyValue label="Duplicate warning" value={detail.item.duplicateDetected ? (detail.item.duplicateReason ?? "YES") : "NO"} />
                     <KeyValue label="Preview readiness" value={detail.item.previewStatus} />
                     <KeyValue label="Missing fields" value={detail.item.previewMissingFields.length ? detail.item.previewMissingFields.join(", ") : "None"} />
                     <KeyValue label="Latest listing row" value={detail.item.listingId ? `${detail.item.listingId} (${detail.item.listingStatus ?? "-"})` : "None"} />
                     <KeyValue label="Listing updated" value={formatDateTime(detail.item.listingUpdatedAt)} />
+                    <KeyValue label="Latest recovery audit" value={detail.latestRecoveryAudit ? `${detail.latestRecoveryAudit.eventType} @ ${formatDateTime(detail.latestRecoveryAudit.eventTs)}` : "No recovery audit event found"} />
                   </div>
                 </section>
 

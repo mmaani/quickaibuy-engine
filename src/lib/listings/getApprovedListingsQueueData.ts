@@ -1,5 +1,6 @@
 import { pool } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
+import { computeRecoveryState, type RecoveryState } from "@/lib/listings/recoveryState";
 import { LISTING_STATUSES } from "@/lib/listings/statuses";
 
 export const LISTINGS_ROUTE = "/admin/listings";
@@ -74,8 +75,12 @@ export type QueueListItem = {
   duplicateDetected: boolean;
   duplicateReason: string | null;
   duplicateListingIds: string[];
-  recoveryState: "NONE" | "BLOCKED_STALE_OR_DRIFT" | "READY_FOR_REEVALUATION" | "READY_FOR_REPROMOTION";
+  recoveryState: RecoveryState;
   recoveryNextAction: string;
+  recoveryBlockReasonCode: string | null;
+  recoveryReasonCodes: string[];
+  reEvaluationNeeded: boolean;
+  rePromotionReady: boolean;
 };
 
 export type QueueOverview = {
@@ -98,6 +103,10 @@ export type ListingsQueueDetail = {
     eventType: string;
     details: unknown;
   }>;
+  latestRecoveryAudit: {
+    eventType: string;
+    eventTs: string;
+  } | null;
 };
 
 function toNumber(value: unknown): number | null {
@@ -172,29 +181,12 @@ function evaluatePreviewReadiness(row: ListingQueueRow): {
 
 function mapQueueRow(row: ListingQueueRow): QueueListItem {
   const readiness = evaluatePreviewReadiness(row);
-  const blockReason = String(row.listing_block_reason ?? "").toUpperCase();
-  const hasRecoveryBlock =
-    blockReason.includes("STALE_MARKETPLACE") ||
-    blockReason.includes("STALE_SUPPLIER") ||
-    blockReason.includes("SUPPLIER_PRICE_DRIFT") ||
-    blockReason.includes("SUPPLIER_DRIFT");
-  const decisionStatus = String(row.decision_status ?? "").toUpperCase();
-  const listingStatus = String(row.listing_status ?? "").toUpperCase();
-  const recoveryState: QueueListItem["recoveryState"] = hasRecoveryBlock
-    ? "BLOCKED_STALE_OR_DRIFT"
-    : decisionStatus === "MANUAL_REVIEW" && !row.listing_eligible
-      ? "READY_FOR_REEVALUATION"
-      : decisionStatus === "APPROVED" && row.listing_eligible && listingStatus === LISTING_STATUSES.READY_TO_PUBLISH
-        ? "READY_FOR_REPROMOTION"
-        : "NONE";
-  const recoveryNextAction =
-    recoveryState === "BLOCKED_STALE_OR_DRIFT"
-      ? "Run re-evaluation after refresh completes."
-      : recoveryState === "READY_FOR_REEVALUATION"
-        ? "Run explicit re-evaluation."
-        : recoveryState === "READY_FOR_REPROMOTION"
-          ? "Execute guarded publish worker."
-          : "No recovery action required.";
+  const recovery = computeRecoveryState({
+    decisionStatus: row.decision_status,
+    listingEligible: Boolean(row.listing_eligible),
+    listingStatus: row.listing_status,
+    listingBlockReason: row.listing_block_reason,
+  });
 
   return {
     id: row.id,
@@ -224,8 +216,12 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     duplicateDetected: Boolean(row.duplicate_detected),
     duplicateReason: row.duplicate_reason ?? null,
     duplicateListingIds: row.duplicate_listing_ids ?? [],
-    recoveryState,
-    recoveryNextAction,
+    recoveryState: recovery.recoveryState,
+    recoveryNextAction: recovery.recoveryNextAction,
+    recoveryBlockReasonCode: recovery.recoveryBlockReasonCode,
+    recoveryReasonCodes: recovery.recoveryReasonCodes,
+    reEvaluationNeeded: recovery.reEvaluationNeeded,
+    rePromotionReady: recovery.rePromotionReady,
   };
 }
 
@@ -322,6 +318,7 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
   const conditions: string[] = [
     `(
       pc.decision_status = 'APPROVED'
+      OR upper(coalesce(pc.decision_status, '')) = 'MANUAL_REVIEW'
       OR (
         upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_MARKETPLACE%'
         OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_SUPPLIER%'
@@ -499,5 +496,20 @@ export async function getListingsQueueDetail(candidateId: string): Promise<Listi
       eventType: String(row.event_type ?? ""),
       details: row.details,
     })),
+    latestRecoveryAudit:
+      auditResult.rows
+        .map((row) => ({
+          eventType: String(row.event_type ?? ""),
+          eventTs: toIsoString(row.event_ts) ?? "",
+        }))
+        .find((row) =>
+          [
+            "LISTING_BLOCKED_STALE_MARKETPLACE",
+            "LISTING_BLOCKED_SUPPLIER_DRIFT",
+            "LISTING_REFRESH_ENQUEUED_FOR_RECOVERY",
+            "LISTING_REEVALUATED_AFTER_REFRESH",
+            "LISTING_REPROMOTION_READY",
+          ].includes(row.eventType)
+        ) ?? null,
   };
 }

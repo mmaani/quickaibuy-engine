@@ -1,5 +1,6 @@
 import { pool } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
+import { computeRecoveryState, type RecoveryState } from "@/lib/listings/recoveryState";
 
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "MANUAL_REVIEW", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
@@ -57,8 +58,10 @@ export type ReviewListItem = {
   listingTitle: string | null;
   listingPrice: number | null;
   listingBlockReason: string | null;
-  recoveryState: "NONE" | "BLOCKED_STALE_OR_DRIFT" | "READY_FOR_REEVALUATION" | "READY_FOR_REPROMOTION";
+  recoveryState: RecoveryState;
   recoveryNextAction: string;
+  recoveryBlockReasonCode: string | null;
+  recoveryReasonCodes: string[];
   supplierPriceDriftPct: number | null;
   supplierSnapshotAgeHours: number | null;
   riskFlags: string[];
@@ -416,29 +419,12 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     supplierSnapshotAgeHours,
   });
   const listingBlockReason = row.listing_block_reason ?? null;
-  const blockReason = String(row.listing_block_reason ?? "").toUpperCase();
-  const hasRecoveryBlock =
-    blockReason.includes("STALE_MARKETPLACE") ||
-    blockReason.includes("STALE_SUPPLIER") ||
-    blockReason.includes("SUPPLIER_PRICE_DRIFT") ||
-    blockReason.includes("SUPPLIER_DRIFT");
-  const decisionStatus = String(row.decision_status ?? "").toUpperCase();
-  const listingStatus = String(row.listing_status ?? "").toUpperCase();
-  const recoveryState: ReviewListItem["recoveryState"] = hasRecoveryBlock
-    ? "BLOCKED_STALE_OR_DRIFT"
-    : decisionStatus === "MANUAL_REVIEW" && !eligibility.listingEligible
-      ? "READY_FOR_REEVALUATION"
-      : decisionStatus === "APPROVED" && eligibility.listingEligible && listingStatus === "READY_TO_PUBLISH"
-        ? "READY_FOR_REPROMOTION"
-        : "NONE";
-  const recoveryNextAction =
-    recoveryState === "BLOCKED_STALE_OR_DRIFT"
-      ? "Run re-evaluation after refresh."
-      : recoveryState === "READY_FOR_REEVALUATION"
-        ? "Run explicit re-evaluation."
-        : recoveryState === "READY_FOR_REPROMOTION"
-          ? "Execute guarded publish worker."
-          : "No recovery action required.";
+  const recovery = computeRecoveryState({
+    decisionStatus: row.decision_status,
+    listingEligible: eligibility.listingEligible,
+    listingStatus: row.listing_status,
+    listingBlockReason,
+  });
 
   return {
     id: row.id,
@@ -459,8 +445,10 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     listingTitle: row.listing_title,
     listingPrice: toNumber(row.listing_price),
     listingBlockReason,
-    recoveryState,
-    recoveryNextAction,
+    recoveryState: recovery.recoveryState,
+    recoveryNextAction: recovery.recoveryNextAction,
+    recoveryBlockReasonCode: recovery.recoveryBlockReasonCode,
+    recoveryReasonCodes: recovery.recoveryReasonCodes,
     supplierPriceDriftPct,
     supplierSnapshotAgeHours,
     riskFlags,

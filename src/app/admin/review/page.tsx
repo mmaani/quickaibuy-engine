@@ -375,6 +375,9 @@ function ReviewActions({ candidate }: { candidate: CandidateDetail["candidate"] 
       <div className="mt-5 border-t border-white/10 pt-4">
         <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Recovery</div>
         <div className="mb-3 text-sm text-white/75">{candidate.recoveryState} - {candidate.recoveryNextAction}</div>
+        {candidate.recoveryBlockReasonCode ? (
+          <div className="mb-3 text-xs text-white/55">Primary reason: {candidate.recoveryBlockReasonCode}</div>
+        ) : null}
         {candidate.listingId ? (
           <form action="/api/admin/listings/re-evaluate" method="post">
             <input type="hidden" name="candidateId" value={candidate.id} />
@@ -623,6 +626,8 @@ export default async function ReviewPage({
                       <KeyValue label="Listing Price" value={formatMoney(detail.candidate.listingPrice)} />
                       <KeyValue label="Listing Block Reason" value={detail.candidate.listingBlockReason ?? "-"} />
                       <KeyValue label="Recovery State" value={detail.candidate.recoveryState} />
+                      <KeyValue label="Recovery Block Reason Code" value={detail.candidate.recoveryBlockReasonCode ?? "-"} />
+                      <KeyValue label="Recovery Reason Codes" value={detail.candidate.recoveryReasonCodes.length ? detail.candidate.recoveryReasonCodes.join(", ") : "-"} />
                       <KeyValue label="Recovery Next Action" value={detail.candidate.recoveryNextAction} />
                       <KeyValue label="supplier_price_drift_pct" value={formatPercent(detail.candidate.supplierPriceDriftPct)} />
                       <KeyValue label="supplier_snapshot_age_hours" value={formatHours(detail.candidate.supplierSnapshotAgeHours)} />
