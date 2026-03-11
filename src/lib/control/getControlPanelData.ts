@@ -86,6 +86,27 @@ export type ControlPanelData = {
     blockedCount: number | null;
     manualReviewCount: number | null;
   };
+  recoveryStates: {
+    staleMarketplaceBlocks: number | null;
+    supplierDriftBlocks: number | null;
+    refreshJobsPending: number | null;
+    reEvaluationNeeded: number | null;
+    rePromotionReady: number | null;
+    sourceWired: {
+      staleMarketplaceBlocks: boolean;
+      supplierDriftBlocks: boolean;
+      refreshJobsPending: boolean;
+      reEvaluationNeeded: boolean;
+      rePromotionReady: boolean;
+    };
+    actionHints: Array<{
+      id: string;
+      label: string;
+      technicalLabel: string;
+      hint: string;
+      severity: "critical" | "info";
+    }>;
+  };
   listingThroughput: {
     previews: number | null;
     readyToPublish: number | null;
@@ -656,6 +677,14 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const capUsed = toNum(dailyCapRow?.cap_used);
   const capRemaining = capLimit == null || capUsed == null ? null : Math.max(0, capLimit - capUsed);
   const publishRateLimit = await getPublishRateLimitState("ebay");
+  const profitableCandidatesHasListingEligible = profitableCandidatesExists
+    ? await columnExists("profitable_candidates", "listing_eligible")
+    : false;
+  const profitableCandidatesHasListingBlockReason = profitableCandidatesExists
+    ? await columnExists("profitable_candidates", "listing_block_reason")
+    : false;
+  const jobsHasStatus = jobsExists ? await columnExists("jobs", "status") : false;
+  const jobsHasJobType = jobsExists ? await columnExists("jobs", "job_type") : false;
 
   const workerRunsHasStartedAt = workerRunsExists ? await columnExists("worker_runs", "started_at") : false;
   const workerRunsHasFinishedAt = workerRunsExists ? await columnExists("worker_runs", "finished_at") : false;
@@ -759,6 +788,161 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         `)
       )[0] ?? {}
     : {};
+
+  const recoveryBlockFilter = `
+    (
+      upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_MARKETPLACE%'
+      OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_SUPPLIER%'
+      OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER_PRICE_DRIFT%'
+      OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER_DRIFT%'
+    )
+  `;
+
+  const staleMarketplaceBlocks =
+    profitableCandidatesExists &&
+    profitableCandidatesHasListingEligible &&
+    profitableCandidatesHasListingBlockReason
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              where pc.listing_eligible = false
+                and upper(coalesce(pc.listing_block_reason, '')) like '%STALE_MARKETPLACE%'
+            `)
+          )[0]?.count
+        )
+      : null;
+
+  const supplierDriftBlocks =
+    profitableCandidatesExists &&
+    profitableCandidatesHasListingEligible &&
+    profitableCandidatesHasListingBlockReason
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              where pc.listing_eligible = false
+                and (
+                  upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_PRICE_DRIFT%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_DRIFT%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%STALE_SUPPLIER%'
+                )
+            `)
+          )[0]?.count
+        )
+      : null;
+
+  const refreshJobsPending = jobsExists && jobsHasStatus && jobsHasJobType
+    ? toNum(
+        (
+          await runQuery(`
+            select count(*)::int as count
+            from jobs
+            where upper(coalesce(status, '')) in ('QUEUED', 'RUNNING')
+              and (
+                job_type = 'SCAN_MARKETPLACE_PRICE'
+                or job_type = 'supplier:discover'
+              )
+          `)
+        )[0]?.count
+      )
+    : null;
+
+  const reEvaluationNeeded =
+    profitableCandidatesExists &&
+    profitableCandidatesHasListingEligible &&
+    profitableCandidatesHasListingBlockReason &&
+    pcHasDecisionStatus
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              where pc.listing_eligible = false
+                and (
+                  ${recoveryBlockFilter}
+                  or upper(coalesce(pc.decision_status, '')) = 'MANUAL_REVIEW'
+                )
+            `)
+          )[0]?.count
+        )
+      : null;
+
+  const rePromotionReady =
+    profitableCandidatesExists &&
+    profitableCandidatesHasListingEligible &&
+    pcHasDecisionStatus &&
+    listingsExists
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              inner join lateral (
+                select l.id, l.status
+                from listings l
+                where l.candidate_id = pc.id
+                  and lower(coalesce(l.marketplace_key, '')) = 'ebay'
+                order by l.updated_at desc nulls last, l.created_at desc nulls last, l.id desc
+                limit 1
+              ) l on true
+              where lower(coalesce(pc.marketplace_key, '')) = 'ebay'
+                and upper(coalesce(pc.decision_status, '')) = 'APPROVED'
+                and pc.listing_eligible = true
+                and upper(coalesce(l.status, '')) = 'PREVIEW'
+            `)
+          )[0]?.count
+        )
+      : null;
+
+  const recoveryActionHints: ControlPanelData["recoveryStates"]["actionHints"] = [];
+  if ((staleMarketplaceBlocks ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "market-data-too-old",
+      label: "Market data too old",
+      technicalLabel: "STALE_MARKETPLACE_BLOCK",
+      hint: "Refresh market data, then re-check the affected listings.",
+      severity: "critical",
+    });
+  }
+  if ((supplierDriftBlocks ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "supplier-product-changed",
+      label: "Supplier product changed",
+      technicalLabel: "SUPPLIER_DRIFT_BLOCK",
+      hint: "Review supplier change in /admin/review before re-promotion.",
+      severity: "critical",
+    });
+  }
+  if ((refreshJobsPending ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "waiting-for-refresh",
+      label: "Waiting for refresh",
+      technicalLabel: "REFRESH_JOBS_PENDING",
+      hint: "Wait for refresh jobs to complete before re-checking.",
+      severity: "info",
+    });
+  }
+  if ((reEvaluationNeeded ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "needs-recheck",
+      label: "Needs re-check",
+      technicalLabel: "RE_EVALUATION_NEEDED",
+      hint: "Use explicit re-evaluation in /admin/listings for blocked rows.",
+      severity: "critical",
+    });
+  }
+  if ((rePromotionReady ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "ready-for-repromotion",
+      label: "Ready for re-promotion",
+      technicalLabel: "REPROMOTION_READY",
+      hint: "Promote from PREVIEW to READY_TO_PUBLISH when checks pass.",
+      severity: "info",
+    });
+  }
 
   const publishingSafetyAlerts: ControlPanelData["alerts"] = [];
   const operationalFreshnessAlerts: ControlPanelData["alerts"] = [];
@@ -1025,6 +1209,35 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       staleCandidateCount: toNum(priceGuardSummary.stale_candidate_count),
       blockedCount: toNum(priceGuardSummary.blocked_count),
       manualReviewCount: toNum(priceGuardSummary.manual_review_count),
+    },
+    recoveryStates: {
+      staleMarketplaceBlocks,
+      supplierDriftBlocks,
+      refreshJobsPending,
+      reEvaluationNeeded,
+      rePromotionReady,
+      sourceWired: {
+        staleMarketplaceBlocks:
+          profitableCandidatesExists &&
+          profitableCandidatesHasListingEligible &&
+          profitableCandidatesHasListingBlockReason,
+        supplierDriftBlocks:
+          profitableCandidatesExists &&
+          profitableCandidatesHasListingEligible &&
+          profitableCandidatesHasListingBlockReason,
+        refreshJobsPending: jobsExists && jobsHasStatus && jobsHasJobType,
+        reEvaluationNeeded:
+          profitableCandidatesExists &&
+          profitableCandidatesHasListingEligible &&
+          profitableCandidatesHasListingBlockReason &&
+          pcHasDecisionStatus,
+        rePromotionReady:
+          profitableCandidatesExists &&
+          profitableCandidatesHasListingEligible &&
+          pcHasDecisionStatus &&
+          listingsExists,
+      },
+      actionHints: recoveryActionHints,
     },
     listingThroughput,
     listingLifecycle: {

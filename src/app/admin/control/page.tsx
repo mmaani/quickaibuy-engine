@@ -108,6 +108,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+function metricOrUnknown(value: number | null, wired: boolean): React.ReactNode {
+  if (!wired) return "not wired yet";
+  return value ?? "-";
+}
+
 function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>): string | null {
   if (!snapshot.available) return "Manual override store unavailable. Actions blocked for safety.";
   if (snapshot.entries.EMERGENCY_READ_ONLY.enabled) return "Emergency read-only mode is active.";
@@ -242,6 +247,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   const data = await getControlPanelData();
   const message = one(resolvedSearchParams?.actionMessage);
   const actionError = one(resolvedSearchParams?.actionError);
+  const hasCriticalRecoveryBlock =
+    (data.recoveryStates.staleMarketplaceBlocks ?? 0) > 0 ||
+    (data.recoveryStates.supplierDriftBlocks ?? 0) > 0 ||
+    (data.recoveryStates.reEvaluationNeeded ?? 0) > 0;
 
   const quickActions: Array<{ key: string; label: string }> = [
     { key: "supplier", label: "Run supplier discover" },
@@ -352,6 +361,73 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           </div>
         </Section>
 
+        {hasCriticalRecoveryBlock ? (
+          <Section title="Recovery States (Stale / Drift)">
+            <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
+              Publishability is currently blocked for one or more listings.
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <StatCard
+                label="Market data too old (STALE_MARKETPLACE_BLOCK)"
+                value={metricOrUnknown(
+                  data.recoveryStates.staleMarketplaceBlocks,
+                  data.recoveryStates.sourceWired.staleMarketplaceBlocks
+                )}
+              />
+              <StatCard
+                label="Supplier product changed (SUPPLIER_DRIFT_BLOCK)"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierDriftBlocks,
+                  data.recoveryStates.sourceWired.supplierDriftBlocks
+                )}
+              />
+              <StatCard
+                label="Waiting for refresh (REFRESH_JOBS_PENDING)"
+                value={metricOrUnknown(
+                  data.recoveryStates.refreshJobsPending,
+                  data.recoveryStates.sourceWired.refreshJobsPending
+                )}
+              />
+              <StatCard
+                label="Needs re-check (RE_EVALUATION_NEEDED)"
+                value={metricOrUnknown(
+                  data.recoveryStates.reEvaluationNeeded,
+                  data.recoveryStates.sourceWired.reEvaluationNeeded
+                )}
+              />
+              <StatCard
+                label="Ready for re-promotion (REPROMOTION_READY)"
+                value={metricOrUnknown(
+                  data.recoveryStates.rePromotionReady,
+                  data.recoveryStates.sourceWired.rePromotionReady
+                )}
+              />
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {data.recoveryStates.actionHints.length ? (
+                data.recoveryStates.actionHints.map((hint) => (
+                  <div
+                    key={hint.id}
+                    className={`rounded-xl border p-3 text-sm ${
+                      hint.severity === "critical"
+                        ? "border-amber-300/35 bg-amber-500/10 text-amber-100"
+                        : "border-white/10 bg-white/[0.04] text-white/85"
+                    }`}
+                  >
+                    <div className="font-semibold">{hint.label}</div>
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-white/55">{hint.technicalLabel}</div>
+                    <div className="mt-1">{hint.hint}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/75">
+                  No stale/drift recovery actions are currently pending.
+                </div>
+              )}
+            </div>
+          </Section>
+        ) : null}
+
         <Section title="Listing Throughput">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="previews" value={data.listingThroughput.previews ?? "-"} />
@@ -376,6 +452,73 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <DataTable rows={data.workerQueueHealth.recentJobFailures} empty="No recent job failures." />
           </div>
         </Section>
+
+        {!hasCriticalRecoveryBlock ? (
+          <Section title="Recovery States (Stale / Drift)">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+              Recovery metrics are currently informational and are shown below critical worker failures.
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <StatCard
+                label="Market data too old (STALE_MARKETPLACE_BLOCK)"
+                value={metricOrUnknown(
+                  data.recoveryStates.staleMarketplaceBlocks,
+                  data.recoveryStates.sourceWired.staleMarketplaceBlocks
+                )}
+              />
+              <StatCard
+                label="Supplier product changed (SUPPLIER_DRIFT_BLOCK)"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierDriftBlocks,
+                  data.recoveryStates.sourceWired.supplierDriftBlocks
+                )}
+              />
+              <StatCard
+                label="Waiting for refresh (REFRESH_JOBS_PENDING)"
+                value={metricOrUnknown(
+                  data.recoveryStates.refreshJobsPending,
+                  data.recoveryStates.sourceWired.refreshJobsPending
+                )}
+              />
+              <StatCard
+                label="Needs re-check (RE_EVALUATION_NEEDED)"
+                value={metricOrUnknown(
+                  data.recoveryStates.reEvaluationNeeded,
+                  data.recoveryStates.sourceWired.reEvaluationNeeded
+                )}
+              />
+              <StatCard
+                label="Ready for re-promotion (REPROMOTION_READY)"
+                value={metricOrUnknown(
+                  data.recoveryStates.rePromotionReady,
+                  data.recoveryStates.sourceWired.rePromotionReady
+                )}
+              />
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {data.recoveryStates.actionHints.length ? (
+                data.recoveryStates.actionHints.map((hint) => (
+                  <div
+                    key={hint.id}
+                    className={`rounded-xl border p-3 text-sm ${
+                      hint.severity === "critical"
+                        ? "border-amber-300/35 bg-amber-500/10 text-amber-100"
+                        : "border-white/10 bg-white/[0.04] text-white/85"
+                    }`}
+                  >
+                    <div className="font-semibold">{hint.label}</div>
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-white/55">{hint.technicalLabel}</div>
+                    <div className="mt-1">{hint.hint}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/75">
+                  No stale/drift recovery actions are currently pending.
+                </div>
+              )}
+            </div>
+          </Section>
+        ) : null}
 
         <Section title="Alerts">
           <div className="grid gap-4 lg:grid-cols-3">
