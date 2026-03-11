@@ -2,216 +2,262 @@
 
 ## Status
 
-Approved operational runbook for incident response.
+Approved v1 runbook for daily operations and incident response.
 
 ## Purpose
 
-This runbook defines the required operator procedures when system safety conditions trigger blocks, manual overrides, or order safety checks.
+This runbook defines how operators interact with QuickAIBuy each day and how incidents must be handled safely.
 
-This runbook complements the existing architecture contracts for stale data recovery, supplier drift protection, manual override controls, and order purchase safety boundaries.
-
-QuickAIBuy v1 remains fail-closed and operator-driven.
-
-## 1) Manual Override Usage Rules
-
-QuickAIBuy provides four manual override controls via the admin control panel.
-
-Overrides must only be used during operational incidents, and operators must always record a note explaining why an override was enabled.
-
-### `PAUSE_PUBLISHING`
-
-Stops listing publish execution workers.
-
-Use when:
-- incorrect listings are being published
-- marketplace integration errors appear
-- profit engine safety is suspected
-
-Effect:
-- publish workers stop execution
-- scanner and crawlers continue
-
-Recovery:
-- verify listing safety before resuming
-
-### `PAUSE_MARKETPLACE_SCAN`
-
-Stops marketplace scanner jobs.
-
-Use when:
-- scanner produces corrupted data
-- API rate-limit issues occur
-- parsing failures are detected
-
-Effect:
-- new marketplace snapshots stop updating
-- existing data remains available
-
-### `PAUSE_ORDER_SYNC`
-
-Stops order ingestion and fulfillment synchronization.
-
-Use when:
-- order pipeline errors occur
-- duplicate orders appear
-- supplier integration instability is detected
-
-### `EMERGENCY_READ_ONLY`
-
-Global safety override.
-
-Use when:
-- database integrity is at risk
-- unexpected destructive behavior is observed
-- major system failure occurs
-
-Effect:
-- all write operations are blocked
-- workers refuse state transitions
-
-## 2) Listing Recovery Procedures
-
-### Block Type: Stale Marketplace Data
-
-Cause:
-- marketplace snapshot exceeded freshness threshold
-
-Procedure:
-1. verify scanner health
-2. confirm refresh job queued
-3. wait for fresh marketplace snapshot
-4. re-evaluate economics
-5. operator may re-promote listing to `READY_TO_PUBLISH`
-
-### Block Type: Supplier Drift
-
-Cause:
-- supplier price changed outside acceptable drift threshold
-
-Procedure:
-1. verify supplier crawler refresh
-2. confirm supplier price change
-3. recompute margin
-4. operator may re-promote listing
-
-### Block Type: Combined Block
-
-Cause:
-- both marketplace data and supplier data are unsafe
-
-Procedure:
-1. marketplace refresh completes
-2. supplier refresh completes
-3. profit engine recalculates economics
-4. operator review required before promotion
-
-**v1 rule:** Listings must never auto-reenter the publish queue.
-
-## 3) Order Safety Procedures
-
-### Order Purchase Block Types
-
-#### Stale Supplier Data
-
-Procedure:
-1. refresh supplier snapshot
-2. verify supplier availability
-3. confirm purchase cost
-
-#### Supplier Drift
-
-Procedure:
-1. recompute margin
-2. verify order profitability
-3. operator may cancel order
-
-#### Economics Blocked
-
-If order margin becomes negative:
-
-Procedure:
-1. operator must approve override **or**
-2. cancel order
-
-**v1 rule:** The system must never auto-purchase at a loss.
-
-## 4) Resume Procedures
-
-Before removing overrides, operators must confirm system health.
-
-Checklist:
-1. publish safety: Price Guard functioning and listing economics valid
-2. marketplace scanner: snapshots updating normally
-3. supplier crawlers: supplier data fresh and drift checks functioning
-4. order pipeline: order ingestion and fulfillment stable
-
-Overrides should only be disabled after these checks pass.
-
-## 5) Audit Requirements
-
-Operators must record an incident note when using overrides.
-
-Minimum audit fields:
-- `timestamp`
-- `operator_id`
-- `override_type`
-- `reason_for_override`
-- `incident_reference`
-- `resolution_notes`
-
-Example audit entry:
-
-```text
-OVERRIDE_ENABLED
-override = PAUSE_PUBLISHING
-reason = suspected incorrect margin calculation
-
-OVERRIDE_DISABLED
-resolution = margin calculation verified safe
-```
-
-All override actions must remain permanently logged.
-
-## Admin Control Panel Runbook Surface (New)
-
-In addition to documentation, critical runbook procedures may be optionally visible inside the admin control panel:
-
-- `/admin/control/runbook`
-
-Purpose:
-- provide operators with quick emergency guidance without leaving admin
-
-v1 behavior:
-- read-only and informational only
-- must not automate any system behavior
-
-## Pipeline Impact
-
-- Listing Execution Worker
-- Marketplace Scanner
-- Supplier Crawlers
-- Order Automation Worker
-- Admin Control Panel
-- Listing Monitor Worker
-
-## Decision
-
-QuickAIBuy v1 incident response model is:
+QuickAIBuy v1 operations are intentionally:
 - fail-closed
 - operator-driven
 - fully auditable
 
-Automated recovery is intentionally limited in v1.
+The runbook assumes operators may have zero technical experience. Procedures must therefore be explicit, safe-by-default, and documented.
 
-## Next Action (Auto Listing System Thread)
+## Section 1 — Daily Operating Flow
 
-- reference runbook procedures when implementing retry logic
-- ensure override actions generate audit events
-- expose override status in admin UI
-- optionally surface the runbook reference in `/admin/control`
+Operators use four primary admin surfaces.
+
+### Admin Control Panel
+
+- **Route:** `/admin/control`
+- **Purpose:** Monitor overall system health.
+- **Daily checks:**
+  - override status
+  - publish worker health
+  - scanner health
+  - supplier crawler status
+  - order pipeline status
+
+The control panel should be the first page operators open each day.
+
+### Listing Review Queue
+
+- **Route:** `/admin/review`
+- **Purpose:** Approve or reject candidate listings before publishing.
+- **Operator tasks:**
+  1. verify product match accuracy
+  2. verify images and titles are correct
+  3. confirm Price Guard margin looks reasonable
+  4. approve listing candidate
+
+Approved candidates move into listing preparation.
+
+### Listing Management
+
+- **Route:** `/admin/listings`
+- **Purpose:** Manage listings prepared for marketplace publication.
+- **Operator tasks:**
+  - verify `READY_TO_PUBLISH` listings
+  - investigate `PUBLISH_FAILED` listings
+  - monitor `ACTIVE` listings
+  - re-promote listings after safety blocks when appropriate
+
+### Order Operations
+
+- **Route:** `/admin/orders`
+- **Purpose:** Manage incoming orders and purchase safety checks.
+- **Operator tasks:**
+  - verify purchase safety
+  - confirm supplier availability
+  - approve or cancel purchase steps
+
+**v1 rule:** Orders must never be auto-purchased without operator review.
+
+## Section 2 — Incident Response Rules
+
+QuickAIBuy provides four emergency overrides. Operators must leave an incident note whenever an override is enabled.
+
+### `PAUSE_PUBLISHING`
+
+- **Purpose:** Stop listing publish workers.
+- **Use when:**
+  - incorrect listings are being published
+  - marketplace API responses appear corrupted
+  - pricing logic may be incorrect
+  - unexpected publish behavior is detected
+- **Effect:**
+  - publish workers stop executing
+  - `READY_TO_PUBLISH` listings remain queued
+  - scanner and crawlers continue operating
+
+### `PAUSE_MARKETPLACE_SCAN`
+
+- **Purpose:** Stop marketplace price scanner.
+- **Use when:**
+  - scanner produces invalid price data
+  - marketplace API parsing fails
+  - marketplace API rate limits are triggered
+- **Effect:**
+  - marketplace snapshots stop updating
+
+### `PAUSE_ORDER_SYNC`
+
+- **Purpose:** Stop order ingestion and fulfillment synchronization.
+- **Use when:**
+  - duplicate orders are detected
+  - supplier purchase pipeline is unstable
+  - order automation behaves incorrectly
+
+### `EMERGENCY_READ_ONLY`
+
+- **Purpose:** Global system protection.
+- **Use when:**
+  - data corruption risk exists
+  - unexpected destructive operations are detected
+  - major system malfunction occurs
+- **Effect:**
+  - all write operations are disabled
+  - workers refuse state transitions
+  - system becomes monitoring-only
+
+## Section 3 — Listing Recovery Procedures
+
+Listings may be blocked for safety reasons.
+
+### Stale Marketplace Block
+
+- **Cause:** Marketplace price snapshot older than freshness threshold.
+- **Procedure:**
+  1. confirm marketplace scanner is running
+  2. confirm refresh job was triggered
+  3. wait for fresh marketplace snapshot
+  4. re-evaluate listing economics
+  5. operator may re-promote listing to `READY_TO_PUBLISH`
+
+### Supplier Drift Block
+
+- **Cause:** Supplier price changed outside acceptable margin threshold.
+- **Procedure:**
+  1. verify supplier crawler refreshed data
+  2. confirm supplier price change
+  3. recompute margin
+  4. operator review required before re-promotion
+
+### Supplier Availability Block
+
+- **Cause:** Supplier availability is uncertain or missing.
+- **Procedure:**
+  1. confirm supplier product availability
+  2. refresh supplier snapshot
+  3. verify stock availability
+  4. operator review required before re-promotion
+
+**v1 rule:** Listings must never automatically reenter the publish queue.
+
+## Section 4 — Order Safety Procedures
+
+Orders require operator verification before purchase execution.
+
+### Purchase Safety Review
+
+Operators must verify:
+- supplier availability
+- supplier price freshness
+- margin remains acceptable
+- product identity matches listing
+
+### Stale Supplier Data
+
+If supplier data is stale:
+1. refresh supplier snapshot
+2. verify supplier availability before approving purchase
+
+### Supplier Drift
+
+If supplier price changed:
+1. recompute margin
+2. verify order profitability
+3. operator may cancel purchase if economics are unsafe
+
+### Low Confidence / Unknown Availability
+
+If supplier availability confidence is low:
+1. operator must verify supplier stock manually
+2. order must not execute until availability is confirmed
+
+## Section 5 — Resume Procedures
+
+Before disabling any override, operators must verify system safety.
+
+### System Health Checklist
+
+1. **publish safety**
+   - Price Guard calculations working
+   - listing margins valid
+2. **marketplace scanner**
+   - snapshots updating normally
+   - no scanner errors
+3. **supplier crawlers**
+   - supplier data fresh
+   - drift detection functioning
+4. **order pipeline**
+   - order ingestion stable
+   - supplier purchase steps functioning
+
+Only after these checks pass should overrides be disabled.
+
+## Section 6 — Audit Requirements
+
+Operators must record an incident note when performing critical actions.
+
+Minimum audit fields:
+- `timestamp`
+- `operator_id`
+- `action_taken`
+- `reason`
+- `incident_reference`
+- `resolution_notes`
+
+Examples:
+
+```text
+OVERRIDE_ENABLED
+override = PAUSE_PUBLISHING
+reason = suspected incorrect margin calculations
+
+OVERRIDE_DISABLED
+resolution = margin calculations verified safe
+```
+
+Re-promoting listings after safety blocks must also be logged.
+
+## Pipeline Impact
+
+This runbook governs operator behavior across:
+- Admin Control Panel
+- Listing Review Queue
+- Listing Management
+- Order Operations
+- Listing Execution Worker
+- Marketplace Scanner
+- Supplier Crawlers
+- Order Automation Worker
+- Listing Monitor Worker
+
+## Decision Made
+
+QuickAIBuy v1 operations follow:
+- fail-closed behavior
+- operator-driven approvals
+- full auditability
+
+Automation remains limited in v1 to reduce operational risk.
+
+## Next Action
+
+Monitoring Dashboard work should surface:
+- override status
+- blocked listings
+- stale data backlog
+- supplier drift alerts
+- order purchase safety alerts
+
+These indicators should help operators detect incidents quickly.
 
 ## Hub Recommendation
 
 **Documentation-first in v1.**
 
-Critical procedures may later appear as contextual guidance inside the admin UI.
+Later versions may surface the most critical procedures directly in the admin control panel.

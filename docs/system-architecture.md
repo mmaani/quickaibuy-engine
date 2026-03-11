@@ -151,20 +151,20 @@ Not allowed:
 - auto-trigger publish retries
 - auto-restore publish eligibility
 
-### System-Level Runbook Reference
+## Runbook Reference (v1 Operations)
 
-Operational incident handling is defined in `docs/operator-runbook.md`.
+The official QuickAIBuy v1 operator runbook is maintained in `docs/operator-runbook.md`.
 
-The runbook formalizes v1 incident response for:
-- manual overrides
-- listing recovery procedures
-- order purchase safety procedures
-- override audit requirements
-- resume checklist
+That runbook defines:
+- daily operator flow across admin surfaces
+- override activation rules and incident-response steps
+- listing recovery procedures for stale/supplier safety blocks
+- order purchase safety verification requirements
+- resume checklist and audit logging requirements
 
-This architecture and the runbook must stay aligned on v1 guarantees: **fail-closed, operator-driven, fully auditable**.
+Architecture and runbook must remain aligned on v1 constraints: **fail-closed, operator-driven, fully auditable**.
 
-### Pipeline Impact
+## Pipeline Impact
 
 - Price Guard
 - Listing Execution Worker
