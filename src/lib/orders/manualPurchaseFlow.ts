@@ -205,6 +205,7 @@ export async function recordSupplierTracking(input: {
   orderId: string;
   supplierKey: string;
   trackingNumber: string;
+  trackingCarrier?: string | null;
   trackingStatus?: TrackingStatus;
   manualNote?: string | null;
   actorId?: string;
@@ -251,8 +252,10 @@ export async function recordSupplierTracking(input: {
 
   const now = new Date();
   const nextManualNote = input.manualNote ?? targetRow.manualNote ?? null;
+  const nextTrackingCarrier = input.trackingCarrier ?? targetRow.trackingCarrier ?? null;
   const changed =
     (targetRow.trackingNumber ?? "") !== input.trackingNumber ||
+    (targetRow.trackingCarrier ?? null) !== nextTrackingCarrier ||
     targetRow.trackingStatus !== trackingStatus ||
     (targetRow.manualNote ?? null) !== nextManualNote ||
     targetRow.trackingRecordedAt == null;
@@ -262,6 +265,7 @@ export async function recordSupplierTracking(input: {
       .update(supplierOrders)
       .set({
         trackingNumber: input.trackingNumber,
+        trackingCarrier: nextTrackingCarrier,
         trackingStatus,
         trackingRecordedAt: targetRow.trackingRecordedAt ?? now,
         manualNote: nextManualNote,
@@ -276,6 +280,7 @@ export async function recordSupplierTracking(input: {
         supplierKey: input.supplierKey,
         attemptNo: targetRow.attemptNo,
         trackingNumber: input.trackingNumber,
+        trackingCarrier: nextTrackingCarrier,
         trackingStatus,
         actorId: input.actorId ?? null,
       },
@@ -296,6 +301,7 @@ export async function recordSupplierTracking(input: {
     supplierOrderId: targetRow.id,
     attemptNo: targetRow.attemptNo,
     trackingNumber: input.trackingNumber,
+    trackingCarrier: nextTrackingCarrier,
     trackingStatus,
     changed,
   };
