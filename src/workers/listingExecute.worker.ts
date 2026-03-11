@@ -6,6 +6,7 @@ import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
 } from "@/lib/listings/duplicateProtection";
+import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { publishToEbayListing } from "@/lib/marketplaces/ebayPublish";
@@ -92,12 +93,40 @@ export async function runListingExecution(opts?: {
     });
 
     if (!priceGuard.allow) {
+      const staleMarketplaceSnapshot = priceGuard.reasons.includes("STALE_MARKETPLACE_SNAPSHOT");
       const guardSummary = {
         decision: priceGuard.decision,
         reasons: priceGuard.reasons,
         metrics: priceGuard.metrics,
         thresholds: priceGuard.thresholds,
       };
+      let marketplaceRefreshEnqueued = false;
+      let marketplaceRefreshJobId: string | null = null;
+      let marketplaceRefreshError: string | null = null;
+
+      if (staleMarketplaceSnapshot) {
+        try {
+          const candidateLookup = await db.execute<{
+            supplierSnapshotId: string | null;
+          }>(sql`
+            SELECT supplier_snapshot_id AS "supplierSnapshotId"
+            FROM profitable_candidates
+            WHERE id = ${candidateId}
+            LIMIT 1
+          `);
+
+          const supplierSnapshotId = String(candidateLookup.rows?.[0]?.supplierSnapshotId ?? "").trim();
+          const job = await enqueueMarketplacePriceScan({
+            limit: 25,
+            productRawId: supplierSnapshotId || undefined,
+            platform: "ebay",
+          });
+          marketplaceRefreshEnqueued = true;
+          marketplaceRefreshJobId = String(job.id ?? "");
+        } catch (error) {
+          marketplaceRefreshError = error instanceof Error ? error.message : String(error);
+        }
+      }
 
       await db.execute(sql`
         UPDATE profitable_candidates
@@ -113,8 +142,18 @@ export async function runListingExecution(opts?: {
         SET
           response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
             priceGuard: guardSummary,
+            marketplaceRefresh: {
+              attempted: staleMarketplaceSnapshot,
+              enqueued: marketplaceRefreshEnqueued,
+              jobId: marketplaceRefreshJobId,
+              error: marketplaceRefreshError,
+            },
           })}::jsonb,
-          last_publish_error = ${`PriceGuard ${priceGuard.decision}: ${priceGuard.reasons.join(", ")}`},
+          last_publish_error = ${staleMarketplaceSnapshot
+            ? marketplaceRefreshError
+              ? `PriceGuard ${priceGuard.decision}: stale marketplace snapshot; refresh enqueue failed: ${marketplaceRefreshError}`
+              : `PriceGuard ${priceGuard.decision}: stale marketplace snapshot; refresh enqueued (${marketplaceRefreshJobId ?? "job-id-unavailable"})`
+            : `PriceGuard ${priceGuard.decision}: ${priceGuard.reasons.join(", ")}`},
           updated_at = NOW()
         WHERE id = ${listingId}
       `);
@@ -134,8 +173,41 @@ export async function runListingExecution(opts?: {
           marketplaceKey,
           listingIdFilter: listingIdFilter || null,
           priceGuard,
+          marketplaceRefresh: {
+            attempted: staleMarketplaceSnapshot,
+            enqueued: marketplaceRefreshEnqueued,
+            jobId: marketplaceRefreshJobId,
+            error: marketplaceRefreshError,
+          },
         },
       });
+
+      if (staleMarketplaceSnapshot) {
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId,
+          entityType: "LISTING",
+          entityId: listingId,
+          eventType: marketplaceRefreshEnqueued
+            ? "MARKETPLACE_REFRESH_ENQUEUED_STALE_SNAPSHOT"
+            : "MARKETPLACE_REFRESH_ENQUEUE_FAILED_STALE_SNAPSHOT",
+          details: {
+            listingId,
+            candidateId,
+            marketplaceKey,
+            listingIdFilter: listingIdFilter || null,
+            staleReason: true,
+            marketplaceRefreshEnqueued,
+            marketplaceRefreshJobId,
+            marketplaceRefreshError,
+          },
+        });
+      }
+
+      if (staleMarketplaceSnapshot && marketplaceRefreshError) {
+        failed++;
+        continue;
+      }
 
       skipped++;
       continue;

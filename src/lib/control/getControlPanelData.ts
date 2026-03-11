@@ -60,6 +60,13 @@ export type ControlPanelData = {
       staleThresholdHours: number;
       hasPartialData: boolean;
     };
+    marketplaceSnapshotHealth: {
+      freshSnapshots: number | null;
+      staleSnapshots: number | null;
+      thresholdHours: number;
+      latestSnapshotTs: string | null;
+      hasPartialData: boolean;
+    };
     publishRateLimit: {
       allowed: boolean;
       blockingWindow: "15m" | "1h" | "1d" | "none";
@@ -507,6 +514,30 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     priceGuardThresholds.maxMarketplaceSnapshotAgeHours,
     priceGuardThresholds.maxSupplierSnapshotAgeHours
   );
+  const marketplaceSnapshotThresholdHours = Math.max(
+    1,
+    Math.floor(priceGuardThresholds.maxMarketplaceSnapshotAgeHours)
+  );
+
+  const marketplaceSnapshotHealth = marketplacePricesExists && pricesHasSnapshotTs
+    ? (
+        await runQuery(`
+          select
+            count(*) filter (
+              where lower(coalesce(marketplace_key, '')) = 'ebay'
+                and snapshot_ts >= now() - interval '${marketplaceSnapshotThresholdHours} hours'
+            )::int as fresh_snapshots,
+            count(*) filter (
+              where lower(coalesce(marketplace_key, '')) = 'ebay'
+                and snapshot_ts < now() - interval '${marketplaceSnapshotThresholdHours} hours'
+            )::int as stale_snapshots,
+            max(snapshot_ts) filter (
+              where lower(coalesce(marketplace_key, '')) = 'ebay'
+            ) as latest_snapshot_ts
+          from marketplace_prices
+        `)
+      )[0] ?? {}
+    : {};
 
   const priceGuardSummary = profitableCandidatesExists
     ? (
@@ -787,6 +818,15 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     });
   }
 
+  if ((toNum(marketplaceSnapshotHealth.stale_snapshots) ?? 0) > 0) {
+    publishingSafetyAlerts.push({
+      id: "stale-marketplace-snapshots",
+      tone: "warning",
+      title: "Stale marketplace snapshots",
+      detail: `${toNum(marketplaceSnapshotHealth.stale_snapshots)} marketplace_prices rows are older than ${marketplaceSnapshotThresholdHours}h.`,
+    });
+  }
+
   if (manualOverrideSnapshot.entries.PAUSE_MARKETPLACE_SCAN.enabled) {
     operationalFreshnessAlerts.push({
       id: "override-pause-marketplace-scan",
@@ -973,6 +1013,13 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         manualReviewCount: toNum(priceGuardSummary.manual_review_count),
         staleThresholdHours,
         hasPartialData: !profitableCandidatesExists,
+      },
+      marketplaceSnapshotHealth: {
+        freshSnapshots: toNum(marketplaceSnapshotHealth.fresh_snapshots),
+        staleSnapshots: toNum(marketplaceSnapshotHealth.stale_snapshots),
+        thresholdHours: marketplaceSnapshotThresholdHours,
+        latestSnapshotTs: toStr(marketplaceSnapshotHealth.latest_snapshot_ts),
+        hasPartialData: !marketplacePricesExists || !pricesHasSnapshotTs,
       },
       publishRateLimit,
       staleCandidateCount: toNum(priceGuardSummary.stale_candidate_count),

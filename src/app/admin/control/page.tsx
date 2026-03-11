@@ -319,11 +319,26 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
             Publishing safety alerts are prioritized above general pipeline metrics.
           </div>
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            <div>
+              Marketplace snapshot threshold: {data.publishingSafety.marketplaceSnapshotHealth.thresholdHours}h
+            </div>
+            <div>
+              Latest eBay snapshot: {data.publishingSafety.marketplaceSnapshotHealth.latestSnapshotTs ?? "n/a"}
+            </div>
+            {data.publishingSafety.marketplaceSnapshotHealth.hasPartialData ? (
+              <div className="mt-1 text-amber-200">
+                Snapshot age visibility is partial (missing marketplace snapshot backing data).
+              </div>
+            ) : null}
+          </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="price guard candidates" value={data.publishingSafety.priceGuardSummary.totalCandidates ?? "-"} />
             <StatCard label="stale candidates" value={data.publishingSafety.staleCandidateCount ?? "-"} />
             <StatCard label="blocked count" value={data.publishingSafety.blockedCount ?? "-"} />
             <StatCard label="manual review count" value={data.publishingSafety.manualReviewCount ?? "-"} />
+            <StatCard label="fresh snapshots" value={data.publishingSafety.marketplaceSnapshotHealth.freshSnapshots ?? "-"} />
+            <StatCard label="stale snapshots" value={data.publishingSafety.marketplaceSnapshotHealth.staleSnapshots ?? "-"} />
             <StatCard label="rate-limit allowed" value={data.publishingSafety.publishRateLimit.allowed ? "yes" : "no"} />
             <StatCard label="rate-limit window" value={data.publishingSafety.publishRateLimit.blockingWindow} />
             <StatCard

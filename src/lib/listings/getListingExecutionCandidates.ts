@@ -48,7 +48,7 @@ export async function getListingExecutionCandidates(
       AND pc.marketplace_key = ${marketplace}
       AND pc.decision_status = 'APPROVED'
       AND pc.listing_eligible = TRUE
-      AND (${listingId} = '' OR l.id = ${listingId})
+      AND (${listingId} = '' OR l.id::text = ${listingId})
     ORDER BY l.updated_at ASC, l.created_at ASC
     LIMIT ${limit}
   `);

@@ -103,7 +103,7 @@ export async function findListingDuplicatesForCandidate(input: {
       ON pc.id = l.candidate_id
     WHERE LOWER(l.marketplace_key) = ${marketplaceKey}
       AND l.status IN (${statusSql})
-      AND (${excludeListingId} = '' OR l.id <> ${excludeListingId})
+      AND (${excludeListingId} = '' OR l.id::text <> ${excludeListingId})
       AND (
         (
           ${canMatchBySupplier}

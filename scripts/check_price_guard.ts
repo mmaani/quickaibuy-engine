@@ -49,6 +49,7 @@ async function main() {
       guard_decision: result.decision,
       allow: result.allow,
       reasons: result.reasons.join("|"),
+      stale_market_snapshot: result.reasons.includes("STALE_MARKETPLACE_SNAPSHOT"),
       reason_details: JSON.stringify(result.reasonDetails),
       profit: result.metrics.profit,
       margin_pct: result.metrics.margin_pct,
@@ -61,6 +62,7 @@ async function main() {
       market_age_h: result.metrics.marketplace_snapshot_age_hours,
       cost_components: JSON.stringify(result.metrics.cost_components),
       drift_hook: JSON.stringify(result.metrics.drift_hook),
+      market_snapshot_age_limit_h: result.thresholds.maxMarketplaceSnapshotAgeHours,
     });
   }
 
