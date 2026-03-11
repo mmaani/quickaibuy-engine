@@ -34,6 +34,10 @@ function findPrimaryRecoveryCode(codes: string[]): string | null {
   if (codes.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE")) return "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE";
   if (codes.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE")) return "SUPPLIER_DRIFT_DATA_UNAVAILABLE";
   if (codes.includes("SUPPLIER_DRIFT_DATA_REQUIRED")) return "SUPPLIER_DRIFT_DATA_REQUIRED";
+  if (codes.includes("SUPPLIER_OUT_OF_STOCK")) return "SUPPLIER_OUT_OF_STOCK";
+  if (codes.includes("SUPPLIER_AVAILABILITY_UNKNOWN")) return "SUPPLIER_AVAILABILITY_UNKNOWN";
+  if (codes.includes("SUPPLIER_LOW_STOCK")) return "SUPPLIER_LOW_STOCK";
+  if (codes.includes("SUPPLIER_AVAILABILITY_LOW_CONFIDENCE")) return "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE";
   if (codes.includes("STALE_SUPPLIER_SNAPSHOT")) return "STALE_SUPPLIER_SNAPSHOT";
   if (codes.includes("SUPPLIER_SNAPSHOT_AGE_REQUIRED")) return "SUPPLIER_SNAPSHOT_AGE_REQUIRED";
   return codes[0] ?? null;
@@ -64,7 +68,11 @@ export function computeRecoveryState(input: {
   if (
     reasonCodes.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
     reasonCodes.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE") ||
-    reasonCodes.includes("SUPPLIER_DRIFT_DATA_REQUIRED")
+    reasonCodes.includes("SUPPLIER_DRIFT_DATA_REQUIRED") ||
+    reasonCodes.includes("SUPPLIER_OUT_OF_STOCK") ||
+    reasonCodes.includes("SUPPLIER_AVAILABILITY_UNKNOWN") ||
+    reasonCodes.includes("SUPPLIER_LOW_STOCK") ||
+    reasonCodes.includes("SUPPLIER_AVAILABILITY_LOW_CONFIDENCE")
   ) {
     return {
       recoveryState: "BLOCKED_SUPPLIER_DRIFT",

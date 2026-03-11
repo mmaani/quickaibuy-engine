@@ -129,6 +129,8 @@ export async function discoverProductsForCandidate(
           source: "product-discover-stub",
           keyword,
           region: row.region,
+          availabilitySignal: "UNKNOWN",
+          availabilityConfidence: 0.3,
           trendMeta: row.meta ?? null,
         })}::jsonb
       WHERE NOT EXISTS (

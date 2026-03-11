@@ -5,6 +5,7 @@ import { searchAliExpressByKeyword } from "@/lib/products/suppliers/aliexpress";
 import { searchAlibabaByKeyword } from "@/lib/products/suppliers/alibaba";
 import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
+import { normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
 
 export type SupplierDiscoverResult = {
   processedCandidates: number;
@@ -26,6 +27,9 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
     currency: product.currency,
     priceMin: product.price,
     priceMax: product.price,
+    availabilityStatus: normalizeAvailabilitySignal(
+      product.availabilitySignal ?? product.raw?.availabilitySignal ?? product.raw?.availability_status
+    ),
     shippingEstimates: product.shippingEstimates,
     rawPayload: {
       jobType: "supplier:discover",
@@ -40,6 +44,11 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
       supplierProductId: product.supplierProductId,
       snapshotTs: product.snapshotTs,
       platform: product.platform,
+      availabilitySignal: normalizeAvailabilitySignal(
+        product.availabilitySignal ?? product.raw?.availabilitySignal ?? product.raw?.availability_status
+      ),
+      availabilityConfidence:
+        typeof product.availabilityConfidence === "number" ? product.availabilityConfidence : null,
       ...product.raw,
     },
     snapshotTs,

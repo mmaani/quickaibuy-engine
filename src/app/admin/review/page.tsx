@@ -631,6 +631,15 @@ export default async function ReviewPage({
                       <KeyValue label="Recovery Next Action" value={detail.candidate.recoveryNextAction} />
                       <KeyValue label="supplier_price_drift_pct" value={formatPercent(detail.candidate.supplierPriceDriftPct)} />
                       <KeyValue label="supplier_snapshot_age_hours" value={formatHours(detail.candidate.supplierSnapshotAgeHours)} />
+                      <KeyValue label="availability_signal" value={detail.candidate.availabilitySignal} />
+                      <KeyValue
+                        label="availability_confidence"
+                        value={
+                          detail.candidate.availabilityConfidence == null
+                            ? "-"
+                            : `${(detail.candidate.availabilityConfidence * 100).toFixed(0)}%`
+                        }
+                      />
                     </div>
                   </div>
                 </DetailBlock>

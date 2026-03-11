@@ -1,6 +1,11 @@
 import { pool } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { computeRecoveryState, type RecoveryState } from "@/lib/listings/recoveryState";
+import {
+  extractAvailabilityFromRawPayload,
+  normalizeAvailabilitySignal,
+  type AvailabilitySignal,
+} from "@/lib/products/supplierAvailability";
 
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "MANUAL_REVIEW", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
@@ -17,6 +22,8 @@ export const BLOCKING_RISK_FLAGS = new Set([
   "SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT",
   "STALE_SUPPLIER_SNAPSHOT",
   "SUPPLIER_DRIFT_DATA_UNAVAILABLE",
+  "SUPPLIER_OUT_OF_STOCK",
+  "SUPPLIER_AVAILABILITY_UNKNOWN",
 ]);
 
 type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -64,6 +71,8 @@ export type ReviewListItem = {
   recoveryReasonCodes: string[];
   supplierPriceDriftPct: number | null;
   supplierSnapshotAgeHours: number | null;
+  availabilitySignal: AvailabilitySignal;
+  availabilityConfidence: number | null;
   riskFlags: string[];
   blockingRiskFlags: string[];
   listingEligible: boolean;
@@ -111,6 +120,8 @@ type CandidateRow = {
   duplicate_conflict_listing_ids: string[] | null;
   supplier_price_drift_pct?: string | number | null;
   supplier_snapshot_age_hours?: string | number | null;
+  latest_supplier_availability_status?: string | null;
+  latest_supplier_raw_payload?: unknown;
   listing_block_reason?: string | null;
 };
 
@@ -310,6 +321,12 @@ function deriveRiskFlags(row: CandidateRow): string[] {
   const duplicateCount = toNumber(row.duplicate_count) ?? 1;
   const supplierPriceDriftPct = toNumber(row.supplier_price_drift_pct);
   const supplierSnapshotAgeHours = toNumber(row.supplier_snapshot_age_hours);
+  const availability = extractAvailabilityFromRawPayload({
+    availabilityStatus: row.latest_supplier_availability_status,
+    rawPayload: row.latest_supplier_raw_payload,
+  });
+  const availabilitySignal = normalizeAvailabilitySignal(availability.signal);
+  const availabilityConfidence = availability.confidence;
   const joinedTitle = `${row.supplier_title ?? ""} ${row.marketplace_title ?? ""}`.trim();
 
   if (confidence != null && confidence < LOW_MATCH_CONFIDENCE_THRESHOLD) {
@@ -351,6 +368,18 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     flags.add("STALE_SUPPLIER_SNAPSHOT");
   }
 
+  if (availabilitySignal === "OUT_OF_STOCK") {
+    flags.add("SUPPLIER_OUT_OF_STOCK");
+  } else if (availabilitySignal === "UNKNOWN") {
+    flags.add("SUPPLIER_AVAILABILITY_UNKNOWN");
+  } else if (availabilitySignal === "LOW_STOCK") {
+    flags.add("SUPPLIER_LOW_STOCK");
+  }
+
+  if (availabilityConfidence != null && availabilityConfidence < 0.5) {
+    flags.add("SUPPLIER_AVAILABILITY_LOW_CONFIDENCE");
+  }
+
   return Array.from(flags);
 }
 
@@ -361,6 +390,8 @@ function computeListingEligibility(input: {
   riskFlags: string[];
   supplierPriceDriftPct: number | null;
   supplierSnapshotAgeHours: number | null;
+  availabilitySignal: AvailabilitySignal;
+  availabilityConfidence: number | null;
 }) {
   const reasons: string[] = [];
 
@@ -395,6 +426,18 @@ function computeListingEligibility(input: {
     reasons.push(`supplier_snapshot_age_hours exceeds ${SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS}h`);
   }
 
+  if (input.availabilitySignal === "OUT_OF_STOCK") {
+    reasons.push("supplier availability indicates out of stock");
+  } else if (input.availabilitySignal === "UNKNOWN") {
+    reasons.push("supplier availability is unknown and requires manual review");
+  } else if (input.availabilitySignal === "LOW_STOCK") {
+    reasons.push("supplier availability is low stock and requires manual review");
+  }
+
+  if (input.availabilityConfidence != null && input.availabilityConfidence < 0.5) {
+    reasons.push("supplier availability confidence is low");
+  }
+
   return {
     listingEligible: reasons.length === 0,
     listingEligibilityReasons: reasons,
@@ -409,6 +452,12 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
   const matchConfidence = toNumber(row.match_confidence);
   const supplierPriceDriftPct = toNumber(row.supplier_price_drift_pct);
   const supplierSnapshotAgeHours = toNumber(row.supplier_snapshot_age_hours);
+  const availability = extractAvailabilityFromRawPayload({
+    availabilityStatus: row.latest_supplier_availability_status,
+    rawPayload: row.latest_supplier_raw_payload,
+  });
+  const availabilitySignal = normalizeAvailabilitySignal(availability.signal);
+  const availabilityConfidence = availability.confidence;
   const riskFlags = deriveRiskFlags(row);
   const eligibility = computeListingEligibility({
     decisionStatus: row.decision_status,
@@ -417,6 +466,8 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     riskFlags,
     supplierPriceDriftPct,
     supplierSnapshotAgeHours,
+    availabilitySignal,
+    availabilityConfidence,
   });
   const listingBlockReason = row.listing_block_reason ?? null;
   const recovery = computeRecoveryState({
@@ -451,6 +502,8 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     recoveryReasonCodes: recovery.recoveryReasonCodes,
     supplierPriceDriftPct,
     supplierSnapshotAgeHours,
+    availabilitySignal,
+    availabilityConfidence,
     riskFlags,
     blockingRiskFlags: eligibility.blockingRiskFlags,
     listingEligible: eligibility.listingEligible,
@@ -692,6 +745,8 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
           (EXTRACT(EPOCH FROM (NOW() - latest_pr.snapshot_ts)) / 3600.0)::numeric,
           2
         )::text AS supplier_snapshot_age_hours,
+        latest_pr.availability_status AS latest_supplier_availability_status,
+        latest_pr.raw_payload AS latest_supplier_raw_payload,
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -708,7 +763,7 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
       LEFT JOIN products_raw expected_pr
         ON expected_pr.id = pc.supplier_snapshot_id
       LEFT JOIN LATERAL (
-        SELECT pr_latest.price_min, pr_latest.snapshot_ts
+        SELECT pr_latest.price_min, pr_latest.snapshot_ts, pr_latest.availability_status, pr_latest.raw_payload
         FROM products_raw pr_latest
         WHERE pr_latest.supplier_key = pc.supplier_key
           AND pr_latest.supplier_product_id = pc.supplier_product_id
@@ -938,6 +993,8 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
           (EXTRACT(EPOCH FROM (NOW() - latest_pr.snapshot_ts)) / 3600.0)::numeric,
           2
         )::text AS supplier_snapshot_age_hours,
+        latest_pr.availability_status AS latest_supplier_availability_status,
+        latest_pr.raw_payload AS latest_supplier_raw_payload,
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -954,7 +1011,7 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
       LEFT JOIN products_raw expected_pr
         ON expected_pr.id = pc.supplier_snapshot_id
       LEFT JOIN LATERAL (
-        SELECT pr_latest.price_min, pr_latest.snapshot_ts
+        SELECT pr_latest.price_min, pr_latest.snapshot_ts, pr_latest.availability_status, pr_latest.raw_payload
         FROM products_raw pr_latest
         WHERE pr_latest.supplier_key = pc.supplier_key
           AND pr_latest.supplier_product_id = pc.supplier_product_id

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
+import { extractAvailabilityFromRawPayload, normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
 import { sql } from "drizzle-orm";
 import { calculateRealProfit } from "./realProfitCalculator";
 
@@ -21,6 +22,8 @@ type ProfitRow = {
   marketPriceSnapshotId: string | null;
   supplierPriceMin: string | null;
   supplierSnapshotTs: Date | string | null;
+  supplierAvailabilityStatus: string | null;
+  supplierRawPayload: unknown;
   marketPrice: string | null;
   shippingPrice: string | null;
 };
@@ -109,6 +112,9 @@ export async function runProfitEngine(input?: {
         pr.supplier_key,
         pr.supplier_product_id,
         pr.price_min,
+        pr.snapshot_ts,
+        pr.availability_status,
+        pr.raw_payload,
         ROW_NUMBER() OVER (
           PARTITION BY pr.supplier_key, pr.supplier_product_id
           ORDER BY pr.id DESC
@@ -155,6 +161,8 @@ export async function runProfitEngine(input?: {
       lmp.id AS "marketPriceSnapshotId",
       lp.price_min AS "supplierPriceMin",
       lp.snapshot_ts AS "supplierSnapshotTs",
+      lp.availability_status AS "supplierAvailabilityStatus",
+      lp.raw_payload AS "supplierRawPayload",
       lmp.price AS "marketPrice",
       lmp.shipping_price AS "shippingPrice"
     FROM ranked_matches rm
@@ -269,6 +277,11 @@ export async function runProfitEngine(input?: {
     const marketPrice = toNum(row.marketPrice) ?? 0;
     const shipping = toNum(row.shippingPrice) ?? 0;
     const supplierSnapshotAgeHours = computeAgeHours(now, toDate(row.supplierSnapshotTs));
+    const availability = extractAvailabilityFromRawPayload({
+      availabilityStatus: row.supplierAvailabilityStatus,
+      rawPayload: row.supplierRawPayload,
+    });
+    const availabilitySignal = normalizeAvailabilitySignal(availability.signal);
 
     const existingResult = await db.execute<ExistingCandidateState>(sql`
       SELECT
@@ -290,16 +303,30 @@ export async function runProfitEngine(input?: {
     const supplierPriceDriftPct = computePctChange(expectedSupplierPrice, supplierCost);
     const supplierDriftExceeded =
       supplierPriceDriftPct != null && Math.abs(supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT;
+    const availabilityUnsafe = availabilitySignal === "OUT_OF_STOCK";
+    const availabilityManualReview =
+      availabilitySignal === "UNKNOWN" || availabilitySignal === "LOW_STOCK";
 
-    const decisionStatus = supplierDriftExceeded
+    const decisionStatus = supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
       ? "MANUAL_REVIEW"
       : (existing?.decisionStatus ?? "PENDING");
-    const listingEligible = supplierDriftExceeded ? false : Boolean(existing?.listingEligible ?? false);
+    const listingEligible =
+      supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
+        ? false
+        : Boolean(existing?.listingEligible ?? false);
     const listingBlockReason = supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
+      : availabilityUnsafe
+        ? "supplier availability indicates out of stock"
+        : availabilityManualReview
+          ? `supplier availability requires manual review (${availabilitySignal})`
       : (existing?.listingBlockReason ?? null);
     const riskFlagsSql = supplierDriftExceeded
       ? sql`ARRAY['SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT']::text[]`
+      : availabilityUnsafe
+        ? sql`ARRAY['SUPPLIER_OUT_OF_STOCK']::text[]`
+        : availabilityManualReview
+          ? sql`ARRAY['SUPPLIER_AVAILABILITY_UNKNOWN']::text[]`
       : sql`ARRAY[]::text[]`;
 
     const economics = calculateRealProfit({
@@ -335,7 +362,7 @@ export async function runProfitEngine(input?: {
 
     const reason = supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
-      : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`;
+      : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
 
     await db.execute(sql`
       INSERT INTO profitable_candidates (

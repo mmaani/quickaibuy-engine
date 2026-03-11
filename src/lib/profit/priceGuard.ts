@@ -4,6 +4,11 @@ import { sql } from "drizzle-orm";
 import { getPriceGuardThresholds, type PriceGuardThresholds } from "./priceGuardConfig";
 import { calculateRealProfit } from "./realProfitCalculator";
 import { getProfitAssumptions, type ProfitAssumptions } from "./profitAssumptions";
+import {
+  extractAvailabilityFromRawPayload,
+  normalizeAvailabilitySignal,
+  type AvailabilitySignal,
+} from "@/lib/products/supplierAvailability";
 
 export type PriceGuardDecision = "ALLOW" | "BLOCK" | "MANUAL_REVIEW";
 export type PriceGuardReasonSeverity = "BLOCK" | "MANUAL_REVIEW";
@@ -17,6 +22,10 @@ export type PriceGuardReasonCode =
   | "STALE_MARKETPLACE_SNAPSHOT"
   | "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE"
   | "SUPPLIER_DRIFT_DATA_UNAVAILABLE"
+  | "SUPPLIER_OUT_OF_STOCK"
+  | "SUPPLIER_LOW_STOCK"
+  | "SUPPLIER_AVAILABILITY_UNKNOWN"
+  | "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE"
   | "INCOMPLETE_ECONOMICS"
   | "PROFIT_BELOW_MINIMUM"
   | "MARGIN_BELOW_MINIMUM"
@@ -41,6 +50,9 @@ export type PriceGuardMetrics = {
   cost_components: Record<string, number> | null;
   supplier_price_drift_pct: number | null;
   supplier_snapshot_age_hours: number | null;
+  availability_signal: AvailabilitySignal;
+  availability_confidence: number | null;
+  availability_snapshot_age_hours: number | null;
   marketplace_snapshot_age_hours: number | null;
   drift_hook: {
     available: boolean;
@@ -88,6 +100,8 @@ type PriceGuardRow = {
 
   latestSupplierPrice: string | null;
   latestSupplierSnapshotTs: Date | string | null;
+  latestSupplierAvailabilityStatus: string | null;
+  latestSupplierRawPayload: unknown;
 
   latestMarketPrice: string | null;
   latestMarketShipping: string | null;
@@ -229,6 +243,8 @@ export async function validateProfitSafety(input: {
 
       latest_ps.price_min::text AS "latestSupplierPrice",
       latest_ps.snapshot_ts AS "latestSupplierSnapshotTs",
+      latest_ps.availability_status AS "latestSupplierAvailabilityStatus",
+      latest_ps.raw_payload AS "latestSupplierRawPayload",
 
       latest_mp.price::text AS "latestMarketPrice",
       latest_mp.shipping_price::text AS "latestMarketShipping",
@@ -237,7 +253,7 @@ export async function validateProfitSafety(input: {
     LEFT JOIN products_raw ps ON ps.id = pc.supplier_snapshot_id
     LEFT JOIN marketplace_prices mp ON mp.id = pc.market_price_snapshot_id
     LEFT JOIN LATERAL (
-      SELECT pr.price_min, pr.snapshot_ts
+      SELECT pr.price_min, pr.snapshot_ts, pr.availability_status, pr.raw_payload
       FROM products_raw pr
       WHERE pr.supplier_key = pc.supplier_key
         AND pr.supplier_product_id = pc.supplier_product_id
@@ -298,6 +314,12 @@ export async function validateProfitSafety(input: {
   const recomputedRoiPct = economics?.roiPct ?? null;
 
   const supplierSnapshotAgeHours = hoursBetween(now, toDate(row.latestSupplierSnapshotTs));
+  const inferredAvailability = extractAvailabilityFromRawPayload({
+    availabilityStatus: row.latestSupplierAvailabilityStatus,
+    rawPayload: row.latestSupplierRawPayload,
+  });
+  const availabilitySignal = normalizeAvailabilitySignal(inferredAvailability.signal);
+  const availabilityConfidence = inferredAvailability.confidence;
   const marketplaceSnapshotAgeHours = hoursBetween(now, toDate(row.latestMarketSnapshotTs));
   const supplierPriceDriftPct = computePctChange(originalSupplierPrice, latestSupplierPrice);
 
@@ -389,6 +411,39 @@ export async function validateProfitSafety(input: {
     });
   }
 
+  // Supplier availability is a v1 conservative safety hook: unsafe blocks, uncertain requires manual review.
+  if (availabilitySignal === "OUT_OF_STOCK") {
+    addReason(reasonDetails, {
+      code: "SUPPLIER_OUT_OF_STOCK",
+      severity: "BLOCK",
+      message: "Supplier indicates out of stock.",
+      meta: { availabilitySignal, availabilityConfidence },
+    });
+  } else if (availabilitySignal === "LOW_STOCK") {
+    addReason(reasonDetails, {
+      code: "SUPPLIER_LOW_STOCK",
+      severity: "MANUAL_REVIEW",
+      message: "Supplier stock appears limited and requires manual review.",
+      meta: { availabilitySignal, availabilityConfidence },
+    });
+  } else if (availabilitySignal === "UNKNOWN") {
+    addReason(reasonDetails, {
+      code: "SUPPLIER_AVAILABILITY_UNKNOWN",
+      severity: "MANUAL_REVIEW",
+      message: "Supplier availability is unknown and cannot auto-pass.",
+      meta: { availabilitySignal, availabilityConfidence },
+    });
+  }
+
+  if (availabilityConfidence != null && availabilityConfidence < 0.5) {
+    addReason(reasonDetails, {
+      code: "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE",
+      severity: "MANUAL_REVIEW",
+      message: "Supplier availability confidence is low.",
+      meta: { availabilitySignal, availabilityConfidence, minConfidence: 0.5 },
+    });
+  }
+
   if (recomputedProfit == null) {
     addReason(reasonDetails, {
       code: "INCOMPLETE_ECONOMICS",
@@ -450,6 +505,9 @@ export async function validateProfitSafety(input: {
       cost_components: economics?.costs ?? null,
       supplier_price_drift_pct: supplierPriceDriftPct,
       supplier_snapshot_age_hours: supplierSnapshotAgeHours,
+      availability_signal: availabilitySignal,
+      availability_confidence: availabilityConfidence,
+      availability_snapshot_age_hours: supplierSnapshotAgeHours,
       marketplace_snapshot_age_hours: marketplaceSnapshotAgeHours,
       drift_hook: {
         available: supplierPriceDriftPct != null,

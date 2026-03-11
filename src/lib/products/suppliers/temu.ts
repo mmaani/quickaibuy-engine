@@ -20,10 +20,14 @@ export async function searchTemuByKeyword(
       platform: "Temu",
       keyword,
       snapshotTs,
+      availabilitySignal: "UNKNOWN",
+      availabilityConfidence: 0.35,
       raw: {
         mode: "stub",
         keyword,
         platform: "Temu",
+        availabilitySignal: "UNKNOWN",
+        availabilityConfidence: 0.35,
       },
     },
   ];

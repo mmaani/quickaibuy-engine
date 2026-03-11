@@ -197,10 +197,17 @@ export async function markListingReadyToPublish(
       });
     }
 
+    const hasSupplierAvailabilityBlock =
+      priceGuard.reasons.includes("SUPPLIER_OUT_OF_STOCK") ||
+      priceGuard.reasons.includes("SUPPLIER_LOW_STOCK") ||
+      priceGuard.reasons.includes("SUPPLIER_AVAILABILITY_UNKNOWN") ||
+      priceGuard.reasons.includes("SUPPLIER_AVAILABILITY_LOW_CONFIDENCE");
+
     if (
       priceGuard.reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
       priceGuard.reasons.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE") ||
       priceGuard.reasons.includes("STALE_SUPPLIER_SNAPSHOT") ||
+      hasSupplierAvailabilityBlock ||
       !driftMetricAvailable ||
       !supplierSnapshotAgeAvailable
     ) {
@@ -217,6 +224,8 @@ export async function markListingReadyToPublish(
           reasons,
           supplierDriftPct: priceGuard.metrics.supplier_price_drift_pct,
           supplierSnapshotAgeHours: priceGuard.metrics.supplier_snapshot_age_hours,
+          availabilitySignal: priceGuard.metrics.availability_signal,
+          availabilityConfidence: priceGuard.metrics.availability_confidence,
           maxSupplierDriftPct: priceGuard.thresholds.maxSupplierDriftPct,
           maxSupplierSnapshotAgeHours: priceGuard.thresholds.maxSupplierSnapshotAgeHours,
         },

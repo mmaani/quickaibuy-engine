@@ -1,4 +1,5 @@
 import type { SupplierProduct } from "./types";
+import { inferAvailabilityFromText } from "@/lib/products/supplierAvailability";
 
 const MAX_RESULTS = 20;
 
@@ -87,6 +88,8 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
     const price = extractPriceFromItemUrl(rawUrl) ?? extractPriceNear(text, idx);
     const images = extractImageNear(text, idx);
     const sourceUrl = normalizeAliExpressItemUrl(rawUrl, itemId);
+    const nearbyText = text.slice(Math.max(0, idx - 320), idx + 320);
+    const inferredAvailability = inferAvailabilityFromText(nearbyText);
 
     seen.add(itemId);
 
@@ -102,10 +105,14 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
       platform: "AliExpress",
       keyword,
       snapshotTs,
+      availabilitySignal: inferredAvailability.signal,
+      availabilityConfidence: inferredAvailability.confidence,
       raw: {
         provider: "aliexpress-search",
         parseMode: "text",
         matchedItemUrl: rawUrl,
+        availabilitySignal: inferredAvailability.signal,
+        availabilityConfidence: inferredAvailability.confidence,
       },
     });
 

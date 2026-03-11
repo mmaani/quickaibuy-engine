@@ -25,5 +25,7 @@ export type SupplierProduct = {
   platform: SupplierPlatform;
   keyword: string;
   snapshotTs: string;
+  availabilitySignal?: "IN_STOCK" | "LOW_STOCK" | "OUT_OF_STOCK" | "UNKNOWN";
+  availabilityConfidence?: number | null;
   raw: Record<string, unknown>;
 };

@@ -24,6 +24,10 @@ function hasSupplierDriftBlock(reasons: string[]): boolean {
       "STALE_SUPPLIER_SNAPSHOT",
       "SUPPLIER_DRIFT_DATA_REQUIRED",
       "SUPPLIER_SNAPSHOT_AGE_REQUIRED",
+      "SUPPLIER_OUT_OF_STOCK",
+      "SUPPLIER_LOW_STOCK",
+      "SUPPLIER_AVAILABILITY_UNKNOWN",
+      "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE",
     ].includes(reason)
   );
 }
@@ -282,6 +286,8 @@ export async function runListingExecution(opts?: {
             reasons,
             supplierDriftPct: priceGuard.metrics.supplier_price_drift_pct,
             supplierSnapshotAgeHours: priceGuard.metrics.supplier_snapshot_age_hours,
+            availabilitySignal: priceGuard.metrics.availability_signal,
+            availabilityConfidence: priceGuard.metrics.availability_confidence,
             maxSupplierDriftPct: priceGuard.thresholds.maxSupplierDriftPct,
             maxSupplierSnapshotAgeHours: priceGuard.thresholds.maxSupplierSnapshotAgeHours,
           },

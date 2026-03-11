@@ -20,10 +20,14 @@ export async function searchAlibabaByKeyword(
       platform: "Alibaba",
       keyword,
       snapshotTs,
+      availabilitySignal: "UNKNOWN",
+      availabilityConfidence: 0.35,
       raw: {
         mode: "stub",
         keyword,
         platform: "Alibaba",
+        availabilitySignal: "UNKNOWN",
+        availabilityConfidence: 0.35,
       },
     },
   ];

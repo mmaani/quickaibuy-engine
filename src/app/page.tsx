@@ -354,7 +354,7 @@ export default function Home() {
 
             <SectionPill>AI-powered product discovery intelligence</SectionPill>
 
-            <h1 className="mt-6 w-full text-balance text-[2.2rem] font-extrabold leading-[1.03] tracking-[-0.04em] text-white sm:text-5xl lg:text-7xl">
+            <h1 className="mt-6 w-full text-justify text-[2.2rem] font-extrabold leading-[1.08] tracking-[-0.03em] text-white sm:text-5xl lg:text-6xl">
               Run safer product discovery and guarded execution through{" "}
               <span className="bg-gradient-to-r from-sky-200 via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
                 supplier intelligence, marketplace monitoring, and operator-first controls
