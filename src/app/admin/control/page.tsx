@@ -2,19 +2,9 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import { sql } from "drizzle-orm";
 import RefreshButton from "@/app/_components/RefreshButton";
-import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
 import { getManualOverrideSnapshot, setManualOverride, type ManualOverrideKey } from "@/lib/control/manualOverrides";
-import { db } from "@/lib/db";
-import { handleMarketplaceScanJob } from "@/lib/jobs/marketplaceScan";
-import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
-import { runSupplierDiscover } from "@/lib/jobs/supplierDiscover";
-import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
-import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
-import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
-import { runProfitEngine } from "@/lib/profit/profitEngine";
 import {
   getReviewActorIdFromAuthorizationHeader,
   isAuthorizedReviewAuthorizationHeader,
@@ -113,6 +103,12 @@ function metricOrUnknown(value: number | null, wired: boolean): React.ReactNode 
   return value ?? "-";
 }
 
+function percentOrUnknown(value: number | null, wired: boolean): React.ReactNode {
+  if (!wired) return "not wired yet";
+  if (value == null) return "unknown";
+  return `${value.toFixed(2)}%`;
+}
+
 function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>): string | null {
   if (!snapshot.available) return "Manual override store unavailable. Actions blocked for safety.";
   if (snapshot.entries.EMERGENCY_READ_ONLY.enabled) return "Emergency read-only mode is active.";
@@ -131,97 +127,66 @@ function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getMa
   return null;
 }
 
-async function runAction(action: string) {
-  "use server";
-
-  const actorId = await requireAdmin();
-  const overrideSnapshot = await getManualOverrideSnapshot();
-  const reason = blockedReason(action, overrideSnapshot);
-  if (reason) {
-    redirect(`/admin/control?actionError=${encodeURIComponent(reason)}`);
+function getQuickActionState(
+  action: string,
+  snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>,
+  data: Awaited<ReturnType<typeof getControlPanelData>>
+): { blockedReason: string | null; caution: string | null } {
+  const overrideBlocked = blockedReason(action, snapshot);
+  if (overrideBlocked) {
+    return { blockedReason: overrideBlocked, caution: null };
   }
 
-  let message = "Action completed.";
+  const hasSafetyBlocks =
+    (data.recoveryStates.staleMarketplaceBlocks ?? 0) > 0 ||
+    (data.recoveryStates.supplierDriftBlocks ?? 0) > 0 ||
+    (data.recoveryStates.combinedBlocks ?? 0) > 0;
+  const hasRecheckNeeded = (data.recoveryStates.reEvaluationNeeded ?? 0) > 0;
+  const hasPublishFailures = (data.listingThroughput.publishFailed ?? 0) > 0;
+  const dailyCapExhausted =
+    data.listingLifecycle.dailyCap.exists &&
+    data.listingLifecycle.dailyCap.exhausted;
+  const publishRateBlocked = !data.listingLifecycle.publishRateLimit.allowed;
 
-  if (action === "supplier") {
-    const result = await runSupplierDiscover(10);
-    message = `Supplier discover inserted ${result.insertedCount} rows.`;
-  } else if (action === "match") {
-    const result = await handleMatchProductsJob({ limit: 25 });
-    message = `Matching scanned ${result.scanned}; inserted ${result.inserted}, updated ${result.updated} (total upserts ${result.inserted + result.updated}).`;
-  } else if (action === "scan") {
-    const result = await handleMarketplaceScanJob({ limit: 25, platform: "ebay" });
-    message = `Marketplace scan (eBay) scanned ${result.scanned} rows.`;
-  } else if (action === "profit") {
-    const result = await runProfitEngine({ limit: 50 });
-    message = `Profit engine scanned ${result.scanned}; upserted ${result.insertedOrUpdated}; skipped ${result.skipped}; stale deleted ${result.staleDeleted}.`;
-  } else if (action === "prepare") {
-    const result = await prepareListingPreviews({ limit: 25, marketplace: "ebay" });
-    message = `Previews created ${result.created}, updated ${result.updated}, skipped ${result.skipped}.`;
-  } else if (action === "promote") {
-    const rows = await db.execute(sql`
-      select id
-      from listings
-      where marketplace_key = 'ebay' and status = 'PREVIEW'
-      order by updated_at asc
-      limit 25
-    `);
-
-    let promoted = 0;
-    let blocked = 0;
-    for (const row of (rows.rows ?? []) as Array<{ id: string }>) {
-      const out = await markListingReadyToPublish({
-        listingId: row.id,
-        actorType: "ADMIN",
-        actorId,
-      });
-      if (out.ok) promoted++;
-      else blocked++;
+  if (action === "promote") {
+    if (dailyCapExhausted) {
+      return { blockedReason: "Daily publish cap is exhausted. Wait for cap reset before promoting.", caution: null };
     }
-
-    message = `Promoted ${promoted} previews; blocked ${blocked} by review/eligibility safeguards.`;
-  } else if (action === "dry-run") {
-    const candidates = await getListingExecutionCandidates({ limit: 20, marketplace: "ebay" });
-    await writeAuditLog({
-      actorType: "ADMIN",
-      actorId,
-      entityType: "PIPELINE",
-      entityId: "listing-execution-dry-run",
-      eventType: "LISTING_EXECUTION_DRY_RUN_OK",
-      details: { count: candidates.length },
-    });
-    message = `Listing execution dry-run found ${candidates.length} READY_TO_PUBLISH candidates.`;
-  } else if (action === "monitor") {
-    const statusCounts = await db.execute(sql`
-      select status, count(*)::int as count
-      from listings
-      where marketplace_key = 'ebay'
-      group by status
-      order by count desc
-    `);
-    await writeAuditLog({
-      actorType: "ADMIN",
-      actorId,
-      entityType: "PIPELINE",
-      entityId: "listing-monitor",
-      eventType: "LISTING_MONITOR_RUN",
-      details: { rows: statusCounts.rows ?? [] },
-    });
-    message = "Listing monitor snapshot recorded.";
-  } else {
-    throw new Error(`Unsupported control panel action: ${action}`);
+    if (publishRateBlocked) {
+      return {
+        blockedReason: `Publish rate limiter is active (${data.listingLifecycle.publishRateLimit.blockingWindow}).`,
+        caution: null,
+      };
+    }
+    if (hasSafetyBlocks || hasRecheckNeeded) {
+      return {
+        blockedReason: "Safety blocks are active. Re-check and recover affected listings in /admin/listings first.",
+        caution: null,
+      };
+    }
+    if (hasPublishFailures) {
+      return {
+        blockedReason: "Recent publish failures need review before promoting more listings.",
+        caution: null,
+      };
+    }
   }
 
-  await writeAuditLog({
-    actorType: "ADMIN",
-    actorId,
-    entityType: "PIPELINE",
-    entityId: "admin-control",
-    eventType: "CONTROL_PANEL_ACTION_TRIGGERED",
-    details: { action, message },
-  });
+  if ((action === "prepare" || action === "dry-run") && (hasSafetyBlocks || hasRecheckNeeded)) {
+    return {
+      blockedReason: null,
+      caution: "Safety blocks exist. Use this action for diagnostics, then recover rows in /admin/listings.",
+    };
+  }
 
-  redirect(`/admin/control?actionMessage=${encodeURIComponent(message)}`);
+  if (action === "monitor" && hasPublishFailures) {
+    return {
+      blockedReason: null,
+      caution: "Publish failures exist. Review failure reasons after running monitor.",
+    };
+  }
+
+  return { blockedReason: null, caution: null };
 }
 
 async function runOverrideAction(formData: FormData) {
@@ -369,7 +334,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
         </Section>
 
         {hasCriticalRecoveryBlock ? (
-          <Section title="Recovery States (Stale / Drift)">
+          <Section title="Recovery / Safety Summary">
             <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
               Publishability is currently blocked for one or more listings.
             </div>
@@ -448,38 +413,81 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 </div>
               )}
             </div>
+            <div className="mt-3">
+              <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+                Open /admin/listings for recovery actions
+              </Link>
+            </div>
           </Section>
         ) : null}
 
+        <Section title="Publish Performance">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            Compact publish KPI view from listing lifecycle truth.
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="Published today"
+              value={metricOrUnknown(data.publishPerformance.publishedToday, data.publishPerformance.sourceWired.listings)}
+            />
+            <StatCard
+              label="Published this week"
+              value={metricOrUnknown(data.publishPerformance.publishedThisWeek, data.publishPerformance.sourceWired.listings)}
+            />
+            <StatCard
+              label="Success rate"
+              value={percentOrUnknown(data.publishPerformance.publishSuccessRatePct, data.publishPerformance.sourceWired.successRate)}
+            />
+            <StatCard
+              label="Publish attempts"
+              value={metricOrUnknown(data.publishPerformance.publishAttempts, data.publishPerformance.sourceWired.listings)}
+            />
+          </div>
+          <div className="mt-4">
+            <DataTable
+              rows={data.publishPerformance.publishFailureReasons.map((row) => ({
+                reason: row.reason,
+                count: row.count,
+                technical_detail: row.technicalDetail ?? "-",
+              }))}
+              empty="No publish failures by reason."
+            />
+          </div>
+        </Section>
+
         {hasCriticalPurchaseSafety ? (
-          <Section title="Purchase Safety (Compact)">
+          <Section title="Order Operations (Compact)">
             <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
               Some orders are blocked or waiting for purchase safety checks.
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <StatCard
+                label="Orders total"
+                value={metricOrUnknown(data.orderOperations.totalOrders, data.orderOperations.sourceWired.orders)}
+              />
+              <StatCard
                 label="Purchase safety not checked"
                 value={metricOrUnknown(data.purchaseSafety.notCheckedYet, data.purchaseSafety.sourceWired.safetyPayload)}
               />
               <StatCard
-                label="Purchase safety passed"
-                value={metricOrUnknown(data.purchaseSafety.checkedPass, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Purchase passed"
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyPassed, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
                 label="Purchase needs manual review"
-                value={metricOrUnknown(data.purchaseSafety.checkedManualReview, data.purchaseSafety.sourceWired.safetyPayload)}
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyManualReview, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
-                label="Blocked: stale supplier data"
-                value={metricOrUnknown(data.purchaseSafety.blockedStaleSupplierData, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Blocked for safety"
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyBlocked, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
-                label="Blocked: supplier changed"
-                value={metricOrUnknown(data.purchaseSafety.blockedSupplierDrift, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Tracking waiting"
+                value={metricOrUnknown(data.orderOperations.trackingPending, data.orderOperations.sourceWired.tracking)}
               />
               <StatCard
-                label="Blocked: poor economics"
-                value={metricOrUnknown(data.purchaseSafety.blockedEconomics, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Tracking synced"
+                value={metricOrUnknown(data.orderOperations.trackingSynced, data.orderOperations.sourceWired.tracking)}
               />
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -504,6 +512,11 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 </div>
               )}
             </div>
+            <div className="mt-3">
+              <Link href="/admin/orders" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+                Open /admin/orders for purchase actions
+              </Link>
+            </div>
           </Section>
         ) : null}
 
@@ -512,10 +525,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <StatCard label="previews" value={data.listingThroughput.previews ?? "-"} />
             <StatCard label="ready_to_publish" value={data.listingThroughput.readyToPublish ?? "-"} />
             <StatCard label="active" value={data.listingThroughput.active ?? "-"} />
-            <StatCard label="publish_failed" value={data.listingThroughput.publishFailed ?? "-"} />
-            <StatCard label="recent attempts (24h)" value={data.listingThroughput.recentPublishAttempts24h ?? "n/a"} />
-            <StatCard label="recent successes (24h)" value={data.listingThroughput.recentPublishSuccesses24h ?? "n/a"} />
-            <StatCard label="recent failures (24h)" value={data.listingThroughput.recentPublishFailures24h ?? "n/a"} />
+            <StatCard label="publish failures (all time)" value={data.listingThroughput.publishFailed ?? "-"} />
+            <StatCard label="publish attempts (24h)" value={data.listingThroughput.recentPublishAttempts24h ?? "unknown"} />
+            <StatCard label="publish successes (24h)" value={data.listingThroughput.recentPublishSuccesses24h ?? "unknown"} />
+            <StatCard label="publish failures (24h)" value={data.listingThroughput.recentPublishFailures24h ?? "unknown"} />
           </div>
         </Section>
 
@@ -533,7 +546,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
         </Section>
 
         {!hasCriticalRecoveryBlock ? (
-          <Section title="Recovery States (Stale / Drift)">
+          <Section title="Recovery / Safety Summary">
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
               Recovery metrics are currently informational and are shown below critical worker failures.
             </div>
@@ -612,39 +625,53 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 </div>
               )}
             </div>
+            <div className="mt-3">
+              <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+                Open /admin/listings for recovery actions
+              </Link>
+            </div>
           </Section>
         ) : null}
 
         {!hasCriticalPurchaseSafety ? (
-          <Section title="Purchase Safety (Compact)">
+          <Section title="Order Operations (Compact)">
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
               Purchase safety summary stays compact here; detailed actions remain in /admin/orders.
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <StatCard
+                label="Orders total"
+                value={metricOrUnknown(data.orderOperations.totalOrders, data.orderOperations.sourceWired.orders)}
+              />
+              <StatCard
                 label="Purchase safety not checked"
                 value={metricOrUnknown(data.purchaseSafety.notCheckedYet, data.purchaseSafety.sourceWired.safetyPayload)}
               />
               <StatCard
-                label="Purchase safety passed"
-                value={metricOrUnknown(data.purchaseSafety.checkedPass, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Purchase passed"
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyPassed, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
                 label="Purchase needs manual review"
-                value={metricOrUnknown(data.purchaseSafety.checkedManualReview, data.purchaseSafety.sourceWired.safetyPayload)}
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyManualReview, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
-                label="Blocked: stale supplier data"
-                value={metricOrUnknown(data.purchaseSafety.blockedStaleSupplierData, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Blocked for safety"
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyBlocked, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
-                label="Blocked: supplier changed"
-                value={metricOrUnknown(data.purchaseSafety.blockedSupplierDrift, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Tracking waiting"
+                value={metricOrUnknown(data.orderOperations.trackingPending, data.orderOperations.sourceWired.tracking)}
               />
               <StatCard
-                label="Blocked: poor economics"
-                value={metricOrUnknown(data.purchaseSafety.blockedEconomics, data.purchaseSafety.sourceWired.safetyPayload)}
+                label="Tracking synced"
+                value={metricOrUnknown(data.orderOperations.trackingSynced, data.orderOperations.sourceWired.tracking)}
               />
+            </div>
+            <div className="mt-3">
+              <Link href="/admin/orders" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+                Open /admin/orders for purchase actions
+              </Link>
             </div>
           </Section>
         ) : null}
@@ -657,7 +684,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           </div>
         </Section>
 
-        <Section title="Future Orders Placeholder">
+        <Section title="Future Automation Readiness (Placeholder)">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            This block is forward-looking only. Use Order Operations (Compact) above for current day-to-day actions.
+          </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="total orders" value={data.futureOrders.totalOrders ?? "-"} />
             <StatCard label="purchase review pending" value={data.futureOrders.purchaseReviewPending ?? "-"} />
@@ -677,7 +707,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {quickActions.map((item) => {
-              const reason = blockedReason(item.key, {
+              const snapshot = {
                 available: data.manualOverrides.available,
                 activeCount: data.manualOverrides.activeCount,
                 emergencyReadOnly: data.manualOverrides.emergencyReadOnly,
@@ -692,12 +722,17 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                   };
                   return acc;
                 }, {} as Awaited<ReturnType<typeof getManualOverrideSnapshot>>["entries"]),
-              });
+              };
+              const state = getQuickActionState(item.key, snapshot, data);
               return (
-                <form key={item.key} action={runAction.bind(null, item.key)}>
-                  <button disabled={Boolean(reason)} className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50">
+                <form key={item.key} method="post" action="/api/admin/control/run-action">
+                  <input type="hidden" name="actionKey" value={item.key} />
+                  <button disabled={Boolean(state.blockedReason)} className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50">
                     {item.label}
-                    {reason ? <div className="mt-1 text-[11px] text-amber-200">{reason}</div> : null}
+                    {state.blockedReason ? <div className="mt-1 text-[11px] text-amber-200">{state.blockedReason}</div> : null}
+                    {!state.blockedReason && state.caution ? (
+                      <div className="mt-1 text-[11px] text-sky-200">{state.caution}</div>
+                    ) : null}
                   </button>
                 </form>
               );

@@ -86,6 +86,20 @@ export type ControlPanelData = {
     blockedCount: number | null;
     manualReviewCount: number | null;
   };
+  publishPerformance: {
+    publishedToday: number | null;
+    publishedThisWeek: number | null;
+    publishAttempts: number | null;
+    publishSuccesses: number | null;
+    publishSuccessRatePct: number | null;
+    publishFailureReasons: Array<{ reason: string; count: number; technicalDetail: string | null }>;
+    sourceWired: {
+      listings: boolean;
+      audit: boolean;
+      successRate: boolean;
+      failureReasons: boolean;
+    };
+  };
   recoveryStates: {
     staleMarketplaceBlocks: number | null;
     supplierDriftBlocks: number | null;
@@ -132,6 +146,19 @@ export type ControlPanelData = {
       hint: string;
       severity: "critical" | "info";
     }>;
+  };
+  orderOperations: {
+    totalOrders: number | null;
+    purchaseSafetyPassed: number | null;
+    purchaseSafetyManualReview: number | null;
+    purchaseSafetyBlocked: number | null;
+    trackingPending: number | null;
+    trackingSynced: number | null;
+    sourceWired: {
+      orders: boolean;
+      purchaseSafety: boolean;
+      tracking: boolean;
+    };
   };
   listingThroughput: {
     previews: number | null;
@@ -261,6 +288,63 @@ function toStr(v: unknown): string | null {
 function countByStatus(rows: Row[], status: string): number {
   const hit = rows.find((row) => String(row.status ?? "").toUpperCase() === status.toUpperCase());
   return toNum(hit?.count) ?? 0;
+}
+
+function truncateText(value: string, limit = 120): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= limit) return compact;
+  return `${compact.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function humanizePublishFailureReason(raw: string | null): string {
+  if (!raw) return "Unknown publish failure";
+  const text = raw.trim();
+  const upper = text.toUpperCase();
+
+  if (upper.includes("DAILY CAP") || upper.includes("DAILY_CAP") || upper.includes("CAP EXHAUSTED")) {
+    return "Daily cap prevented publish";
+  }
+  if (upper.includes("RATE LIMIT") || upper.includes("TOO MANY REQUESTS")) {
+    return "Rate limit prevented publish";
+  }
+  if (upper.includes("STALE_MARKETPLACE")) {
+    return "Market data too old";
+  }
+  if (upper.includes("STALE_SUPPLIER")) {
+    return "Supplier data too old";
+  }
+  if (upper.includes("SUPPLIER_PRICE_DRIFT") || upper.includes("SUPPLIER_DRIFT")) {
+    return "Supplier product changed";
+  }
+  if (
+    upper.includes("VALIDATION") ||
+    upper.includes("INVALID") ||
+    upper.includes("PAYLOAD")
+  ) {
+    return "Listing payload failed validation";
+  }
+  if (
+    upper.includes("EAI_AGAIN") ||
+    upper.includes("ETIMEDOUT") ||
+    upper.includes("ENOTFOUND") ||
+    upper.includes("ECONNRESET") ||
+    upper.includes("ECONNREFUSED") ||
+    upper.includes("NETWORK")
+  ) {
+    return "Marketplace connection failed";
+  }
+  if (
+    upper.includes("PUBLISHED_EXTERNAL_ID") ||
+    upper.includes("EXTERNAL ID") ||
+    upper.includes("EXTERNAL_ID")
+  ) {
+    return "Marketplace publish response invalid";
+  }
+  if (upper.includes("FAILED QUERY") || upper.includes("UPDATE LISTINGS SET STATUS = 'ACTIVE'")) {
+    return "Database write failed during publish";
+  }
+
+  return "Publish failed (see technical detail)";
 }
 
 async function getDbHealth() {
@@ -618,74 +702,164 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       )
     : null;
 
+  const listingsHasPublishFinishedTs = listingsExists ? await columnExists("listings", "publish_finished_ts") : false;
+  const listingsHasPublishStartedTs = listingsExists ? await columnExists("listings", "publish_started_ts") : false;
+  const listingsHasLastPublishError = listingsExists ? await columnExists("listings", "last_publish_error") : false;
+  const listingsHasUpdatedAt = listingsExists ? await columnExists("listings", "updated_at") : false;
+
   const listingThroughput = {
     previews: listingsExists ? countByStatus(listingStatuses, "PREVIEW") : null,
     readyToPublish: listingsExists ? countByStatus(listingStatuses, "READY_TO_PUBLISH") : null,
     active: listingsExists ? countByStatus(listingStatuses, "ACTIVE") : null,
     publishFailed: listingsExists ? countByStatus(listingStatuses, "PUBLISH_FAILED") : null,
-    recentPublishAttempts24h: auditExists
+    recentPublishAttempts24h: listingsExists && listingsHasPublishStartedTs
       ? toNum(
           (
             await runQuery(`
               select count(*)::int as count
-              from audit_log
-              where event_ts >= now() - interval '24 hours'
-                and event_type in ('LISTING_PUBLISH_STARTED')
+              from listings
+              where publish_started_ts >= now() - interval '24 hours'
             `)
           )[0]?.count
         )
       : null,
-    recentPublishSuccesses24h: auditExists
+    recentPublishSuccesses24h: listingsExists && listingsHasPublishFinishedTs
       ? toNum(
           (
             await runQuery(`
               select count(*)::int as count
-              from audit_log
-              where event_ts >= now() - interval '24 hours'
-                and event_type in ('LISTING_PUBLISH_COMPLETED')
+              from listings
+              where status = 'ACTIVE'
+                and publish_finished_ts >= now() - interval '24 hours'
             `)
           )[0]?.count
         )
       : null,
-    recentPublishFailures24h: auditExists
+    recentPublishFailures24h: listingsExists && listingsHasUpdatedAt
       ? toNum(
           (
             await runQuery(`
               select count(*)::int as count
-              from audit_log
-              where event_ts >= now() - interval '24 hours'
-                and event_type in ('LISTING_PUBLISH_FAILED')
+              from listings
+              where status = 'PUBLISH_FAILED'
+                and updated_at >= now() - interval '24 hours'
             `)
           )[0]?.count
         )
       : null,
   };
 
-  const publishFailures = listingsExists
-    ? await runQuery(`
-      select id, candidate_id, marketplace_key, status, updated_at
-      from listings
-      where status = 'PUBLISH_FAILED'
-      order by updated_at desc nulls last
-      limit 15
-    `)
-    : [];
+  const publishSuccesses = listingThroughput.active;
+  const publishFailuresTotal = listingThroughput.publishFailed;
+  const publishAttempts =
+    publishSuccesses == null || publishFailuresTotal == null
+      ? null
+      : publishSuccesses + publishFailuresTotal;
 
-  const publishAttempts24h = auditExists
+  const publishSuccessRatePct =
+    publishAttempts != null &&
+    publishAttempts > 0 &&
+    publishSuccesses != null
+      ? Math.round((publishSuccesses / publishAttempts) * 10000) / 100
+      : null;
+
+  const publishedToday = listingsExists && listingsHasPublishFinishedTs
     ? toNum(
         (
           await runQuery(`
             select count(*)::int as count
-            from audit_log
-            where event_ts >= now() - interval '24 hours'
-              and (
-                event_type like '%PUBLISH%'
-                or event_type = 'LISTING_READY_TO_PUBLISH'
-              )
+            from listings
+            where status = 'ACTIVE'
+              and publish_finished_ts >= date_trunc('day', now())
           `)
         )[0]?.count
       )
     : null;
+
+  const publishedThisWeek = listingsExists && listingsHasPublishFinishedTs
+    ? toNum(
+        (
+          await runQuery(`
+            select count(*)::int as count
+            from listings
+            where status = 'ACTIVE'
+              and publish_finished_ts >= date_trunc('week', now())
+          `)
+        )[0]?.count
+      )
+    : null;
+
+  const publishFailureReasons = listingsExists && listingsHasLastPublishError
+    ? (() => {
+        const grouped = new Map<string, { count: number; technicalDetail: string | null }>();
+        return grouped;
+      })()
+    : null;
+
+  if (publishFailureReasons) {
+    const rows = await runQuery(`
+      select
+        coalesce(nullif(trim(last_publish_error), ''), 'UNKNOWN') as raw_reason,
+        count(*)::int as count
+      from listings
+      where status = 'PUBLISH_FAILED'
+      group by 1
+      order by count desc, raw_reason asc
+      limit 20
+    `);
+    for (const row of rows) {
+      const rawReason = toStr(row.raw_reason) ?? "UNKNOWN";
+      const humanReason = humanizePublishFailureReason(rawReason);
+      const current = publishFailureReasons.get(humanReason) ?? { count: 0, technicalDetail: null };
+      current.count += toNum(row.count) ?? 0;
+      if (!current.technicalDetail && rawReason !== "UNKNOWN") {
+        current.technicalDetail = truncateText(rawReason, 140);
+      }
+      publishFailureReasons.set(humanReason, current);
+    }
+  }
+
+  const publishFailureReasonRows = publishFailureReasons
+    ? Array.from(publishFailureReasons.entries())
+        .map(([reason, entry]) => ({
+          reason,
+          count: entry.count,
+          technicalDetail: entry.technicalDetail,
+        }))
+        .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+        .slice(0, 6)
+    : [];
+
+  const publishFailures = listingsExists && listingsHasLastPublishError
+    ? (await runQuery(`
+      select id, candidate_id, marketplace_key, status, updated_at, last_publish_error
+      from listings
+      where status = 'PUBLISH_FAILED'
+      order by updated_at desc nulls last
+      limit 15
+    `)).map((row) => {
+      const raw = toStr(row.last_publish_error);
+      return {
+        id: row.id,
+        candidate_id: row.candidate_id,
+        marketplace_key: row.marketplace_key,
+        status: row.status,
+        updated_at: row.updated_at,
+        failure_reason: humanizePublishFailureReason(raw),
+        technical_detail: raw ? truncateText(raw, 180) : null,
+      };
+    })
+    : listingsExists
+      ? await runQuery(`
+        select id, candidate_id, marketplace_key, status, updated_at
+        from listings
+        where status = 'PUBLISH_FAILED'
+        order by updated_at desc nulls last
+        limit 15
+      `)
+      : [];
+
+  const publishAttempts24h = listingThroughput.recentPublishAttempts24h;
 
   const dailyCapRow = listingDailyCapsExists
     ? (
@@ -1067,6 +1241,10 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const purchaseSafetyBlockedStaleSupplierData = toNum(purchaseSafetyStats.blocked_stale_supplier_data);
   const purchaseSafetyBlockedSupplierDrift = toNum(purchaseSafetyStats.blocked_supplier_drift);
   const purchaseSafetyBlockedEconomics = toNum(purchaseSafetyStats.blocked_economics);
+  const purchaseSafetyBlockedTotal =
+    (purchaseSafetyBlockedStaleSupplierData ?? 0) +
+    (purchaseSafetyBlockedSupplierDrift ?? 0) +
+    (purchaseSafetyBlockedEconomics ?? 0);
 
   const purchaseSafetyHints: ControlPanelData["purchaseSafety"]["actionHints"] = [];
   if ((purchaseSafetyNotCheckedYet ?? 0) > 0) {
@@ -1441,6 +1619,33 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         safetyPayload: ordersExists && orderEventsExists,
       },
       actionHints: purchaseSafetyHints,
+    },
+    orderOperations: {
+      totalOrders: ordersExists ? toNum(ordersSummary.total_orders) : null,
+      purchaseSafetyPassed: purchaseSafetyCheckedPass,
+      purchaseSafetyManualReview: purchaseSafetyCheckedManualReview,
+      purchaseSafetyBlocked: purchaseSafetyBlockedTotal,
+      trackingPending: ordersExists ? toNum(ordersSummary.tracking_pending) : null,
+      trackingSynced: ordersExists ? toNum(ordersSummary.tracking_synced) : null,
+      sourceWired: {
+        orders: ordersExists,
+        purchaseSafety: ordersExists && orderEventsExists,
+        tracking: ordersExists,
+      },
+    },
+    publishPerformance: {
+      publishedToday,
+      publishedThisWeek,
+      publishAttempts,
+      publishSuccesses,
+      publishSuccessRatePct,
+      publishFailureReasons: publishFailureReasonRows,
+      sourceWired: {
+        listings: listingsExists,
+        audit: false,
+        successRate: listingsExists,
+        failureReasons: listingsExists && listingsHasLastPublishError,
+      },
     },
     listingThroughput,
     listingLifecycle: {
