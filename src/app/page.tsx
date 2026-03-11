@@ -354,7 +354,7 @@ export default function Home() {
 
             <SectionPill>AI-powered product discovery intelligence</SectionPill>
 
-            <h1 className="mt-6 max-w-4xl text-balance text-[2.2rem] font-extrabold leading-[1.03] tracking-[-0.04em] text-white sm:text-5xl lg:text-7xl">
+            <h1 className="mt-6 w-full text-balance text-[2.2rem] font-extrabold leading-[1.03] tracking-[-0.04em] text-white sm:text-5xl lg:text-7xl">
               Run safer product discovery and guarded execution through{" "}
               <span className="bg-gradient-to-r from-sky-200 via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
                 supplier intelligence, marketplace monitoring, and operator-first controls
@@ -406,7 +406,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="order-1 animate-rise-delayed mx-auto w-full max-w-[860px]">
+          <div className="order-1 animate-rise-delayed mx-auto w-full max-w-[1180px]">
             <div className="dashboard-frame rounded-[32px] p-3 sm:p-4">
               <div className="glass-panel rounded-[28px] p-4 sm:p-5">
                 <div className="flex flex-col gap-3 rounded-2xl border border-white/8 bg-white/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
