@@ -20,10 +20,10 @@ const navItems = [
 ];
 
 const metrics = [
-  { value: "Amazon + eBay", label: "current marketplace focus" },
-  { value: "Supplier + Trend Inputs", label: "opportunity discovery signals" },
-  { value: "AI Matching", label: "listing relevance engine" },
-  { value: "Scalable Workers", label: "queue-based processing design" },
+  { value: "eBay-first (v1)", label: "current live marketplace scope" },
+  { value: "Guarded Publish Path", label: "manual approval with safety gates" },
+  { value: "Jordan-aware Profit Model", label: "conservative net-profit logic" },
+  { value: "Order Automation Foundation", label: "manual-assisted purchase/tracking flow" },
 ];
 
 const features = [
@@ -33,7 +33,7 @@ const features = [
   },
   {
     title: "Marketplace Monitoring",
-    desc: "Track listing price, shipping, seller context, and availability across supported marketplaces to validate demand and margin.",
+    desc: "Track listing price, shipping, seller context, and availability to validate demand, margin, and publish readiness.",
   },
   {
     title: "AI Product Matching",
@@ -48,8 +48,8 @@ const features = [
     desc: "Estimate opportunity quality by combining pricing, costs, shipping assumptions, and signal confidence into one workflow.",
   },
   {
-    title: "Dashboard-Ready Architecture",
-    desc: "Built to evolve into a dashboard layer for reviewing candidates, prioritizing actions, and later managing listing workflows.",
+    title: "Operator-First Admin Surfaces",
+    desc: "Purpose-built admin surfaces for review, listings, control, and safe operational decisions before broad automation.",
   },
 ];
 
@@ -67,8 +67,8 @@ const whyNowCards = [
     desc: "The real edge is not only better data. It is turning scattered inputs into ranked actions much faster.",
   },
   {
-    title: "The platform can expand",
-    desc: "Intelligence today can become alerts, dashboards, listing support, automation, and execution workflows tomorrow.",
+    title: "Safety-first expansion path",
+    desc: "Start with controlled execution and strong visibility now, then expand automation phase-by-phase with explicit safeguards.",
   },
 ];
 
@@ -77,8 +77,8 @@ const workflow = [
   "Normalize data into structured pipeline records",
   "Match products to relevant marketplace listings",
   "Capture pricing, shipping, seller, and availability context",
-  "Score opportunity quality and commercial viability",
-  "Surface review-ready candidates in a dashboard-style workflow",
+  "Run profitability + price-guard safety validation",
+  "Move approved opportunities through guarded listing lifecycle",
 ];
 
 const benefitGroups = [
@@ -86,16 +86,16 @@ const benefitGroups = [
     title: "For potential customers",
     points: [
       "Reduce manual sourcing and price-checking time",
-      "Validate products against real marketplace data faster",
+      "Validate products against real marketplace data before publish",
       "Spot trend-led opportunities earlier",
-      "Move toward a cleaner dashboard-driven workflow",
+      "Operate with explicit review and control surfaces",
     ],
   },
   {
     title: "For potential investors",
     points: [
       "Clear commercial use case with repeat operational value",
-      "Expandable path from data engine to software platform",
+      "Expandable path from intelligence engine to execution platform",
       "Lean architecture already aligned with real workflow stages",
       "Multiple future monetization layers beyond monitoring alone",
     ],
@@ -113,7 +113,7 @@ const faqItems = [
   },
   {
     q: "Which marketplaces are currently in focus?",
-    a: "The current public-facing focus is Amazon and eBay, while the broader architecture is designed to support expansion over time.",
+    a: "v1 live execution is eBay-first with guarded controls. The architecture supports future marketplace expansion without weakening current safety gates.",
   },
   {
     q: "Does the contact form send to WhatsApp?",
@@ -125,28 +125,28 @@ const dashboardRows = [
   {
     product: "Mini Label Printer",
     source: "Trend signal",
-    market: "Amazon / eBay",
+    market: "eBay",
     score: "91",
     status: "Priority review",
   },
   {
     product: "Portable Blender Bottle",
     source: "Supplier catalog",
-    market: "Amazon / eBay",
+    market: "eBay",
     score: "78",
     status: "Validate fees",
   },
   {
     product: "Magnetic Phone Cooler",
     source: "Trend signal",
-    market: "Amazon / eBay",
+    market: "eBay",
     score: "83",
     status: "Watch closely",
   },
   {
     product: "Wireless Car Vacuum",
     source: "Supplier catalog",
-    market: "Amazon / eBay",
+    market: "eBay",
     score: "89",
     status: "High potential",
   },
@@ -319,17 +319,17 @@ export default function Home() {
             <SectionPill>AI-powered product discovery intelligence</SectionPill>
 
             <h1 className="mt-5 max-w-4xl text-balance text-[2.2rem] font-extrabold leading-[1.03] tracking-[-0.04em] text-white sm:text-5xl lg:text-7xl">
-              Discover stronger product opportunities through{" "}
+              Run safer product discovery and guarded execution through{" "}
               <span className="bg-gradient-to-r from-sky-200 via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
-                supplier intelligence, marketplace monitoring, and trend-led discovery
+                supplier intelligence, marketplace monitoring, and operator-first controls
               </span>
               .
             </h1>
 
             <p className="mt-6 max-w-2xl text-pretty text-base leading-8 text-white/72 sm:text-lg">
               QuickAIBuy is an AI-powered product discovery and arbitrage intelligence
-              engine built to help businesses identify commercially promising products
-              faster by combining supplier data, marketplace pricing, and emerging trend signals.
+              engine built to help businesses identify commercially promising products,
+              validate publish safety, and execute through controlled workflows.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -349,10 +349,10 @@ export default function Home() {
 
             <div className="mt-8 flex flex-wrap items-center gap-3 text-sm text-white/58">
               <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                Built for future dashboard workflows
+                Built for operator-controlled workflows
               </span>
               <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                Current focus: Amazon and eBay
+                Current live focus: eBay-first
               </span>
               <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                 Contact-ready via WhatsApp
@@ -428,8 +428,8 @@ export default function Home() {
                             Trend + supplier blend
                           </div>
                         </div>
-                        <div className="text-right text-xs text-white/48">
-                          controlled scale
+                      <div className="text-right text-xs text-white/48">
+                          controlled rollout
                         </div>
                       </div>
 
@@ -551,12 +551,11 @@ export default function Home() {
           <div className="max-w-3xl">
             <SectionPill>Platform</SectionPill>
             <h2 className="mt-5 text-balance text-3xl font-bold tracking-[-0.03em] text-white sm:text-4xl lg:text-5xl">
-              Built for product discovery, marketplace validation, and scalable review workflows
+              Built for product discovery, publish safety, and scalable review workflows
             </h2>
             <p className="mt-5 text-pretty text-base leading-8 text-white/68 sm:text-lg">
-              The public positioning is intentionally focused on commercial outcomes.
-              It explains what QuickAIBuy helps users do without overexposing internal
-              implementation details.
+              The platform combines discovery intelligence with operational safeguards
+              so teams can move forward faster without losing control.
             </p>
           </div>
 
@@ -657,7 +656,7 @@ export default function Home() {
               <p className="mt-5 text-pretty text-base leading-8 text-white/68 sm:text-lg">
                 For now, the form opens a prefilled WhatsApp message directly to your number.
                 Later, we can connect it to a proper backend, CRM, email routing, and your
-                future dashboard.
+                admin operations stack.
               </p>
 
               <div className="mt-8 space-y-4">
