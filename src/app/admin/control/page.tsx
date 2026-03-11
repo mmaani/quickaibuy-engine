@@ -219,6 +219,127 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           ) : null}
         </header>
 
+        <Section title="Publishing Safety (Priority)">
+          <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
+            Publishing safety alerts are prioritized above general pipeline metrics.
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="price guard candidates" value={data.publishingSafety.priceGuardSummary.totalCandidates ?? "-"} />
+            <StatCard label="stale candidates" value={data.publishingSafety.staleCandidateCount ?? "-"} />
+            <StatCard label="blocked count" value={data.publishingSafety.blockedCount ?? "-"} />
+            <StatCard label="manual review count" value={data.publishingSafety.manualReviewCount ?? "-"} />
+            <StatCard label="rate-limit allowed" value={data.publishingSafety.publishRateLimit.allowed ? "yes" : "no"} />
+            <StatCard label="rate-limit window" value={data.publishingSafety.publishRateLimit.blockingWindow} />
+            <StatCard
+              label="attempts 15m / 1h / 1d"
+              value={`${data.publishingSafety.publishRateLimit.counts.attempts15m} / ${data.publishingSafety.publishRateLimit.counts.attempts1h} / ${data.publishingSafety.publishRateLimit.counts.attempts1d}`}
+            />
+            <StatCard
+              label="limits 15m / 1h / 1d"
+              value={`${data.publishingSafety.publishRateLimit.limits.limit15m} / ${data.publishingSafety.publishRateLimit.limits.limit1h} / ${data.publishingSafety.publishRateLimit.limits.limit1d}`}
+            />
+          </div>
+          {data.publishingSafety.priceGuardSummary.hasPartialData ? (
+            <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-xs text-amber-100">
+              Price Guard summary is partial because profitable_candidates data is unavailable.
+            </div>
+          ) : null}
+          {data.publishingSafety.publishRateLimit.retryHint ? (
+            <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-xs text-amber-100">
+              Rate-limit hint: {data.publishingSafety.publishRateLimit.retryHint}
+            </div>
+          ) : null}
+        </Section>
+
+        <Section title="Listing Throughput">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="previews" value={data.listingThroughput.previews ?? "-"} />
+            <StatCard label="ready_to_publish" value={data.listingThroughput.readyToPublish ?? "-"} />
+            <StatCard label="active" value={data.listingThroughput.active ?? "-"} />
+            <StatCard label="publish_failed" value={data.listingThroughput.publishFailed ?? "-"} />
+            <StatCard label="recent attempts (24h)" value={data.listingThroughput.recentPublishAttempts24h ?? "n/a"} />
+            <StatCard label="recent successes (24h)" value={data.listingThroughput.recentPublishSuccesses24h ?? "n/a"} />
+            <StatCard label="recent failures (24h)" value={data.listingThroughput.recentPublishFailures24h ?? "n/a"} />
+          </div>
+        </Section>
+
+        <Section title="Worker Health">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="worker successes (24h)" value={data.workerQueueHealth.recentSuccessCount24h ?? "n/a"} />
+            <StatCard label="worker failures (24h)" value={data.workerQueueHealth.recentFailureCount24h ?? "n/a"} />
+            <StatCard label="recent activity ts" value={data.workerQueueHealth.recentWorkerActivityTs ?? "none"} />
+            <StatCard label="recent job failures" value={data.workerQueueHealth.recentJobFailures.length} />
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <DataTable rows={data.workerQueueHealth.recentWorkerFailures} empty="No recent worker failures." />
+            <DataTable rows={data.workerQueueHealth.recentJobFailures} empty="No recent job failures." />
+          </div>
+        </Section>
+
+        <Section title="Alerts">
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="rounded-2xl border border-rose-300/35 bg-rose-500/10 p-3">
+              <div className="mb-2 text-sm font-semibold">Publishing Safety</div>
+              {data.prioritizedAlerts.publishingSafety.length ? (
+                <div className="space-y-2">
+                  {data.prioritizedAlerts.publishingSafety.map((alert) => (
+                    <div key={alert.id} className="rounded-xl border border-white/15 bg-black/15 p-2 text-xs">
+                      <div className="font-semibold">{alert.title}</div>
+                      <div className="text-white/75">{alert.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-white/70">No publishing safety alerts.</div>
+              )}
+            </div>
+            <div className="rounded-2xl border border-amber-300/35 bg-amber-500/10 p-3">
+              <div className="mb-2 text-sm font-semibold">Operational Freshness</div>
+              {data.prioritizedAlerts.operationalFreshness.length ? (
+                <div className="space-y-2">
+                  {data.prioritizedAlerts.operationalFreshness.map((alert) => (
+                    <div key={alert.id} className="rounded-xl border border-white/15 bg-black/15 p-2 text-xs">
+                      <div className="font-semibold">{alert.title}</div>
+                      <div className="text-white/75">{alert.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-white/70">No operational freshness alerts.</div>
+              )}
+            </div>
+            <div className="rounded-2xl border border-white/15 bg-white/[0.04] p-3">
+              <div className="mb-2 text-sm font-semibold">Future Orders Placeholder</div>
+              {data.prioritizedAlerts.futureOrders.length ? (
+                <div className="space-y-2">
+                  {data.prioritizedAlerts.futureOrders.map((alert) => (
+                    <div key={alert.id} className="rounded-xl border border-white/15 bg-black/15 p-2 text-xs">
+                      <div className="font-semibold">{alert.title}</div>
+                      <div className="text-white/75">{alert.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-white/70">No future-order alerts.</div>
+              )}
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Future Orders Placeholder">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="total orders" value={data.futureOrders.totalOrders ?? "-"} />
+            <StatCard label="purchase review pending" value={data.futureOrders.purchaseReviewPending ?? "-"} />
+            <StatCard label="tracking pending" value={data.futureOrders.trackingPending ?? "-"} />
+            <StatCard label="tracking synced" value={data.futureOrders.trackingSynced ?? "-"} />
+          </div>
+          {!data.futureOrders.supported ? (
+            <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-xs text-amber-100">
+              Partial state: {data.futureOrders.partialReason}
+            </div>
+          ) : null}
+        </Section>
+
         <Section title="Pipeline Overview">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {data.pipelineOverview.counts.map((item) => (
