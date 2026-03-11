@@ -29,6 +29,9 @@ type ListingQueueRow = {
   listing_response: unknown;
   listing_created_at: string | Date | null;
   listing_updated_at: string | Date | null;
+  duplicate_detected: boolean;
+  duplicate_reason: string | null;
+  duplicate_listing_ids: string[] | null;
 };
 
 export type ListingsQueueFilters = {
@@ -68,6 +71,9 @@ export type QueueListItem = {
   listingUpdatedAt: string | null;
   approvedTs: string | null;
   approvedBy: string | null;
+  duplicateDetected: boolean;
+  duplicateReason: string | null;
+  duplicateListingIds: string[];
 };
 
 export type QueueOverview = {
@@ -189,6 +195,9 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     listingUpdatedAt: toIsoString(row.listing_updated_at),
     approvedTs: toIsoString(row.approved_ts),
     approvedBy: row.approved_by,
+    duplicateDetected: Boolean(row.duplicate_detected),
+    duplicateReason: row.duplicate_reason ?? null,
+    duplicateListingIds: row.duplicate_listing_ids ?? [],
   };
 }
 
@@ -358,7 +367,14 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       l.payload AS listing_payload,
       l.response AS listing_response,
       l.created_at AS listing_created_at,
-      l.updated_at AS listing_updated_at
+      l.updated_at AS listing_updated_at,
+      (COALESCE(dup.conflict_count, 0) > 0) AS duplicate_detected,
+      CASE
+        WHEN COALESCE(dup.conflict_count, 0) > 0 THEN
+          CONCAT('conflicting listing rows: ', array_to_string(dup.conflict_listing_ids, ', '))
+        ELSE NULL
+      END AS duplicate_reason,
+      COALESCE(dup.conflict_listing_ids, ARRAY[]::text[]) AS duplicate_listing_ids
     FROM profitable_candidates pc
     LEFT JOIN LATERAL (
       SELECT *
@@ -368,6 +384,30 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
       LIMIT 1
     ) l ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*)::int AS conflict_count,
+        ARRAY_AGG(
+          l2.id::text
+          ORDER BY
+            CASE l2.status
+              WHEN 'ACTIVE' THEN 4
+              WHEN 'PUBLISH_IN_PROGRESS' THEN 3
+              WHEN 'READY_TO_PUBLISH' THEN 2
+              WHEN 'PREVIEW' THEN 1
+              ELSE 0
+            END DESC,
+            l2.updated_at DESC NULLS LAST
+        ) AS conflict_listing_ids
+      FROM listings l2
+      INNER JOIN profitable_candidates pc2
+        ON pc2.id = l2.candidate_id
+      WHERE l2.marketplace_key = pc.marketplace_key
+        AND l2.status IN ('PREVIEW', 'READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE')
+        AND LOWER(pc2.supplier_key) = LOWER(pc.supplier_key)
+        AND pc2.supplier_product_id = pc.supplier_product_id
+        AND (l.id IS NULL OR l2.id <> l.id)
+    ) dup ON true
     WHERE ${conditions.join(" AND ")}
     ORDER BY pc.calc_ts DESC NULLS LAST
     LIMIT 300

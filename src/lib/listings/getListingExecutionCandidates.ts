@@ -5,6 +5,8 @@ import type { EbayListingPreviewPayload } from "./types";
 export type ListingExecutionCandidate = {
   id: string;
   candidateId: string;
+  supplierKey: string;
+  supplierProductId: string;
   marketplaceKey: "ebay";
   title: string;
   price: string;
@@ -30,6 +32,8 @@ export async function getListingExecutionCandidates(
     SELECT
       l.id,
       l.candidate_id AS "candidateId",
+      pc.supplier_key AS "supplierKey",
+      pc.supplier_product_id AS "supplierProductId",
       l.marketplace_key AS "marketplaceKey",
       l.title,
       l.price::text AS price,

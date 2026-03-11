@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { bullConnection } from "@/lib/bull";
 import { db } from "@/lib/db";
 import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobNames";
+import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -55,15 +56,30 @@ export type ControlPanelData = {
     readyToPublishBacklog: number | null;
     publishAttempts24h: number | null;
     publishFailures: Row[];
-    dailyCap: {
-      capDate: string | null;
-      capLimit: number | null;
-      capUsed: number | null;
-      capRemaining: number | null;
-      exhausted: boolean;
-      exists: boolean;
+      dailyCap: {
+        capDate: string | null;
+        capLimit: number | null;
+        capUsed: number | null;
+        capRemaining: number | null;
+        exhausted: boolean;
+        exists: boolean;
+      };
+      publishRateLimit: {
+        allowed: boolean;
+        blockingWindow: "15m" | "1h" | "1d" | "none";
+        counts: {
+          attempts15m: number;
+          attempts1h: number;
+          attempts1d: number;
+        };
+        limits: {
+          limit15m: number;
+          limit1h: number;
+          limit1d: number;
+        };
+        retryHint: string | null;
+      };
     };
-  };
   workerQueueHealth: {
     recentWorkerRuns: Row[];
     recentWorkerFailures: Row[];
@@ -449,6 +465,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const capLimit = toNum(dailyCapRow?.cap_limit);
   const capUsed = toNum(dailyCapRow?.cap_used);
   const capRemaining = capLimit == null || capUsed == null ? null : Math.max(0, capLimit - capUsed);
+  const publishRateLimit = await getPublishRateLimitState("ebay");
 
   const workerRunsHasStartedAt = workerRunsExists ? await columnExists("worker_runs", "started_at") : false;
   const workerRunsHasFinishedAt = workerRunsExists ? await columnExists("worker_runs", "finished_at") : false;
@@ -648,6 +665,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         exhausted: capRemaining === 0,
         exists: listingDailyCapsExists,
       },
+      publishRateLimit,
     },
     workerQueueHealth: {
       recentWorkerRuns,

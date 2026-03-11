@@ -55,6 +55,9 @@ export type ReviewListItem = {
   blockingRiskFlags: string[];
   listingEligible: boolean;
   listingEligibilityReasons: string[];
+  duplicateDetected: boolean;
+  duplicateReason: string | null;
+  duplicateListingIds: string[];
 };
 
 type CandidateRow = {
@@ -90,6 +93,9 @@ type CandidateRow = {
   listing_updated_at?: string | Date | null;
   match_confidence: string | number | null;
   duplicate_count: string | number | null;
+  duplicate_detected: boolean | null;
+  duplicate_reason: string | null;
+  duplicate_conflict_listing_ids: string[] | null;
 };
 
 type SupplierSnapshot = {
@@ -384,6 +390,9 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     blockingRiskFlags: eligibility.blockingRiskFlags,
     listingEligible: eligibility.listingEligible,
     listingEligibilityReasons: eligibility.listingEligibilityReasons,
+    duplicateDetected: Boolean(row.duplicate_detected),
+    duplicateReason: row.duplicate_reason ?? null,
+    duplicateListingIds: row.duplicate_conflict_listing_ids ?? [],
   };
 }
 
@@ -539,6 +548,51 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
       ) l ON true
     `
     : "";
+  const duplicateSelectClause = listingsAvailable
+    ? `
+        COALESCE(dup.conflict_count, 0)::int AS duplicate_conflict_count,
+        COALESCE(dup.conflict_listing_ids, ARRAY[]::text[]) AS duplicate_conflict_listing_ids,
+        (COALESCE(dup.conflict_count, 0) > 0) AS duplicate_detected,
+        CASE
+          WHEN COALESCE(dup.conflict_count, 0) > 0 THEN
+            CONCAT('conflicting listing rows: ', array_to_string(dup.conflict_listing_ids, ', '))
+          ELSE NULL
+        END AS duplicate_reason,
+      `
+    : `
+        0::int AS duplicate_conflict_count,
+        ARRAY[]::text[] AS duplicate_conflict_listing_ids,
+        FALSE AS duplicate_detected,
+        NULL::text AS duplicate_reason,
+      `;
+  const duplicateJoinClause = listingsAvailable
+    ? `
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS conflict_count,
+          ARRAY_AGG(
+            l2.id::text
+            ORDER BY
+              CASE l2.status
+                WHEN 'ACTIVE' THEN 4
+                WHEN 'PUBLISH_IN_PROGRESS' THEN 3
+                WHEN 'READY_TO_PUBLISH' THEN 2
+                WHEN 'PREVIEW' THEN 1
+                ELSE 0
+              END DESC,
+              l2.updated_at DESC NULLS LAST
+          ) AS conflict_listing_ids
+        FROM listings l2
+        INNER JOIN profitable_candidates pc2
+          ON pc2.id = l2.candidate_id
+        WHERE l2.marketplace_key = pc.marketplace_key
+          AND l2.status IN ('PREVIEW', 'READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE')
+          AND LOWER(pc2.supplier_key) = LOWER(pc.supplier_key)
+          AND pc2.supplier_product_id = pc.supplier_product_id
+          AND (l.id IS NULL OR l2.id <> l.id)
+      ) dup ON true
+    `
+    : "";
 
   const result = await pool.query<CandidateRow>(
     `
@@ -563,6 +617,7 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
         pr.title AS supplier_title,
         mp.matched_title AS marketplace_title,
         ${listingSelectClause}
+        ${duplicateSelectClause}
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -577,6 +632,7 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
       LEFT JOIN marketplace_prices mp
         ON mp.id = pc.market_price_snapshot_id
       ${listingJoinClause}
+      ${duplicateJoinClause}
       LEFT JOIN LATERAL (
         SELECT confidence
         FROM matches
@@ -719,6 +775,51 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
       ) l ON true
     `
     : "";
+  const duplicateSelectClause = listingsAvailable
+    ? `
+        COALESCE(dup.conflict_count, 0)::int AS duplicate_conflict_count,
+        COALESCE(dup.conflict_listing_ids, ARRAY[]::text[]) AS duplicate_conflict_listing_ids,
+        (COALESCE(dup.conflict_count, 0) > 0) AS duplicate_detected,
+        CASE
+          WHEN COALESCE(dup.conflict_count, 0) > 0 THEN
+            CONCAT('conflicting listing rows: ', array_to_string(dup.conflict_listing_ids, ', '))
+          ELSE NULL
+        END AS duplicate_reason,
+      `
+    : `
+        0::int AS duplicate_conflict_count,
+        ARRAY[]::text[] AS duplicate_conflict_listing_ids,
+        FALSE AS duplicate_detected,
+        NULL::text AS duplicate_reason,
+      `;
+  const duplicateJoinClause = listingsAvailable
+    ? `
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS conflict_count,
+          ARRAY_AGG(
+            l2.id::text
+            ORDER BY
+              CASE l2.status
+                WHEN 'ACTIVE' THEN 4
+                WHEN 'PUBLISH_IN_PROGRESS' THEN 3
+                WHEN 'READY_TO_PUBLISH' THEN 2
+                WHEN 'PREVIEW' THEN 1
+                ELSE 0
+              END DESC,
+              l2.updated_at DESC NULLS LAST
+          ) AS conflict_listing_ids
+        FROM listings l2
+        INNER JOIN profitable_candidates pc2
+          ON pc2.id = l2.candidate_id
+        WHERE l2.marketplace_key = pc.marketplace_key
+          AND l2.status IN ('PREVIEW', 'READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE')
+          AND LOWER(pc2.supplier_key) = LOWER(pc.supplier_key)
+          AND pc2.supplier_product_id = pc.supplier_product_id
+          AND (l.id IS NULL OR l2.id <> l.id)
+      ) dup ON true
+    `
+    : "";
 
   const candidateResult = await pool.query<CandidateRow>(
     `
@@ -743,6 +844,7 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
         pr.title AS supplier_title,
         mp.matched_title AS marketplace_title,
         ${listingSelectClause}
+        ${duplicateSelectClause}
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -757,6 +859,7 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
       LEFT JOIN marketplace_prices mp
         ON mp.id = pc.market_price_snapshot_id
       ${listingJoinClause}
+      ${duplicateJoinClause}
       LEFT JOIN LATERAL (
         SELECT confidence
         FROM matches

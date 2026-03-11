@@ -300,7 +300,22 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <StatCard label="publish attempts (24h)" value={data.listingLifecycle.publishAttempts24h ?? "n/a"} />
             <StatCard label="daily cap used" value={data.listingLifecycle.dailyCap.capUsed ?? "-"} />
             <StatCard label="daily cap remaining" value={data.listingLifecycle.dailyCap.capRemaining ?? "-"} />
+            <StatCard label="rate limit allowed" value={data.listingLifecycle.publishRateLimit.allowed ? "yes" : "no"} />
+            <StatCard label="rate limit blocking window" value={data.listingLifecycle.publishRateLimit.blockingWindow} />
+            <StatCard
+              label="attempts 15m / 1h / 1d"
+              value={`${data.listingLifecycle.publishRateLimit.counts.attempts15m} / ${data.listingLifecycle.publishRateLimit.counts.attempts1h} / ${data.listingLifecycle.publishRateLimit.counts.attempts1d}`}
+            />
+            <StatCard
+              label="limits 15m / 1h / 1d"
+              value={`${data.listingLifecycle.publishRateLimit.limits.limit15m} / ${data.listingLifecycle.publishRateLimit.limits.limit1h} / ${data.listingLifecycle.publishRateLimit.limits.limit1d}`}
+            />
           </div>
+          {data.listingLifecycle.publishRateLimit.retryHint ? (
+            <div className="mt-3 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+              Rate-limit hint: {data.listingLifecycle.publishRateLimit.retryHint}
+            </div>
+          ) : null}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <DataTable rows={data.listingLifecycle.statusCounts} empty="No listing lifecycle rows." />
             <DataTable rows={data.listingLifecycle.publishFailures} empty="No PUBLISH_FAILED rows." />

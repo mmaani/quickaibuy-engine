@@ -2,6 +2,11 @@ import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
+import {
+  findListingDuplicatesForCandidate,
+  getDuplicateBlockDecision,
+} from "@/lib/listings/duplicateProtection";
+import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { publishToEbayListing } from "@/lib/marketplaces/ebayPublish";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
@@ -139,6 +144,91 @@ export async function runListingExecution(opts?: {
     /**
      * LIVE PUBLISH PATH
      */
+    const duplicateMatches = await findListingDuplicatesForCandidate({
+      marketplaceKey,
+      supplierKey: row.supplierKey,
+      supplierProductId: row.supplierProductId,
+      listingTitle: row.title,
+      excludeListingId: listingId,
+    });
+    const duplicateDecision = getDuplicateBlockDecision(duplicateMatches);
+
+    if (duplicateDecision.blocked) {
+      await db.execute(sql`
+        UPDATE listings
+        SET
+          response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
+            duplicateProtection: {
+              blocked: true,
+              reason: duplicateDecision.reason,
+              duplicateListingIds: duplicateDecision.duplicateListingIds,
+            },
+          })}::jsonb,
+          last_publish_error = ${`duplicate publish blocked: ${duplicateDecision.reason}`},
+          updated_at = NOW()
+        WHERE id = ${listingId}
+      `);
+
+      await writeAuditLog({
+        actorType: "WORKER",
+        actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_PUBLISH_BLOCKED_DUPLICATE",
+        details: {
+          listingId,
+          candidateId,
+          marketplaceKey,
+          listingIdFilter: listingIdFilter || null,
+          duplicateReason: duplicateDecision.reason,
+          duplicateListingIds: duplicateDecision.duplicateListingIds,
+          blockingListingId: duplicateDecision.blockingListingId,
+          blockingStatus: duplicateDecision.blockingStatus,
+        },
+      });
+
+      skipped++;
+      continue;
+    }
+
+    const rateLimit = await getPublishRateLimitState("ebay");
+    if (!rateLimit.allowed) {
+      await db.execute(sql`
+        UPDATE listings
+        SET
+          response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
+            publishRateLimit: {
+              blocked: true,
+              blockingWindow: rateLimit.blockingWindow,
+              counts: rateLimit.counts,
+              limits: rateLimit.limits,
+              retryHint: rateLimit.retryHint,
+            },
+          })}::jsonb,
+          last_publish_error = ${`publish blocked by rate limiter (${rateLimit.blockingWindow})`},
+          updated_at = NOW()
+        WHERE id = ${listingId}
+      `);
+
+      await writeAuditLog({
+        actorType: "WORKER",
+        actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_PUBLISH_BLOCKED_RATE_LIMIT",
+        details: {
+          listingId,
+          candidateId,
+          marketplaceKey,
+          listingIdFilter: listingIdFilter || null,
+          rateLimit,
+        },
+      });
+
+      skipped++;
+      continue;
+    }
+
     const reserved = await reserveDailyListingSlot({
       marketplaceKey: "ebay",
     });

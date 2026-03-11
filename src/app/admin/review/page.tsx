@@ -298,6 +298,14 @@ function ReviewActions({ candidate }: { candidate: CandidateDetail["candidate"] 
               </span>
             }
           />
+          <KeyValue
+            label="Duplicate Warning"
+            value={
+              candidate.duplicateDetected
+                ? `YES${candidate.duplicateReason ? ` - ${candidate.duplicateReason}` : ""}`
+                : "NO"
+            }
+          />
         </div>
         <label className="block">
           <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Reason / Note</div>
@@ -511,6 +519,11 @@ export default async function ReviewPage({
                                 <div className="mt-1 text-xs text-white/65">
                                   Listing: {formatListingStatus(candidate.listingStatus)}
                                 </div>
+                                {candidate.duplicateDetected ? (
+                                  <div className="mt-1 text-xs text-rose-200">
+                                    Duplicate warning: {candidate.duplicateReason ?? "conflict detected"}
+                                  </div>
+                                ) : null}
                                 <div className="mt-2 flex flex-wrap gap-2">
                                   {candidate.riskFlags.slice(0, 2).map((flag) => (
                                     <RiskBadge key={flag} flag={flag} />

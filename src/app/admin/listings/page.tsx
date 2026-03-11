@@ -60,6 +60,7 @@ function getPromoteDisabledReason(item: QueueListItem): string | null {
   if (item.marketplaceKey !== "ebay") return "Promotion is eBay-only in v1.";
   if (item.decisionStatus !== "APPROVED") return "Candidate must remain APPROVED.";
   if (!item.listingEligible) return "Candidate is not listing eligible.";
+  if (item.duplicateDetected) return item.duplicateReason || "Duplicate listing conflict detected.";
   if (item.listingStatus !== LISTING_STATUSES.PREVIEW) return "Only PREVIEW status can be promoted.";
   if (item.previewStatus !== "PREPARED") return "Preview data is incomplete.";
   return null;
@@ -177,6 +178,7 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                         "listing eligible",
                         "preview status",
                         "listing status",
+                        "duplicate",
                       ].map((h) => <th key={h} className="border-b border-white/10 px-3 py-2 text-left text-[11px] uppercase tracking-[0.16em] text-white/55">{h}</th>)}
                     </tr>
                   </thead>
@@ -197,6 +199,13 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                           <td className="border-b border-white/5 px-3 py-3">{row.listingEligible ? "YES" : "NO"}</td>
                           <td className="border-b border-white/5 px-3 py-3">{previewBadge(row)}</td>
                           <td className="border-b border-white/5 px-3 py-3">{row.listingStatus ?? "-"}</td>
+                          <td className="border-b border-white/5 px-3 py-3">
+                            {row.duplicateDetected ? (
+                              <span className="text-rose-200">{row.duplicateReason ?? "YES"}</span>
+                            ) : (
+                              <span className="text-emerald-200">NO</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -224,6 +233,7 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Approved by" value={detail.item.approvedBy ?? "-"} />
                     <KeyValue label="Listing eligible" value={detail.item.listingEligible ? "YES" : "NO"} />
                     <KeyValue label="Eligibility reasons" value={detail.item.listingEligibilityReasons.length ? detail.item.listingEligibilityReasons.join("; ") : "Passed"} />
+                    <KeyValue label="Duplicate warning" value={detail.item.duplicateDetected ? (detail.item.duplicateReason ?? "YES") : "NO"} />
                     <KeyValue label="Preview readiness" value={detail.item.previewStatus} />
                     <KeyValue label="Missing fields" value={detail.item.previewMissingFields.length ? detail.item.previewMissingFields.join(", ") : "None"} />
                     <KeyValue label="Latest listing row" value={detail.item.listingId ? `${detail.item.listingId} (${detail.item.listingStatus ?? "-"})` : "None"} />

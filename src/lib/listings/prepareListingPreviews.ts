@@ -4,6 +4,10 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { listings, marketplacePrices, matches, productsRaw, profitableCandidates } from "@/lib/db/schema";
 import { buildListingPreview } from "./build_listing_preview";
 import { buildListingPreviewIdempotencyKey } from "./idempotency";
+import {
+  findListingDuplicatesForCandidate,
+  getDuplicateBlockDecision,
+} from "./duplicateProtection";
 import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
 
@@ -320,6 +324,37 @@ async function processCandidatePreviewRows(
           marketplaceKey: context.marketplace,
           idempotencyKey,
           errors: validation.errors,
+          source: context.source,
+        },
+      });
+      continue;
+    }
+
+    const duplicateMatches = await findListingDuplicatesForCandidate({
+      marketplaceKey: context.marketplace,
+      supplierKey: row.supplierKey,
+      supplierProductId: row.supplierProductId,
+      listingTitle: preview.title,
+      excludeListingId:
+        existingPreview.length && context.forceRefresh ? existingPreview[0].id : null,
+    });
+    const duplicateDecision = getDuplicateBlockDecision(duplicateMatches);
+
+    if (duplicateDecision.blocked) {
+      skipped++;
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: duplicateDecision.blockingListingId ?? (existingPreview[0]?.id ?? row.candidateId),
+        eventType: "LISTING_PREVIEW_BLOCKED_DUPLICATE",
+        details: {
+          candidateId: row.candidateId,
+          listingId: existingPreview[0]?.id ?? null,
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          duplicateReason: duplicateDecision.reason,
+          duplicateListingIds: duplicateDecision.duplicateListingIds,
           source: context.source,
         },
       });
