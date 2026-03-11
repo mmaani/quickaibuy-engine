@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import RefreshButton from "@/app/_components/RefreshButton";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
+import { getManualOverrideSnapshot, setManualOverride, type ManualOverrideKey } from "@/lib/control/manualOverrides";
 import { db } from "@/lib/db";
 import { handleMarketplaceScanJob } from "@/lib/jobs/marketplaceScan";
 import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
@@ -14,7 +15,11 @@ import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutio
 import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
 import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
 import { runProfitEngine } from "@/lib/profit/profitEngine";
-import { isAuthorizedReviewAuthorizationHeader, isReviewConsoleConfigured } from "@/lib/review/auth";
+import {
+  getReviewActorIdFromAuthorizationHeader,
+  isAuthorizedReviewAuthorizationHeader,
+  isReviewConsoleConfigured,
+} from "@/lib/review/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,11 +36,12 @@ function one(value: string | string[] | undefined): string | null {
   return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
 }
 
-async function requireAdmin() {
+async function requireAdmin(): Promise<string> {
   const auth = (await headers()).get("authorization");
   if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(auth)) {
     redirect("/admin/review");
   }
+  return getReviewActorIdFromAuthorizationHeader(auth) ?? "admin";
 }
 
 function asCell(value: unknown): string {
@@ -62,10 +68,7 @@ function DataTable({ rows, empty }: { rows: Array<Record<string, unknown>>; empt
         <thead>
           <tr>
             {cols.map((col) => (
-              <th
-                key={col}
-                className="border-b border-white/10 bg-[#121824] px-3 py-2 text-left text-xs uppercase tracking-[0.14em] text-white/60"
-              >
+              <th key={col} className="border-b border-white/10 bg-[#121824] px-3 py-2 text-left text-xs uppercase tracking-[0.14em] text-white/60">
                 {col}
               </th>
             ))}
@@ -105,10 +108,34 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>): string | null {
+  if (!snapshot.available) return "Manual override store unavailable. Actions blocked for safety.";
+  if (snapshot.entries.EMERGENCY_READ_ONLY.enabled) return "Emergency read-only mode is active.";
+  if (
+    snapshot.entries.PAUSE_PUBLISHING.enabled &&
+    (action === "promote" || action === "dry-run" || action === "monitor" || action === "prepare")
+  ) {
+    return "Publishing is paused.";
+  }
+  if (snapshot.entries.PAUSE_MARKETPLACE_SCAN.enabled && action === "scan") {
+    return "Marketplace scan is paused.";
+  }
+  if (snapshot.entries.PAUSE_ORDER_SYNC.enabled && action === "order-sync") {
+    return "Order sync is paused.";
+  }
+  return null;
+}
+
 async function runAction(action: string) {
   "use server";
 
-  await requireAdmin();
+  const actorId = await requireAdmin();
+  const overrideSnapshot = await getManualOverrideSnapshot();
+  const reason = blockedReason(action, overrideSnapshot);
+  if (reason) {
+    redirect(`/admin/control?actionError=${encodeURIComponent(reason)}`);
+  }
+
   let message = "Action completed.";
 
   if (action === "supplier") {
@@ -141,7 +168,7 @@ async function runAction(action: string) {
       const out = await markListingReadyToPublish({
         listingId: row.id,
         actorType: "ADMIN",
-        actorId: "control-panel",
+        actorId,
       });
       if (out.ok) promoted++;
       else blocked++;
@@ -152,7 +179,7 @@ async function runAction(action: string) {
     const candidates = await getListingExecutionCandidates({ limit: 20, marketplace: "ebay" });
     await writeAuditLog({
       actorType: "ADMIN",
-      actorId: "control-panel",
+      actorId,
       entityType: "PIPELINE",
       entityId: "listing-execution-dry-run",
       eventType: "LISTING_EXECUTION_DRY_RUN_OK",
@@ -169,7 +196,7 @@ async function runAction(action: string) {
     `);
     await writeAuditLog({
       actorType: "ADMIN",
-      actorId: "control-panel",
+      actorId,
       entityType: "PIPELINE",
       entityId: "listing-monitor",
       eventType: "LISTING_MONITOR_RUN",
@@ -182,7 +209,7 @@ async function runAction(action: string) {
 
   await writeAuditLog({
     actorType: "ADMIN",
-    actorId: "control-panel",
+    actorId,
     entityType: "PIPELINE",
     entityId: "admin-control",
     eventType: "CONTROL_PANEL_ACTION_TRIGGERED",
@@ -192,11 +219,40 @@ async function runAction(action: string) {
   redirect(`/admin/control?actionMessage=${encodeURIComponent(message)}`);
 }
 
+async function runOverrideAction(formData: FormData) {
+  "use server";
+
+  const actorId = await requireAdmin();
+  const key = String(formData.get("controlKey") ?? "").trim() as ManualOverrideKey;
+  const enabled = String(formData.get("enabled") ?? "false") === "true";
+  const note = String(formData.get("note") ?? "").trim();
+
+  try {
+    await setManualOverride({ key, enabled, note: note || null, actorId });
+    redirect(`/admin/control?actionMessage=${encodeURIComponent(`${key} set to ${enabled ? "ON" : "OFF"}.`)}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    redirect(`/admin/control?actionError=${encodeURIComponent(msg)}`);
+  }
+}
+
 export default async function ControlPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   await requireAdmin();
   const resolvedSearchParams = await searchParams;
   const data = await getControlPanelData();
   const message = one(resolvedSearchParams?.actionMessage);
+  const actionError = one(resolvedSearchParams?.actionError);
+
+  const quickActions: Array<{ key: string; label: string }> = [
+    { key: "supplier", label: "Run supplier discover" },
+    { key: "match", label: "Run matching" },
+    { key: "scan", label: "Run marketplace scan" },
+    { key: "profit", label: "Run profit engine" },
+    { key: "prepare", label: "Prepare listing previews" },
+    { key: "promote", label: "Promote listing previews ready" },
+    { key: "dry-run", label: "Run listing execution dry-run" },
+    { key: "monitor", label: "Run listing monitor" },
+  ];
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -206,8 +262,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <div>
               <h1 className="m-0 text-3xl font-bold">Operational Control Panel</h1>
               <p className="mt-2 text-sm text-white/65">
-                Official v1 operations console. Use this for health, alerts, and safe operational actions;
-                use <code>/admin/review</code> for approval decisions.
+                Official v1 operations console. Use this for health, alerts, and safe operational actions; use <code>/admin/review</code> for approval decisions.
               </p>
               <p className="mt-2 text-xs text-white/45">Generated at: {data.generatedAt}</p>
             </div>
@@ -217,7 +272,48 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           {message ? (
             <div className="mt-3 rounded-xl border border-cyan-300/30 bg-cyan-500/10 p-3 text-sm">{message}</div>
           ) : null}
+          {actionError ? (
+            <div className="mt-3 rounded-xl border border-rose-300/30 bg-rose-500/10 p-3 text-sm text-rose-100">{actionError}</div>
+          ) : null}
         </header>
+
+        <Section title="Manual Override / Safety Controls">
+          {!data.manualOverrides.available ? (
+            <div className="mb-3 rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-sm text-rose-100">
+              Manual override store is unavailable. State-changing actions are blocked for safety.
+            </div>
+          ) : null}
+          {data.manualOverrides.activeCount > 0 ? (
+            <div className="mb-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-sm text-amber-100">
+              Active overrides: {data.manualOverrides.activeCount}. Emergency mode is read-only by design.
+            </div>
+          ) : null}
+          <div className="grid gap-3 md:grid-cols-2">
+            {data.manualOverrides.entries.map((entry) => (
+              <form key={entry.key} action={runOverrideAction} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                <input type="hidden" name="controlKey" value={entry.key} />
+                <div className="text-sm font-semibold">{entry.key}</div>
+                <div className="mt-2 text-xs text-white/60">State: {entry.enabled ? "ON" : "OFF"}</div>
+                <div className="text-xs text-white/60">Last changed: {entry.changedAt ?? "-"}</div>
+                <div className="text-xs text-white/60">Last changed by: {entry.changedBy ?? "-"}</div>
+                <textarea name="note" className="contact-input mt-3 min-h-[72px]" placeholder="Optional incident note" defaultValue={entry.note ?? ""} />
+                <div className="mt-3 flex gap-2">
+                  <button name="enabled" value="true" className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-100">
+                    Turn ON
+                  </button>
+                  <button name="enabled" value="false" className="rounded-xl border border-emerald-300/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100">
+                    Turn OFF
+                  </button>
+                </div>
+              </form>
+            ))}
+          </div>
+          <div className="mt-3 space-y-1 text-xs text-white/55">
+            {data.manualOverrides.limitations.map((line) => (
+              <div key={line}>- {line}</div>
+            ))}
+          </div>
+        </Section>
 
         <Section title="Publishing Safety (Priority)">
           <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
@@ -239,16 +335,6 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
               value={`${data.publishingSafety.publishRateLimit.limits.limit15m} / ${data.publishingSafety.publishRateLimit.limits.limit1h} / ${data.publishingSafety.publishRateLimit.limits.limit1d}`}
             />
           </div>
-          {data.publishingSafety.priceGuardSummary.hasPartialData ? (
-            <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-xs text-amber-100">
-              Price Guard summary is partial because profitable_candidates data is unavailable.
-            </div>
-          ) : null}
-          {data.publishingSafety.publishRateLimit.retryHint ? (
-            <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-xs text-amber-100">
-              Rate-limit hint: {data.publishingSafety.publishRateLimit.retryHint}
-            </div>
-          ) : null}
         </Section>
 
         <Section title="Listing Throughput">
@@ -278,51 +364,9 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
 
         <Section title="Alerts">
           <div className="grid gap-4 lg:grid-cols-3">
-            <div className="rounded-2xl border border-rose-300/35 bg-rose-500/10 p-3">
-              <div className="mb-2 text-sm font-semibold">Publishing Safety</div>
-              {data.prioritizedAlerts.publishingSafety.length ? (
-                <div className="space-y-2">
-                  {data.prioritizedAlerts.publishingSafety.map((alert) => (
-                    <div key={alert.id} className="rounded-xl border border-white/15 bg-black/15 p-2 text-xs">
-                      <div className="font-semibold">{alert.title}</div>
-                      <div className="text-white/75">{alert.detail}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-white/70">No publishing safety alerts.</div>
-              )}
-            </div>
-            <div className="rounded-2xl border border-amber-300/35 bg-amber-500/10 p-3">
-              <div className="mb-2 text-sm font-semibold">Operational Freshness</div>
-              {data.prioritizedAlerts.operationalFreshness.length ? (
-                <div className="space-y-2">
-                  {data.prioritizedAlerts.operationalFreshness.map((alert) => (
-                    <div key={alert.id} className="rounded-xl border border-white/15 bg-black/15 p-2 text-xs">
-                      <div className="font-semibold">{alert.title}</div>
-                      <div className="text-white/75">{alert.detail}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-white/70">No operational freshness alerts.</div>
-              )}
-            </div>
-            <div className="rounded-2xl border border-white/15 bg-white/[0.04] p-3">
-              <div className="mb-2 text-sm font-semibold">Future Orders Placeholder</div>
-              {data.prioritizedAlerts.futureOrders.length ? (
-                <div className="space-y-2">
-                  {data.prioritizedAlerts.futureOrders.map((alert) => (
-                    <div key={alert.id} className="rounded-xl border border-white/15 bg-black/15 p-2 text-xs">
-                      <div className="font-semibold">{alert.title}</div>
-                      <div className="text-white/75">{alert.detail}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-white/70">No future-order alerts.</div>
-              )}
-            </div>
+            <DataTable rows={data.prioritizedAlerts.publishingSafety} empty="No publishing safety alerts." />
+            <DataTable rows={data.prioritizedAlerts.operationalFreshness} empty="No operational freshness alerts." />
+            <DataTable rows={data.prioritizedAlerts.futureOrders} empty="No future-order alerts." />
           </div>
         </Section>
 
@@ -340,160 +384,42 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           ) : null}
         </Section>
 
-        <Section title="Pipeline Overview">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {data.pipelineOverview.counts.map((item) => (
-              <StatCard
-                key={item.table}
-                label={item.optional ? `${item.table} (optional)` : item.table}
-                value={item.exists ? (item.count ?? "null") : "missing"}
-              />
-            ))}
-          </div>
-          <div className="mt-4">
-            <DataTable rows={data.pipelineOverview.listingStatuses} empty="Listings table missing or empty." />
-          </div>
-        </Section>
-
-        <Section title="Supplier Discovery Health">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <DataTable rows={data.supplierDiscoveryHealth.bySupplier} empty="No products_raw supplier counts available." />
-            <DataTable
-              rows={data.supplierDiscoveryHealth.freshnessBySupplier}
-              empty="Supplier freshness unavailable (snapshot_ts missing or table unavailable)."
-            />
-          </div>
-          <p className="mt-3 text-xs text-white/60">v1 supplier focus: Alibaba, AliExpress, Temu.</p>
-        </Section>
-
-        <Section title="Match Quality">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="total matches" value={data.matchQuality.totalMatches ?? "-"} />
-            <StatCard label="active matches" value={data.matchQuality.activeMatches ?? "n/a"} />
-            <StatCard label="low-confidence warnings" value={data.matchQuality.lowConfidenceCount ?? "n/a"} />
-          </div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <DataTable rows={data.matchQuality.confidenceDistribution} empty="Confidence distribution unavailable." />
-            <DataTable rows={data.matchQuality.weakOrDuplicateIndicators} empty="No weak or duplicate-match indicators." />
-          </div>
-        </Section>
-
-        <Section title="Marketplace Scan Health">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <StatCard label="total eBay prices" value={data.marketplaceScanHealth.totalEbayPrices ?? "-"} />
-            <StatCard label="latest eBay scan" value={data.marketplaceScanHealth.latestEbayScanTs ?? "-"} />
-            <StatCard label="eBay prices in last 24h" value={data.marketplaceScanHealth.recentEbayPrices24h ?? "-"} />
-          </div>
-        </Section>
-
-        <Section title="Profit Engine Stats">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="total candidates" value={data.profitEngineStats.totalCandidates ?? "-"} />
-            <StatCard label="approved" value={data.profitEngineStats.approved ?? "-"} />
-            <StatCard label="rejected" value={data.profitEngineStats.rejected ?? "-"} />
-            <StatCard label="pending review" value={data.profitEngineStats.pendingReview ?? "-"} />
-            <StatCard label="avg estimated_profit" value={data.profitEngineStats.avgEstimatedProfit ?? "-"} />
-            <StatCard label="avg margin_pct" value={data.profitEngineStats.avgMarginPct ?? "-"} />
-            <StatCard label="avg roi_pct" value={data.profitEngineStats.avgRoiPct ?? "-"} />
-          </div>
-          <div className="mt-4">
-            <DataTable rows={data.profitEngineStats.topCandidates} empty="No profitable candidates available." />
-          </div>
-        </Section>
-
-        <Section title="Review Queue">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="pending review" value={data.reviewQueue.pendingReview ?? "-"} />
-            <StatCard label="approved" value={data.reviewQueue.approved ?? "-"} />
-            <StatCard label="rejected" value={data.reviewQueue.rejected ?? "-"} />
-            <StatCard label="oldest pending calc_ts" value={data.reviewQueue.oldestPendingCalcTs ?? "-"} />
-          </div>
-          <div className="mt-3">
-            <Link href="/admin/review" className="inline-block rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm">
-              Open /admin/review for approval decisions
-            </Link>
-          </div>
-        </Section>
-
-        <Section title="Listing Lifecycle">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="ready-to-publish backlog" value={data.listingLifecycle.readyToPublishBacklog ?? "-"} />
-            <StatCard label="publish attempts (24h)" value={data.listingLifecycle.publishAttempts24h ?? "n/a"} />
-            <StatCard label="daily cap used" value={data.listingLifecycle.dailyCap.capUsed ?? "-"} />
-            <StatCard label="daily cap remaining" value={data.listingLifecycle.dailyCap.capRemaining ?? "-"} />
-            <StatCard label="rate limit allowed" value={data.listingLifecycle.publishRateLimit.allowed ? "yes" : "no"} />
-            <StatCard label="rate limit blocking window" value={data.listingLifecycle.publishRateLimit.blockingWindow} />
-            <StatCard
-              label="attempts 15m / 1h / 1d"
-              value={`${data.listingLifecycle.publishRateLimit.counts.attempts15m} / ${data.listingLifecycle.publishRateLimit.counts.attempts1h} / ${data.listingLifecycle.publishRateLimit.counts.attempts1d}`}
-            />
-            <StatCard
-              label="limits 15m / 1h / 1d"
-              value={`${data.listingLifecycle.publishRateLimit.limits.limit15m} / ${data.listingLifecycle.publishRateLimit.limits.limit1h} / ${data.listingLifecycle.publishRateLimit.limits.limit1d}`}
-            />
-          </div>
-          {data.listingLifecycle.publishRateLimit.retryHint ? (
-            <div className="mt-3 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-xs text-amber-100">
-              Rate-limit hint: {data.listingLifecycle.publishRateLimit.retryHint}
-            </div>
-          ) : null}
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <DataTable rows={data.listingLifecycle.statusCounts} empty="No listing lifecycle rows." />
-            <DataTable rows={data.listingLifecycle.publishFailures} empty="No PUBLISH_FAILED rows." />
-          </div>
-        </Section>
-
-        <Section title="Worker / Queue Health">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="DB reachable" value={data.health.db.status} />
-            <StatCard label="Queue reachable" value={data.health.queue.status} />
-            <StatCard label="recent worker activity" value={data.workerQueueHealth.recentWorkerActivityTs ?? "none"} />
-            <StatCard label="recent job failures" value={data.workerQueueHealth.recentJobFailures.length} />
-          </div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <DataTable rows={data.workerQueueHealth.recentWorkerRuns} empty="worker_runs unavailable or empty." />
-            <DataTable rows={data.workerQueueHealth.recentJobs} empty="jobs unavailable or empty." />
-          </div>
-        </Section>
-
-        <Section title="Alerts / Failures">
-          {data.alerts.length ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {data.alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className={`rounded-2xl border p-3 ${
-                    alert.tone === "error" ? "border-rose-300/35 bg-rose-400/10" : "border-amber-300/35 bg-amber-400/10"
-                  }`}
-                >
-                  <div className="font-semibold">{alert.title}</div>
-                  <div className="text-xs text-white/70">{alert.detail}</div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 p-3 text-sm">No active alerts.</div>
-          )}
-        </Section>
-
         <Section title="Quick Actions">
           <div className="rounded-xl border border-amber-300/30 bg-amber-400/10 p-3 text-xs text-amber-100">
             Listing execution-related actions are eBay-only and preserve review gate constraints.
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <form action={runAction.bind(null, "supplier")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run supplier discover</button></form>
-            <form action={runAction.bind(null, "match")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run matching</button></form>
-            <form action={runAction.bind(null, "scan")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run marketplace scan</button></form>
-            <form action={runAction.bind(null, "profit")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run profit engine</button></form>
-            <form action={runAction.bind(null, "prepare")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Prepare listing previews</button></form>
-            <form action={runAction.bind(null, "promote")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Promote listing previews ready</button></form>
-            <form action={runAction.bind(null, "dry-run")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run listing execution dry-run</button></form>
-            <form action={runAction.bind(null, "monitor")}><button className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm">Run listing monitor</button></form>
+            {quickActions.map((item) => {
+              const reason = blockedReason(item.key, {
+                available: data.manualOverrides.available,
+                activeCount: data.manualOverrides.activeCount,
+                emergencyReadOnly: data.manualOverrides.emergencyReadOnly,
+                limitations: data.manualOverrides.limitations,
+                entries: data.manualOverrides.entries.reduce((acc, entry) => {
+                  acc[entry.key as ManualOverrideKey] = {
+                    key: entry.key as ManualOverrideKey,
+                    enabled: entry.enabled,
+                    note: entry.note,
+                    changedBy: entry.changedBy,
+                    changedAt: entry.changedAt,
+                  };
+                  return acc;
+                }, {} as Awaited<ReturnType<typeof getManualOverrideSnapshot>>["entries"]),
+              });
+              return (
+                <form key={item.key} action={runAction.bind(null, item.key)}>
+                  <button disabled={Boolean(reason)} className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50">
+                    {item.label}
+                    {reason ? <div className="mt-1 text-[11px] text-amber-200">{reason}</div> : null}
+                  </button>
+                </form>
+              );
+            })}
           </div>
-          <div className="mt-3">
-            <Link href="/admin/review" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
-              Open /admin/review
-            </Link>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/admin/review" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/review</Link>
+            <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/listings</Link>
+            <Link href="/admin/orders" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/orders</Link>
           </div>
         </Section>
       </div>

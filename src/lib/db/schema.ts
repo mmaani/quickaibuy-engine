@@ -442,6 +442,25 @@ export const supplierOrders = pgTable(
   })
 );
 
+export const manualOverrides = pgTable(
+  "manual_overrides",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    controlKey: text("control_key").notNull(),
+    isEnabled: boolean("is_enabled").notNull().default(false),
+    note: text("note"),
+    changedBy: text("changed_by"),
+    changedAt: timestamp("changed_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    manualOverridesControlKeyUnique: uniqueIndex("manual_overrides_control_key_unique").on(
+      t.controlKey
+    ),
+    manualOverridesChangedAtIdx: index("manual_overrides_changed_at_idx").on(t.changedAt),
+  })
+);
+
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderInsert = typeof orders.$inferInsert;
 export type OrderItemRow = typeof orderItems.$inferSelect;
@@ -450,3 +469,5 @@ export type OrderEventRow = typeof orderEvents.$inferSelect;
 export type OrderEventInsert = typeof orderEvents.$inferInsert;
 export type SupplierOrderRow = typeof supplierOrders.$inferSelect;
 export type SupplierOrderInsert = typeof supplierOrders.$inferInsert;
+export type ManualOverrideRow = typeof manualOverrides.$inferSelect;
+export type ManualOverrideInsert = typeof manualOverrides.$inferInsert;

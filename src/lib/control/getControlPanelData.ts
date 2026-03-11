@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobNames";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
+import { getManualOverrideSnapshot } from "./manualOverrides";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -138,6 +139,19 @@ export type ControlPanelData = {
     publishingSafety: Array<{ id: string; tone: "warning" | "error"; title: string; detail: string }>;
     operationalFreshness: Array<{ id: string; tone: "warning" | "error"; title: string; detail: string }>;
     futureOrders: Array<{ id: string; tone: "warning" | "error"; title: string; detail: string }>;
+  };
+  manualOverrides: {
+    available: boolean;
+    entries: Array<{
+      key: string;
+      enabled: boolean;
+      note: string | null;
+      changedBy: string | null;
+      changedAt: string | null;
+    }>;
+    activeCount: number;
+    emergencyReadOnly: boolean;
+    limitations: string[];
   };
   alerts: Array<{ id: string; tone: "warning" | "error"; title: string; detail: string }>;
 };
@@ -280,6 +294,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     workerRunsExists,
     jobsExists,
     auditExists,
+    manualOverrideSnapshot,
   ] = await Promise.all([
     getDbHealth(),
     runtimeQueueProbeEnabled
@@ -301,6 +316,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     tableExists("worker_runs"),
     tableExists("jobs"),
     tableExists("audit_log"),
+    getManualOverrideSnapshot(),
   ]);
 
   const pipelineCounts = await Promise.all([
@@ -726,6 +742,15 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     });
   }
 
+  if (manualOverrideSnapshot.entries.PAUSE_PUBLISHING.enabled) {
+    publishingSafetyAlerts.push({
+      id: "override-pause-publishing",
+      tone: "warning",
+      title: "Publishing is manually paused",
+      detail: "Operator override is active: publish-related actions are blocked in admin control.",
+    });
+  }
+
   if (listingDailyCapsExists && capRemaining === 0) {
     publishingSafetyAlerts.push({
       id: "daily-cap-exhausted",
@@ -759,6 +784,33 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       tone: "error",
       title: "Stale marketplace data",
       detail: "No marketplace_prices rows for eBay in the last 24h.",
+    });
+  }
+
+  if (manualOverrideSnapshot.entries.PAUSE_MARKETPLACE_SCAN.enabled) {
+    operationalFreshnessAlerts.push({
+      id: "override-pause-marketplace-scan",
+      tone: "warning",
+      title: "Marketplace scan is manually paused",
+      detail: "Operator override is active: scan actions are blocked in admin control.",
+    });
+  }
+
+  if (manualOverrideSnapshot.entries.PAUSE_ORDER_SYNC.enabled) {
+    operationalFreshnessAlerts.push({
+      id: "override-pause-order-sync",
+      tone: "warning",
+      title: "Order sync is manually paused",
+      detail: "Operator override is active: order-sync actions should remain paused.",
+    });
+  }
+
+  if (manualOverrideSnapshot.emergencyReadOnly) {
+    publishingSafetyAlerts.push({
+      id: "override-emergency-read-only",
+      tone: "error",
+      title: "Emergency read-only mode is active",
+      detail: "State-changing admin actions are blocked until emergency mode is turned off.",
     });
   }
 
@@ -965,6 +1017,13 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       publishingSafety: publishingSafetyAlerts,
       operationalFreshness: operationalFreshnessAlerts,
       futureOrders: futureOrdersAlerts,
+    },
+    manualOverrides: {
+      available: manualOverrideSnapshot.available,
+      entries: Object.values(manualOverrideSnapshot.entries),
+      activeCount: manualOverrideSnapshot.activeCount,
+      emergencyReadOnly: manualOverrideSnapshot.emergencyReadOnly,
+      limitations: manualOverrideSnapshot.limitations,
     },
     alerts,
   };
