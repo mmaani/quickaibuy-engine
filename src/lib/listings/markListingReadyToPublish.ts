@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
+import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 
 export type MarkListingReadyInput = {
   listingId: string;
@@ -119,11 +120,33 @@ export async function markListingReadyToPublish(
   const staleSupplierSnapshot =
     supplierSnapshotAgeHours != null &&
     supplierSnapshotAgeHours > SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS;
+  const staleMarketplaceSnapshot = priceGuard.reasons.includes("STALE_MARKETPLACE_SNAPSHOT");
   const failClosed =
     !priceGuard.allow || !driftMetricAvailable || !supplierSnapshotAgeAvailable;
 
   let supplierRefreshJobId: string | null = null;
   let supplierRefreshError: string | null = null;
+  let marketplaceRefreshJobId: string | null = null;
+  let marketplaceRefreshError: string | null = null;
+  if (staleMarketplaceSnapshot) {
+    try {
+      const candidateLookup = await db.execute<{ supplierSnapshotId: string | null }>(sql`
+        SELECT supplier_snapshot_id AS "supplierSnapshotId"
+        FROM profitable_candidates
+        WHERE id = ${candidateId}
+        LIMIT 1
+      `);
+      const supplierSnapshotId = String(candidateLookup.rows?.[0]?.supplierSnapshotId ?? "").trim();
+      const refreshJob = await enqueueMarketplacePriceScan({
+        limit: 25,
+        productRawId: supplierSnapshotId || undefined,
+        platform: "ebay",
+      });
+      marketplaceRefreshJobId = String(refreshJob.id ?? "");
+    } catch (error) {
+      marketplaceRefreshError = error instanceof Error ? error.message : String(error);
+    }
+  }
   if (staleSupplierSnapshot) {
     try {
       const refreshJob = await enqueueSupplierDiscoverRefresh({
@@ -155,6 +178,87 @@ export async function markListingReadyToPublish(
         listing_eligible_ts = NOW()
       WHERE id = ${candidateId}
     `);
+
+    if (priceGuard.reasons.includes("STALE_MARKETPLACE_SNAPSHOT")) {
+      await writeAuditLog({
+        actorType,
+        actorId,
+        entityType: "LISTING",
+        entityId: input.listingId,
+        eventType: "LISTING_BLOCKED_STALE_MARKETPLACE",
+        details: {
+          listingId: input.listingId,
+          candidateId,
+          marketplaceKey,
+          reasons,
+          marketplaceSnapshotAgeHours: priceGuard.metrics.marketplace_snapshot_age_hours,
+          maxMarketplaceSnapshotAgeHours: priceGuard.thresholds.maxMarketplaceSnapshotAgeHours,
+        },
+      });
+    }
+
+    if (
+      priceGuard.reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
+      priceGuard.reasons.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE") ||
+      priceGuard.reasons.includes("STALE_SUPPLIER_SNAPSHOT") ||
+      !driftMetricAvailable ||
+      !supplierSnapshotAgeAvailable
+    ) {
+      await writeAuditLog({
+        actorType,
+        actorId,
+        entityType: "LISTING",
+        entityId: input.listingId,
+        eventType: "LISTING_BLOCKED_SUPPLIER_DRIFT",
+        details: {
+          listingId: input.listingId,
+          candidateId,
+          marketplaceKey,
+          reasons,
+          supplierDriftPct: priceGuard.metrics.supplier_price_drift_pct,
+          supplierSnapshotAgeHours: priceGuard.metrics.supplier_snapshot_age_hours,
+          maxSupplierDriftPct: priceGuard.thresholds.maxSupplierDriftPct,
+          maxSupplierSnapshotAgeHours: priceGuard.thresholds.maxSupplierSnapshotAgeHours,
+        },
+      });
+    }
+
+    if (staleSupplierSnapshot) {
+      await writeAuditLog({
+        actorType,
+        actorId,
+        entityType: "LISTING",
+        entityId: input.listingId,
+        eventType: "LISTING_REFRESH_ENQUEUED_FOR_RECOVERY",
+        details: {
+          listingId: input.listingId,
+          candidateId,
+          marketplaceKey,
+          refreshType: "SUPPLIER_PRODUCT_REFRESH",
+          enqueued: supplierRefreshError == null,
+          jobId: supplierRefreshJobId,
+          error: supplierRefreshError,
+        },
+      });
+    }
+    if (staleMarketplaceSnapshot) {
+      await writeAuditLog({
+        actorType,
+        actorId,
+        entityType: "LISTING",
+        entityId: input.listingId,
+        eventType: "LISTING_REFRESH_ENQUEUED_FOR_RECOVERY",
+        details: {
+          listingId: input.listingId,
+          candidateId,
+          marketplaceKey,
+          refreshType: "MARKETPLACE_PRICE_SCAN",
+          enqueued: marketplaceRefreshError == null,
+          jobId: marketplaceRefreshJobId,
+          error: marketplaceRefreshError,
+        },
+      });
+    }
 
     return {
       ok: false,

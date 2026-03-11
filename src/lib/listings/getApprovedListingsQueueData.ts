@@ -74,6 +74,8 @@ export type QueueListItem = {
   duplicateDetected: boolean;
   duplicateReason: string | null;
   duplicateListingIds: string[];
+  recoveryState: "NONE" | "BLOCKED_STALE_OR_DRIFT" | "READY_FOR_REEVALUATION" | "READY_FOR_REPROMOTION";
+  recoveryNextAction: string;
 };
 
 export type QueueOverview = {
@@ -170,6 +172,30 @@ function evaluatePreviewReadiness(row: ListingQueueRow): {
 
 function mapQueueRow(row: ListingQueueRow): QueueListItem {
   const readiness = evaluatePreviewReadiness(row);
+  const blockReason = String(row.listing_block_reason ?? "").toUpperCase();
+  const hasRecoveryBlock =
+    blockReason.includes("STALE_MARKETPLACE") ||
+    blockReason.includes("STALE_SUPPLIER") ||
+    blockReason.includes("SUPPLIER_PRICE_DRIFT") ||
+    blockReason.includes("SUPPLIER_DRIFT");
+  const decisionStatus = String(row.decision_status ?? "").toUpperCase();
+  const listingStatus = String(row.listing_status ?? "").toUpperCase();
+  const recoveryState: QueueListItem["recoveryState"] = hasRecoveryBlock
+    ? "BLOCKED_STALE_OR_DRIFT"
+    : decisionStatus === "MANUAL_REVIEW" && !row.listing_eligible
+      ? "READY_FOR_REEVALUATION"
+      : decisionStatus === "APPROVED" && row.listing_eligible && listingStatus === LISTING_STATUSES.READY_TO_PUBLISH
+        ? "READY_FOR_REPROMOTION"
+        : "NONE";
+  const recoveryNextAction =
+    recoveryState === "BLOCKED_STALE_OR_DRIFT"
+      ? "Run re-evaluation after refresh completes."
+      : recoveryState === "READY_FOR_REEVALUATION"
+        ? "Run explicit re-evaluation."
+        : recoveryState === "READY_FOR_REPROMOTION"
+          ? "Execute guarded publish worker."
+          : "No recovery action required.";
+
   return {
     id: row.id,
     supplierKey: row.supplier_key,
@@ -198,6 +224,8 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     duplicateDetected: Boolean(row.duplicate_detected),
     duplicateReason: row.duplicate_reason ?? null,
     duplicateListingIds: row.duplicate_listing_ids ?? [],
+    recoveryState,
+    recoveryNextAction,
   };
 }
 
@@ -291,7 +319,17 @@ export async function getListingsQueueOverview(): Promise<QueueOverview> {
 
 export async function getApprovedQueueItems(filters: ListingsQueueFilters): Promise<QueueListItem[]> {
   const values: unknown[] = [];
-  const conditions: string[] = ["pc.decision_status = 'APPROVED'"];
+  const conditions: string[] = [
+    `(
+      pc.decision_status = 'APPROVED'
+      OR (
+        upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_MARKETPLACE%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_SUPPLIER%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER_PRICE_DRIFT%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER_DRIFT%'
+      )
+    )`,
+  ];
 
   if (filters.candidateId) {
     values.push(filters.candidateId);

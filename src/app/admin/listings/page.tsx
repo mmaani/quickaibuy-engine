@@ -177,9 +177,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                         "decision_status",
                         "listing eligible",
                         "preview status",
-                        "listing status",
-                        "duplicate",
-                      ].map((h) => <th key={h} className="border-b border-white/10 px-3 py-2 text-left text-[11px] uppercase tracking-[0.16em] text-white/55">{h}</th>)}
+                      "listing status",
+                      "recovery",
+                      "duplicate",
+                    ].map((h) => <th key={h} className="border-b border-white/10 px-3 py-2 text-left text-[11px] uppercase tracking-[0.16em] text-white/55">{h}</th>)}
                     </tr>
                   </thead>
                   <tbody>
@@ -199,6 +200,13 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                           <td className="border-b border-white/5 px-3 py-3">{row.listingEligible ? "YES" : "NO"}</td>
                           <td className="border-b border-white/5 px-3 py-3">{previewBadge(row)}</td>
                           <td className="border-b border-white/5 px-3 py-3">{row.listingStatus ?? "-"}</td>
+                          <td className="border-b border-white/5 px-3 py-3">
+                            {row.recoveryState !== "NONE" ? (
+                              <span className="text-amber-100">{row.recoveryState}</span>
+                            ) : (
+                              <span className="text-white/55">-</span>
+                            )}
+                          </td>
                           <td className="border-b border-white/5 px-3 py-3">
                             {row.duplicateDetected ? (
                               <span className="text-rose-200">{row.duplicateReason ?? "YES"}</span>
@@ -233,6 +241,8 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Approved by" value={detail.item.approvedBy ?? "-"} />
                     <KeyValue label="Listing eligible" value={detail.item.listingEligible ? "YES" : "NO"} />
                     <KeyValue label="Eligibility reasons" value={detail.item.listingEligibilityReasons.length ? detail.item.listingEligibilityReasons.join("; ") : "Passed"} />
+                    <KeyValue label="Recovery state" value={detail.item.recoveryState} />
+                    <KeyValue label="Recovery next action" value={detail.item.recoveryNextAction} />
                     <KeyValue label="Duplicate warning" value={detail.item.duplicateDetected ? (detail.item.duplicateReason ?? "YES") : "NO"} />
                     <KeyValue label="Preview readiness" value={detail.item.previewStatus} />
                     <KeyValue label="Missing fields" value={detail.item.previewMissingFields.length ? detail.item.previewMissingFields.join(", ") : "None"} />
@@ -252,6 +262,22 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                         <input type="hidden" name="forceRefresh" value={detail.item.listingId ? "true" : "false"} />
                         <button type="submit" className="rounded-2xl border border-cyan-300/30 bg-cyan-400/12 px-4 py-2 text-sm font-semibold text-cyan-100">{detail.item.listingId ? "Refresh Preview" : "Prepare Preview"}</button>
                       </form>
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Re-evaluate recovery</div>
+                      <form action="/api/admin/listings/re-evaluate" method="post">
+                        <input type="hidden" name="candidateId" value={detail.item.id} />
+                        <input type="hidden" name="listingId" value={detail.item.listingId ?? ""} />
+                        <button
+                          type="submit"
+                          disabled={!detail.item.listingId}
+                          className="rounded-2xl border border-amber-300/30 bg-amber-400/12 px-4 py-2 text-sm font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Re-evaluate recovery state
+                        </button>
+                      </form>
+                      {!detail.item.listingId ? <div className="mt-2 text-xs text-amber-100">Disabled: listing row required.</div> : null}
                     </div>
 
                     <div>

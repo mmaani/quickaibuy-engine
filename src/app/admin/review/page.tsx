@@ -371,6 +371,27 @@ function ReviewActions({ candidate }: { candidate: CandidateDetail["candidate"] 
           </div>
         )}
       </div>
+
+      <div className="mt-5 border-t border-white/10 pt-4">
+        <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Recovery</div>
+        <div className="mb-3 text-sm text-white/75">{candidate.recoveryState} - {candidate.recoveryNextAction}</div>
+        {candidate.listingId ? (
+          <form action="/api/admin/listings/re-evaluate" method="post">
+            <input type="hidden" name="candidateId" value={candidate.id} />
+            <input type="hidden" name="listingId" value={candidate.listingId} />
+            <button
+              type="submit"
+              className="rounded-2xl border border-amber-300/30 bg-amber-400/12 px-4 py-2 text-sm font-semibold text-amber-100"
+            >
+              Re-evaluate Recovery State
+            </button>
+          </form>
+        ) : (
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/60">
+            No listing row yet for recovery re-evaluation.
+          </div>
+        )}
+      </div>
     </DetailBlock>
   );
 }
@@ -600,6 +621,9 @@ export default async function ReviewPage({
                       <KeyValue label="Listing ID" value={detail.candidate.listingId ?? "-"} />
                       <KeyValue label="Listing Title" value={detail.candidate.listingTitle ?? "-"} />
                       <KeyValue label="Listing Price" value={formatMoney(detail.candidate.listingPrice)} />
+                      <KeyValue label="Listing Block Reason" value={detail.candidate.listingBlockReason ?? "-"} />
+                      <KeyValue label="Recovery State" value={detail.candidate.recoveryState} />
+                      <KeyValue label="Recovery Next Action" value={detail.candidate.recoveryNextAction} />
                       <KeyValue label="supplier_price_drift_pct" value={formatPercent(detail.candidate.supplierPriceDriftPct)} />
                       <KeyValue label="supplier_snapshot_age_hours" value={formatHours(detail.candidate.supplierSnapshotAgeHours)} />
                     </div>

@@ -16,6 +16,18 @@ import { validateProfitSafety } from "@/lib/profit/priceGuard";
 // Supplier snapshot older than 48h must be refreshed before publish.
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 
+function hasSupplierDriftBlock(reasons: string[]): boolean {
+  return reasons.some((reason) =>
+    [
+      "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE",
+      "SUPPLIER_DRIFT_DATA_UNAVAILABLE",
+      "STALE_SUPPLIER_SNAPSHOT",
+      "SUPPLIER_DRIFT_DATA_REQUIRED",
+      "SUPPLIER_SNAPSHOT_AGE_REQUIRED",
+    ].includes(reason)
+  );
+}
+
 function isLivePublishEnabled(): boolean {
   return String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").toLowerCase() === "true";
 }
@@ -242,6 +254,46 @@ export async function runListingExecution(opts?: {
           actorId,
           entityType: "LISTING",
           entityId: listingId,
+          eventType: "LISTING_BLOCKED_STALE_MARKETPLACE",
+          details: {
+            listingId,
+            candidateId,
+            marketplaceKey,
+            listingIdFilter: listingIdFilter || null,
+            reasons,
+            marketplaceSnapshotAgeHours: priceGuard.metrics.marketplace_snapshot_age_hours,
+            maxMarketplaceSnapshotAgeHours: priceGuard.thresholds.maxMarketplaceSnapshotAgeHours,
+          },
+        });
+      }
+
+      if (hasSupplierDriftBlock(reasons)) {
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId,
+          entityType: "LISTING",
+          entityId: listingId,
+          eventType: "LISTING_BLOCKED_SUPPLIER_DRIFT",
+          details: {
+            listingId,
+            candidateId,
+            marketplaceKey,
+            listingIdFilter: listingIdFilter || null,
+            reasons,
+            supplierDriftPct: priceGuard.metrics.supplier_price_drift_pct,
+            supplierSnapshotAgeHours: priceGuard.metrics.supplier_snapshot_age_hours,
+            maxSupplierDriftPct: priceGuard.thresholds.maxSupplierDriftPct,
+            maxSupplierSnapshotAgeHours: priceGuard.thresholds.maxSupplierSnapshotAgeHours,
+          },
+        });
+      }
+
+      if (staleMarketplaceSnapshot) {
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId,
+          entityType: "LISTING",
+          entityId: listingId,
           eventType: marketplaceRefreshEnqueued
             ? "MARKETPLACE_REFRESH_ENQUEUED_STALE_SNAPSHOT"
             : "MARKETPLACE_REFRESH_ENQUEUE_FAILED_STALE_SNAPSHOT",
@@ -256,6 +308,23 @@ export async function runListingExecution(opts?: {
             marketplaceRefreshError,
           },
         });
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId,
+          entityType: "LISTING",
+          entityId: listingId,
+          eventType: "LISTING_REFRESH_ENQUEUED_FOR_RECOVERY",
+          details: {
+            listingId,
+            candidateId,
+            marketplaceKey,
+            listingIdFilter: listingIdFilter || null,
+            refreshType: "MARKETPLACE_PRICE_SCAN",
+            enqueued: marketplaceRefreshEnqueued,
+            jobId: marketplaceRefreshJobId,
+            error: marketplaceRefreshError,
+          },
+        });
       }
 
       if (staleMarketplaceSnapshot && marketplaceRefreshError) {
@@ -265,6 +334,25 @@ export async function runListingExecution(opts?: {
       if (staleSupplierSnapshot && supplierRefreshError) {
         failed++;
         continue;
+      }
+      if (staleSupplierSnapshot) {
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId,
+          entityType: "LISTING",
+          entityId: listingId,
+          eventType: "LISTING_REFRESH_ENQUEUED_FOR_RECOVERY",
+          details: {
+            listingId,
+            candidateId,
+            marketplaceKey,
+            listingIdFilter: listingIdFilter || null,
+            refreshType: "SUPPLIER_PRODUCT_REFRESH",
+            enqueued: supplierRefreshEnqueued,
+            jobId: supplierRefreshJobId,
+            error: supplierRefreshError,
+          },
+        });
       }
 
       skipped++;
