@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
+import { validateProfitSafety } from "@/lib/profit/priceGuard";
+import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 
 export type MarkListingReadyInput = {
   listingId: string;
@@ -22,6 +24,9 @@ function normalizeActorType(value?: string): "ADMIN" | "WORKER" | "SYSTEM" {
   if (value === "ADMIN" || value === "WORKER") return value;
   return "SYSTEM";
 }
+
+// Supplier snapshot older than 48h triggers refresh enqueue and blocks readiness.
+const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 
 export async function markListingReadyToPublish(
   input: MarkListingReadyInput
@@ -100,6 +105,68 @@ export async function markListingReadyToPublish(
       marketplaceKey,
       previousStatus,
       reason: "candidate is not listing eligible",
+    };
+  }
+
+  const priceGuard = await validateProfitSafety({
+    candidateId,
+    listingId: input.listingId,
+    mode: "publish",
+  });
+  const driftMetricAvailable = priceGuard.metrics.supplier_price_drift_pct != null;
+  const supplierSnapshotAgeHours = priceGuard.metrics.supplier_snapshot_age_hours;
+  const supplierSnapshotAgeAvailable = supplierSnapshotAgeHours != null;
+  const staleSupplierSnapshot =
+    supplierSnapshotAgeHours != null &&
+    supplierSnapshotAgeHours > SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS;
+  const failClosed =
+    !priceGuard.allow || !driftMetricAvailable || !supplierSnapshotAgeAvailable;
+
+  let supplierRefreshJobId: string | null = null;
+  let supplierRefreshError: string | null = null;
+  if (staleSupplierSnapshot) {
+    try {
+      const refreshJob = await enqueueSupplierDiscoverRefresh({
+        idempotencySuffix: candidateId,
+        reason: "supplier-snapshot-age-gt-48h",
+      });
+      supplierRefreshJobId = String(refreshJob.id ?? "");
+    } catch (error) {
+      supplierRefreshError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  if (failClosed) {
+    const shouldManualReview =
+      priceGuard.decision === "MANUAL_REVIEW" ||
+      priceGuard.reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
+      !driftMetricAvailable ||
+      !supplierSnapshotAgeAvailable;
+    const reasons = [...priceGuard.reasons];
+    if (!driftMetricAvailable) reasons.push("SUPPLIER_DRIFT_DATA_REQUIRED");
+    if (!supplierSnapshotAgeAvailable) reasons.push("SUPPLIER_SNAPSHOT_AGE_REQUIRED");
+
+    await db.execute(sql`
+      UPDATE profitable_candidates
+      SET
+        decision_status = CASE WHEN ${shouldManualReview} THEN 'MANUAL_REVIEW' ELSE decision_status END,
+        listing_eligible = FALSE,
+        listing_block_reason = ${`PRICE_GUARD_${priceGuard.decision}: ${reasons.join(", ")}`},
+        listing_eligible_ts = NOW()
+      WHERE id = ${candidateId}
+    `);
+
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: staleSupplierSnapshot
+        ? supplierRefreshError
+          ? `supplier snapshot stale (${supplierSnapshotAgeHours}h > ${SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS}h); refresh enqueue failed: ${supplierRefreshError}`
+          : `supplier snapshot stale (${supplierSnapshotAgeHours}h > ${SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS}h); refresh enqueued (${supplierRefreshJobId ?? "job-id-unavailable"})`
+        : `price guard blocked publish readiness: ${reasons.join(", ")}`,
     };
   }
 

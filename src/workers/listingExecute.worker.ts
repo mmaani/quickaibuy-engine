@@ -7,10 +7,14 @@ import {
   getDuplicateBlockDecision,
 } from "@/lib/listings/duplicateProtection";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
+import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { publishToEbayListing } from "@/lib/marketplaces/ebayPublish";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
+
+// Supplier snapshot older than 48h must be refreshed before publish.
+const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 
 function isLivePublishEnabled(): boolean {
   return String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").toLowerCase() === "true";
@@ -92,17 +96,32 @@ export async function runListingExecution(opts?: {
       mode: "publish",
     });
 
-    if (!priceGuard.allow) {
+    const driftMetricAvailable = priceGuard.metrics.supplier_price_drift_pct != null;
+    const supplierSnapshotAgeHours = priceGuard.metrics.supplier_snapshot_age_hours;
+    const supplierSnapshotAgeAvailable = supplierSnapshotAgeHours != null;
+    const staleSupplierSnapshot =
+      supplierSnapshotAgeHours != null &&
+      supplierSnapshotAgeHours > SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS;
+    const failClosed = !priceGuard.allow || !driftMetricAvailable || !supplierSnapshotAgeAvailable;
+
+    if (failClosed) {
       const staleMarketplaceSnapshot = priceGuard.reasons.includes("STALE_MARKETPLACE_SNAPSHOT");
+      const reasons = [...priceGuard.reasons];
+      if (!driftMetricAvailable) reasons.push("SUPPLIER_DRIFT_DATA_REQUIRED");
+      if (!supplierSnapshotAgeAvailable) reasons.push("SUPPLIER_SNAPSHOT_AGE_REQUIRED");
+
       const guardSummary = {
         decision: priceGuard.decision,
-        reasons: priceGuard.reasons,
+        reasons,
         metrics: priceGuard.metrics,
         thresholds: priceGuard.thresholds,
       };
       let marketplaceRefreshEnqueued = false;
       let marketplaceRefreshJobId: string | null = null;
       let marketplaceRefreshError: string | null = null;
+      let supplierRefreshEnqueued = false;
+      let supplierRefreshJobId: string | null = null;
+      let supplierRefreshError: string | null = null;
 
       if (staleMarketplaceSnapshot) {
         try {
@@ -127,12 +146,31 @@ export async function runListingExecution(opts?: {
           marketplaceRefreshError = error instanceof Error ? error.message : String(error);
         }
       }
+      if (staleSupplierSnapshot) {
+        try {
+          const refreshJob = await enqueueSupplierDiscoverRefresh({
+            idempotencySuffix: candidateId,
+            reason: "supplier-snapshot-age-gt-48h",
+          });
+          supplierRefreshEnqueued = true;
+          supplierRefreshJobId = String(refreshJob.id ?? "");
+        } catch (error) {
+          supplierRefreshError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const shouldManualReview =
+        priceGuard.decision === "MANUAL_REVIEW" ||
+        reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
+        !driftMetricAvailable ||
+        !supplierSnapshotAgeAvailable;
 
       await db.execute(sql`
         UPDATE profitable_candidates
         SET
+          decision_status = CASE WHEN ${shouldManualReview} THEN 'MANUAL_REVIEW' ELSE decision_status END,
           listing_eligible = FALSE,
-          listing_block_reason = ${`PRICE_GUARD_${priceGuard.decision}: ${priceGuard.reasons.join(", ")}`},
+          listing_block_reason = ${`PRICE_GUARD_${priceGuard.decision}: ${reasons.join(", ")}`},
           listing_eligible_ts = NOW()
         WHERE id = ${candidateId}
       `);
@@ -148,12 +186,22 @@ export async function runListingExecution(opts?: {
               jobId: marketplaceRefreshJobId,
               error: marketplaceRefreshError,
             },
+            supplierRefresh: {
+              attempted: staleSupplierSnapshot,
+              enqueued: supplierRefreshEnqueued,
+              jobId: supplierRefreshJobId,
+              error: supplierRefreshError,
+            },
           })}::jsonb,
           last_publish_error = ${staleMarketplaceSnapshot
             ? marketplaceRefreshError
               ? `PriceGuard ${priceGuard.decision}: stale marketplace snapshot; refresh enqueue failed: ${marketplaceRefreshError}`
               : `PriceGuard ${priceGuard.decision}: stale marketplace snapshot; refresh enqueued (${marketplaceRefreshJobId ?? "job-id-unavailable"})`
-            : `PriceGuard ${priceGuard.decision}: ${priceGuard.reasons.join(", ")}`},
+            : staleSupplierSnapshot
+              ? supplierRefreshError
+                ? `PriceGuard ${priceGuard.decision}: stale supplier snapshot (${supplierSnapshotAgeHours}h > ${SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS}h); refresh enqueue failed: ${supplierRefreshError}`
+                : `PriceGuard ${priceGuard.decision}: stale supplier snapshot (${supplierSnapshotAgeHours}h > ${SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS}h); refresh enqueued (${supplierRefreshJobId ?? "job-id-unavailable"})`
+              : `PriceGuard ${priceGuard.decision}: ${reasons.join(", ")}`},
           updated_at = NOW()
         WHERE id = ${listingId}
       `);
@@ -178,6 +226,12 @@ export async function runListingExecution(opts?: {
             enqueued: marketplaceRefreshEnqueued,
             jobId: marketplaceRefreshJobId,
             error: marketplaceRefreshError,
+          },
+          supplierRefresh: {
+            attempted: staleSupplierSnapshot,
+            enqueued: supplierRefreshEnqueued,
+            jobId: supplierRefreshJobId,
+            error: supplierRefreshError,
           },
         },
       });
@@ -205,6 +259,10 @@ export async function runListingExecution(opts?: {
       }
 
       if (staleMarketplaceSnapshot && marketplaceRefreshError) {
+        failed++;
+        continue;
+      }
+      if (staleSupplierSnapshot && supplierRefreshError) {
         failed++;
         continue;
       }

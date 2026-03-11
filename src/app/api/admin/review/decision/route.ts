@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
+import { validateProfitSafety } from "@/lib/profit/priceGuard";
+import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import {
   REVIEW_CONSOLE_REALM,
   getReviewActorIdFromAuthorizationHeader,
@@ -11,6 +13,8 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 
 function unauthorizedResponse(): NextResponse {
   return NextResponse.json(
@@ -80,6 +84,40 @@ export async function POST(request: Request) {
   }
 
   const approvalReason = reason ?? `decision:${decisionStatus}`;
+  let effectiveDecisionStatus = decisionStatus;
+  let listingEligible = decisionStatus === "APPROVED" && existing.marketplace_key === "ebay";
+  let listingBlockReason: string | null = listingEligible ? null : approvalReason;
+
+  if (decisionStatus === "APPROVED" && existing.marketplace_key === "ebay") {
+    const priceGuard = await validateProfitSafety({
+      candidateId,
+      mode: "publish",
+    });
+    const driftMetricAvailable = priceGuard.metrics.supplier_price_drift_pct != null;
+    const supplierSnapshotAgeHours = priceGuard.metrics.supplier_snapshot_age_hours;
+    const supplierSnapshotAgeAvailable = supplierSnapshotAgeHours != null;
+    const staleSupplierSnapshot =
+      supplierSnapshotAgeHours != null &&
+      supplierSnapshotAgeHours > SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS;
+
+    if (staleSupplierSnapshot) {
+      try {
+        await enqueueSupplierDiscoverRefresh({
+          idempotencySuffix: candidateId,
+          reason: "supplier-snapshot-age-gt-48h",
+        });
+      } catch {}
+    }
+
+    if (!priceGuard.allow || !driftMetricAvailable || !supplierSnapshotAgeAvailable) {
+      const reasons = [...priceGuard.reasons];
+      if (!driftMetricAvailable) reasons.push("SUPPLIER_DRIFT_DATA_REQUIRED");
+      if (!supplierSnapshotAgeAvailable) reasons.push("SUPPLIER_SNAPSHOT_AGE_REQUIRED");
+      effectiveDecisionStatus = "MANUAL_REVIEW";
+      listingEligible = false;
+      listingBlockReason = `PRICE_GUARD_${priceGuard.decision}: ${reasons.join(", ")}`;
+    }
+  }
 
   await pool.query(
     `
@@ -95,21 +133,15 @@ export async function POST(request: Request) {
           WHEN $2 = 'APPROVED' THEN COALESCE(approved_by, $4)
           ELSE approved_by
         END,
-        listing_eligible = CASE
-          WHEN $2 = 'APPROVED' AND marketplace_key = 'ebay' THEN TRUE
-          ELSE FALSE
-        END,
+        listing_eligible = $5,
         listing_eligible_ts = CASE
-          WHEN $2 = 'APPROVED' AND marketplace_key = 'ebay' THEN COALESCE(listing_eligible_ts, NOW())
+          WHEN $5 = TRUE THEN COALESCE(listing_eligible_ts, NOW())
           ELSE NULL
         END,
-        listing_block_reason = CASE
-          WHEN $2 = 'APPROVED' AND marketplace_key = 'ebay' THEN NULL
-          ELSE $5
-        END
+        listing_block_reason = $6
       WHERE id = $1
     `,
-    [candidateId, decisionStatus, reason, actorId, approvalReason]
+    [candidateId, effectiveDecisionStatus, reason, actorId, listingEligible, listingBlockReason]
   );
 
   await writeAuditLog({
@@ -117,22 +149,22 @@ export async function POST(request: Request) {
     actorId,
     entityType: "PROFITABLE_CANDIDATE",
     entityId: candidateId,
-    eventType: `DECISION_${decisionStatus}`,
+    eventType: `DECISION_${effectiveDecisionStatus}`,
     details: {
       previousStatus: existing.decision_status,
-      nextStatus: decisionStatus,
+      nextStatus: effectiveDecisionStatus,
       reason,
       supplierKey: existing.supplier_key,
       supplierProductId: existing.supplier_product_id,
       marketplaceKey: existing.marketplace_key,
       marketplaceListingId: existing.marketplace_listing_id,
-      listingEligible: decisionStatus === "APPROVED" && existing.marketplace_key === "ebay",
+      listingEligible,
       source: "review-console",
     },
   });
 
   const redirectUrl = buildRedirectUrl(request);
-  redirectUrl.searchParams.set("decisionStatus", decisionStatus);
+  redirectUrl.searchParams.set("decisionStatus", effectiveDecisionStatus);
   redirectUrl.searchParams.delete("riskOnly");
   redirectUrl.searchParams.set("candidateId", candidateId);
   redirectUrl.searchParams.set("updated", "1");

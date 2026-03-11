@@ -43,6 +43,11 @@ function formatPercent(value: number | null): string {
   return `${value.toFixed(2)}%`;
 }
 
+function formatHours(value: number | null): string {
+  if (value == null) return "-";
+  return `${value.toFixed(2)}h`;
+}
+
 function formatListingStatus(status: string | null | undefined): string {
   const normalized = (status ?? "").trim();
   if (!normalized) return "No preview";
@@ -595,6 +600,8 @@ export default async function ReviewPage({
                       <KeyValue label="Listing ID" value={detail.candidate.listingId ?? "-"} />
                       <KeyValue label="Listing Title" value={detail.candidate.listingTitle ?? "-"} />
                       <KeyValue label="Listing Price" value={formatMoney(detail.candidate.listingPrice)} />
+                      <KeyValue label="supplier_price_drift_pct" value={formatPercent(detail.candidate.supplierPriceDriftPct)} />
+                      <KeyValue label="supplier_snapshot_age_hours" value={formatHours(detail.candidate.supplierSnapshotAgeHours)} />
                     </div>
                   </div>
                 </DetailBlock>

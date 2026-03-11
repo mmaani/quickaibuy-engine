@@ -33,13 +33,15 @@ export function getPriceGuardThresholds(): PriceGuardThresholds {
     minProfitUsd: toNumber(process.env.PRICE_GUARD_MIN_PROFIT_USD, 1),
     minMarginPct: toNumber(process.env.PRICE_GUARD_MIN_MARGIN_PCT, 20),
     minRoiPct: toNumber(process.env.PRICE_GUARD_MIN_ROI_PCT, 25),
-    maxSupplierDriftPct: toNumber(process.env.PRICE_GUARD_MAX_SUPPLIER_DRIFT_PCT, 10),
+    // Drift >15% routes to MANUAL_REVIEW unless overridden explicitly.
+    maxSupplierDriftPct: toNumber(process.env.PRICE_GUARD_MAX_SUPPLIER_DRIFT_PCT, 15),
     maxMarketplaceSnapshotAgeHours,
+    // Supplier snapshots older than 48h are considered stale for publish readiness.
     maxSupplierSnapshotAgeHours: toNumber(
       process.env.PRICE_GUARD_MAX_SUPPLIER_SNAPSHOT_AGE_HOURS,
-      72
+      48
     ),
     requireShippingData: toBoolean(process.env.PRICE_GUARD_REQUIRE_SHIPPING_DATA, false),
-    requireSupplierDriftData: toBoolean(process.env.PRICE_GUARD_REQUIRE_SUPPLIER_DRIFT_DATA, false),
+    requireSupplierDriftData: toBoolean(process.env.PRICE_GUARD_REQUIRE_SUPPLIER_DRIFT_DATA, true),
   };
 }

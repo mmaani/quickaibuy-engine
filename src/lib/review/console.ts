@@ -2,15 +2,20 @@ import { pool } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 
 export const REVIEW_ROUTE = "/admin/review";
-export const REVIEW_STATUSES = ["PENDING", "APPROVED", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
+export const REVIEW_STATUSES = ["PENDING", "APPROVED", "MANUAL_REVIEW", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
 export const REVIEW_ACTION_STATUSES = ["APPROVED", "REJECTED", "RECHECK"] as const;
 export const LOW_MATCH_CONFIDENCE_THRESHOLD = 0.71;
 export const HIGH_MARGIN_THRESHOLD = 80;
+const SUPPLIER_DRIFT_MANUAL_REVIEW_PCT = 15;
+const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 export const BLOCKING_RISK_FLAGS = new Set([
   "LOW_MATCH_CONFIDENCE",
   "MISSING_SHIPPING_ESTIMATE",
   "BRAND_OR_RESTRICTED_TITLE",
   "DUPLICATE_CANDIDATE_PATTERN",
+  "SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT",
+  "STALE_SUPPLIER_SNAPSHOT",
+  "SUPPLIER_DRIFT_DATA_UNAVAILABLE",
 ]);
 
 type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -51,6 +56,8 @@ export type ReviewListItem = {
   listingStatus: string | null;
   listingTitle: string | null;
   listingPrice: number | null;
+  supplierPriceDriftPct: number | null;
+  supplierSnapshotAgeHours: number | null;
   riskFlags: string[];
   blockingRiskFlags: string[];
   listingEligible: boolean;
@@ -96,6 +103,8 @@ type CandidateRow = {
   duplicate_detected: boolean | null;
   duplicate_reason: string | null;
   duplicate_conflict_listing_ids: string[] | null;
+  supplier_price_drift_pct?: string | number | null;
+  supplier_snapshot_age_hours?: string | number | null;
 };
 
 type SupplierSnapshot = {
@@ -292,6 +301,8 @@ function deriveRiskFlags(row: CandidateRow): string[] {
   const estimatedShipping = toNumber(row.estimated_shipping);
   const marginPct = toNumber(row.margin_pct);
   const duplicateCount = toNumber(row.duplicate_count) ?? 1;
+  const supplierPriceDriftPct = toNumber(row.supplier_price_drift_pct);
+  const supplierSnapshotAgeHours = toNumber(row.supplier_snapshot_age_hours);
   const joinedTitle = `${row.supplier_title ?? ""} ${row.marketplace_title ?? ""}`.trim();
 
   if (confidence != null && confidence < LOW_MATCH_CONFIDENCE_THRESHOLD) {
@@ -320,6 +331,19 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     flags.add("DUPLICATE_CANDIDATE_PATTERN");
   }
 
+  if (supplierPriceDriftPct == null) {
+    flags.add("SUPPLIER_DRIFT_DATA_UNAVAILABLE");
+  } else if (Math.abs(supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT) {
+    flags.add("SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT");
+  }
+
+  if (
+    supplierSnapshotAgeHours != null &&
+    supplierSnapshotAgeHours > SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS
+  ) {
+    flags.add("STALE_SUPPLIER_SNAPSHOT");
+  }
+
   return Array.from(flags);
 }
 
@@ -328,6 +352,8 @@ function computeListingEligibility(input: {
   estimatedProfit: number | null;
   confidence: number | null;
   riskFlags: string[];
+  supplierPriceDriftPct: number | null;
+  supplierSnapshotAgeHours: number | null;
 }) {
   const reasons: string[] = [];
 
@@ -348,6 +374,20 @@ function computeListingEligibility(input: {
     reasons.push(`blocking risk flags: ${blockingFlags.join(", ")}`);
   }
 
+  // Publish/readiness drift gate: fail closed if drift metrics are missing.
+  if (input.supplierPriceDriftPct == null) {
+    reasons.push("supplier_price_drift_pct is required for publish safety");
+  } else if (Math.abs(input.supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT) {
+    reasons.push(`supplier_price_drift_pct exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}%`);
+  }
+
+  // Supplier snapshot freshness gate for publish/readiness.
+  if (input.supplierSnapshotAgeHours == null) {
+    reasons.push("supplier_snapshot_age_hours is required for publish safety");
+  } else if (input.supplierSnapshotAgeHours > SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS) {
+    reasons.push(`supplier_snapshot_age_hours exceeds ${SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS}h`);
+  }
+
   return {
     listingEligible: reasons.length === 0,
     listingEligibilityReasons: reasons,
@@ -360,12 +400,16 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
   const marginPct = toNumber(row.margin_pct);
   const roiPct = toNumber(row.roi_pct);
   const matchConfidence = toNumber(row.match_confidence);
+  const supplierPriceDriftPct = toNumber(row.supplier_price_drift_pct);
+  const supplierSnapshotAgeHours = toNumber(row.supplier_snapshot_age_hours);
   const riskFlags = deriveRiskFlags(row);
   const eligibility = computeListingEligibility({
     decisionStatus: row.decision_status,
     estimatedProfit,
     confidence: matchConfidence,
     riskFlags,
+    supplierPriceDriftPct,
+    supplierSnapshotAgeHours,
   });
 
   return {
@@ -386,6 +430,8 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     listingStatus: row.listing_status,
     listingTitle: row.listing_title,
     listingPrice: toNumber(row.listing_price),
+    supplierPriceDriftPct,
+    supplierSnapshotAgeHours,
     riskFlags,
     blockingRiskFlags: eligibility.blockingRiskFlags,
     listingEligible: eligibility.listingEligible,
@@ -618,6 +664,14 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
         mp.matched_title AS marketplace_title,
         ${listingSelectClause}
         ${duplicateSelectClause}
+        ROUND(
+          ((latest_pr.price_min - expected_pr.price_min) / NULLIF(expected_pr.price_min, 0) * 100)::numeric,
+          2
+        )::text AS supplier_price_drift_pct,
+        ROUND(
+          (EXTRACT(EPOCH FROM (NOW() - latest_pr.snapshot_ts)) / 3600.0)::numeric,
+          2
+        )::text AS supplier_snapshot_age_hours,
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -631,6 +685,16 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
         ON pr.id = pc.supplier_snapshot_id
       LEFT JOIN marketplace_prices mp
         ON mp.id = pc.market_price_snapshot_id
+      LEFT JOIN products_raw expected_pr
+        ON expected_pr.id = pc.supplier_snapshot_id
+      LEFT JOIN LATERAL (
+        SELECT pr_latest.price_min, pr_latest.snapshot_ts
+        FROM products_raw pr_latest
+        WHERE pr_latest.supplier_key = pc.supplier_key
+          AND pr_latest.supplier_product_id = pc.supplier_product_id
+        ORDER BY pr_latest.snapshot_ts DESC, pr_latest.id DESC
+        LIMIT 1
+      ) latest_pr ON true
       ${listingJoinClause}
       ${duplicateJoinClause}
       LEFT JOIN LATERAL (
@@ -845,6 +909,14 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
         mp.matched_title AS marketplace_title,
         ${listingSelectClause}
         ${duplicateSelectClause}
+        ROUND(
+          ((latest_pr.price_min - expected_pr.price_min) / NULLIF(expected_pr.price_min, 0) * 100)::numeric,
+          2
+        )::text AS supplier_price_drift_pct,
+        ROUND(
+          (EXTRACT(EPOCH FROM (NOW() - latest_pr.snapshot_ts)) / 3600.0)::numeric,
+          2
+        )::text AS supplier_snapshot_age_hours,
         m.confidence AS match_confidence,
         (
           SELECT COUNT(*)
@@ -858,6 +930,16 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
         ON pr.id = pc.supplier_snapshot_id
       LEFT JOIN marketplace_prices mp
         ON mp.id = pc.market_price_snapshot_id
+      LEFT JOIN products_raw expected_pr
+        ON expected_pr.id = pc.supplier_snapshot_id
+      LEFT JOIN LATERAL (
+        SELECT pr_latest.price_min, pr_latest.snapshot_ts
+        FROM products_raw pr_latest
+        WHERE pr_latest.supplier_key = pc.supplier_key
+          AND pr_latest.supplier_product_id = pc.supplier_product_id
+        ORDER BY pr_latest.snapshot_ts DESC, pr_latest.id DESC
+        LIMIT 1
+      ) latest_pr ON true
       ${listingJoinClause}
       ${duplicateJoinClause}
       LEFT JOIN LATERAL (

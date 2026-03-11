@@ -20,9 +20,40 @@ type ProfitRow = {
   supplierSnapshotId: string | null;
   marketPriceSnapshotId: string | null;
   supplierPriceMin: string | null;
+  supplierSnapshotTs: Date | string | null;
   marketPrice: string | null;
   shippingPrice: string | null;
 };
+
+type ExistingCandidateState = {
+  decisionStatus: string | null;
+  listingEligible: boolean | null;
+  listingBlockReason: string | null;
+  expectedSupplierPrice: string | null;
+};
+
+// Supplier drift threshold for post-approval protection.
+const SUPPLIER_DRIFT_MANUAL_REVIEW_PCT = 15;
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function computePctChange(expected: number | null, latest: number | null): number | null {
+  if (expected == null || latest == null || expected <= 0) return null;
+  return round2(((latest - expected) / expected) * 100);
+}
+
+function computeAgeHours(now: Date, snapshotTs: Date | null): number | null {
+  if (!snapshotTs) return null;
+  return round2((now.getTime() - snapshotTs.getTime()) / (1000 * 60 * 60));
+}
 
 export async function runProfitEngine(input?: {
   limit?: number;
@@ -123,6 +154,7 @@ export async function runProfitEngine(input?: {
       lp.id AS "supplierSnapshotId",
       lmp.id AS "marketPriceSnapshotId",
       lp.price_min AS "supplierPriceMin",
+      lp.snapshot_ts AS "supplierSnapshotTs",
       lmp.price AS "marketPrice",
       lmp.shipping_price AS "shippingPrice"
     FROM ranked_matches rm
@@ -226,6 +258,7 @@ export async function runProfitEngine(input?: {
   }
 
   for (const row of acceptedRows) {
+    const now = new Date();
     const normalizedSupplierKey = String(row.supplierKey || "").toLowerCase();
     const supplierProductId = row.supplierProductId;
     const marketplaceKey = normalizeMarketplaceKey(row.marketplaceKey);
@@ -235,6 +268,39 @@ export async function runProfitEngine(input?: {
     const supplierCost = toNum(row.supplierPriceMin) ?? 0;
     const marketPrice = toNum(row.marketPrice) ?? 0;
     const shipping = toNum(row.shippingPrice) ?? 0;
+    const supplierSnapshotAgeHours = computeAgeHours(now, toDate(row.supplierSnapshotTs));
+
+    const existingResult = await db.execute<ExistingCandidateState>(sql`
+      SELECT
+        pc.decision_status AS "decisionStatus",
+        pc.listing_eligible AS "listingEligible",
+        pc.listing_block_reason AS "listingBlockReason",
+        ps.price_min::text AS "expectedSupplierPrice"
+      FROM profitable_candidates pc
+      LEFT JOIN products_raw ps
+        ON ps.id = pc.supplier_snapshot_id
+      WHERE pc.supplier_key = ${normalizedSupplierKey}
+        AND pc.supplier_product_id = ${supplierProductId}
+        AND pc.marketplace_key = ${marketplaceKey}
+        AND pc.marketplace_listing_id = ${marketplaceListingId}
+      LIMIT 1
+    `);
+    const existing = existingResult.rows?.[0];
+    const expectedSupplierPrice = toNum(existing?.expectedSupplierPrice);
+    const supplierPriceDriftPct = computePctChange(expectedSupplierPrice, supplierCost);
+    const supplierDriftExceeded =
+      supplierPriceDriftPct != null && Math.abs(supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT;
+
+    const decisionStatus = supplierDriftExceeded
+      ? "MANUAL_REVIEW"
+      : (existing?.decisionStatus ?? "PENDING");
+    const listingEligible = supplierDriftExceeded ? false : Boolean(existing?.listingEligible ?? false);
+    const listingBlockReason = supplierDriftExceeded
+      ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
+      : (existing?.listingBlockReason ?? null);
+    const riskFlagsSql = supplierDriftExceeded
+      ? sql`ARRAY['SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT']::text[]`
+      : sql`ARRAY[]::text[]`;
 
     const economics = calculateRealProfit({
       marketplaceKey,
@@ -267,6 +333,10 @@ export async function runProfitEngine(input?: {
       economicsModel: "jordan_ebay_deterministic_v1",
     };
 
+    const reason = supplierDriftExceeded
+      ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
+      : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`;
+
     await db.execute(sql`
       INSERT INTO profitable_candidates (
         supplier_key,
@@ -284,7 +354,9 @@ export async function runProfitEngine(input?: {
         roi_pct,
         risk_flags,
         decision_status,
-        reason
+        reason,
+        listing_eligible,
+        listing_block_reason
       ) VALUES (
         ${normalizedSupplierKey},
         ${supplierProductId},
@@ -299,9 +371,11 @@ export async function runProfitEngine(input?: {
         ${String(estimatedProfit)},
         ${String(marginPct)},
         ${String(roiPct)},
-        ARRAY[]::text[],
-        'PENDING',
-        ${`roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`}
+        ${riskFlagsSql},
+        ${decisionStatus},
+        ${reason},
+        ${listingEligible},
+        ${listingBlockReason}
       )
       ON CONFLICT (supplier_key, supplier_product_id, marketplace_key, marketplace_listing_id)
       DO UPDATE SET
@@ -316,7 +390,9 @@ export async function runProfitEngine(input?: {
         roi_pct = EXCLUDED.roi_pct,
         risk_flags = EXCLUDED.risk_flags,
         decision_status = EXCLUDED.decision_status,
-        reason = EXCLUDED.reason
+        reason = EXCLUDED.reason,
+        listing_eligible = EXCLUDED.listing_eligible,
+        listing_block_reason = EXCLUDED.listing_block_reason
     `);
 
     insertedOrUpdated++;
