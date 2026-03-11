@@ -250,7 +250,14 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   const hasCriticalRecoveryBlock =
     (data.recoveryStates.staleMarketplaceBlocks ?? 0) > 0 ||
     (data.recoveryStates.supplierDriftBlocks ?? 0) > 0 ||
+    (data.recoveryStates.combinedBlocks ?? 0) > 0 ||
     (data.recoveryStates.reEvaluationNeeded ?? 0) > 0;
+  const hasCriticalPurchaseSafety =
+    (data.purchaseSafety.notCheckedYet ?? 0) > 0 ||
+    (data.purchaseSafety.checkedManualReview ?? 0) > 0 ||
+    (data.purchaseSafety.blockedStaleSupplierData ?? 0) > 0 ||
+    (data.purchaseSafety.blockedSupplierDrift ?? 0) > 0 ||
+    (data.purchaseSafety.blockedEconomics ?? 0) > 0;
 
   const quickActions: Array<{ key: string; label: string }> = [
     { key: "supplier", label: "Run supplier discover" },
@@ -382,10 +389,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 )}
               />
               <StatCard
-                label="Waiting for refresh (REFRESH_JOBS_PENDING)"
+                label="Blocked for safety (COMBINED_BLOCKS)"
                 value={metricOrUnknown(
-                  data.recoveryStates.refreshJobsPending,
-                  data.recoveryStates.sourceWired.refreshJobsPending
+                  data.recoveryStates.combinedBlocks,
+                  data.recoveryStates.sourceWired.combinedBlocks
                 )}
               />
               <StatCard
@@ -400,6 +407,22 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 value={metricOrUnknown(
                   data.recoveryStates.rePromotionReady,
                   data.recoveryStates.sourceWired.rePromotionReady
+                )}
+              />
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <StatCard
+                label="Waiting for refresh: market (MARKETPLACE_REFRESH_PENDING)"
+                value={metricOrUnknown(
+                  data.recoveryStates.marketplaceRefreshPending,
+                  data.recoveryStates.sourceWired.marketplaceRefreshPending
+                )}
+              />
+              <StatCard
+                label="Waiting for refresh: supplier (SUPPLIER_REFRESH_PENDING)"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierRefreshPending,
+                  data.recoveryStates.sourceWired.supplierRefreshPending
                 )}
               />
             </div>
@@ -422,6 +445,62 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
               ) : (
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/75">
                   No stale/drift recovery actions are currently pending.
+                </div>
+              )}
+            </div>
+          </Section>
+        ) : null}
+
+        {hasCriticalPurchaseSafety ? (
+          <Section title="Purchase Safety (Compact)">
+            <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
+              Some orders are blocked or waiting for purchase safety checks.
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <StatCard
+                label="Purchase safety not checked"
+                value={metricOrUnknown(data.purchaseSafety.notCheckedYet, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Purchase safety passed"
+                value={metricOrUnknown(data.purchaseSafety.checkedPass, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Purchase needs manual review"
+                value={metricOrUnknown(data.purchaseSafety.checkedManualReview, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Blocked: stale supplier data"
+                value={metricOrUnknown(data.purchaseSafety.blockedStaleSupplierData, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Blocked: supplier changed"
+                value={metricOrUnknown(data.purchaseSafety.blockedSupplierDrift, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Blocked: poor economics"
+                value={metricOrUnknown(data.purchaseSafety.blockedEconomics, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {data.purchaseSafety.actionHints.length ? (
+                data.purchaseSafety.actionHints.map((hint) => (
+                  <div
+                    key={hint.id}
+                    className={`rounded-xl border p-3 text-sm ${
+                      hint.severity === "critical"
+                        ? "border-amber-300/35 bg-amber-500/10 text-amber-100"
+                        : "border-white/10 bg-white/[0.04] text-white/85"
+                    }`}
+                  >
+                    <div className="font-semibold">{hint.label}</div>
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-white/55">{hint.technicalLabel}</div>
+                    <div className="mt-1">{hint.hint}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/75">
+                  No purchase safety alerts right now.
                 </div>
               )}
             </div>
@@ -474,10 +553,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 )}
               />
               <StatCard
-                label="Waiting for refresh (REFRESH_JOBS_PENDING)"
+                label="Blocked for safety (COMBINED_BLOCKS)"
                 value={metricOrUnknown(
-                  data.recoveryStates.refreshJobsPending,
-                  data.recoveryStates.sourceWired.refreshJobsPending
+                  data.recoveryStates.combinedBlocks,
+                  data.recoveryStates.sourceWired.combinedBlocks
                 )}
               />
               <StatCard
@@ -492,6 +571,22 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 value={metricOrUnknown(
                   data.recoveryStates.rePromotionReady,
                   data.recoveryStates.sourceWired.rePromotionReady
+                )}
+              />
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <StatCard
+                label="Waiting for refresh: market (MARKETPLACE_REFRESH_PENDING)"
+                value={metricOrUnknown(
+                  data.recoveryStates.marketplaceRefreshPending,
+                  data.recoveryStates.sourceWired.marketplaceRefreshPending
+                )}
+              />
+              <StatCard
+                label="Waiting for refresh: supplier (SUPPLIER_REFRESH_PENDING)"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierRefreshPending,
+                  data.recoveryStates.sourceWired.supplierRefreshPending
                 )}
               />
             </div>
@@ -516,6 +611,40 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                   No stale/drift recovery actions are currently pending.
                 </div>
               )}
+            </div>
+          </Section>
+        ) : null}
+
+        {!hasCriticalPurchaseSafety ? (
+          <Section title="Purchase Safety (Compact)">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+              Purchase safety summary stays compact here; detailed actions remain in /admin/orders.
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <StatCard
+                label="Purchase safety not checked"
+                value={metricOrUnknown(data.purchaseSafety.notCheckedYet, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Purchase safety passed"
+                value={metricOrUnknown(data.purchaseSafety.checkedPass, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Purchase needs manual review"
+                value={metricOrUnknown(data.purchaseSafety.checkedManualReview, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Blocked: stale supplier data"
+                value={metricOrUnknown(data.purchaseSafety.blockedStaleSupplierData, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Blocked: supplier changed"
+                value={metricOrUnknown(data.purchaseSafety.blockedSupplierDrift, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
+              <StatCard
+                label="Blocked: poor economics"
+                value={metricOrUnknown(data.purchaseSafety.blockedEconomics, data.purchaseSafety.sourceWired.safetyPayload)}
+              />
             </div>
           </Section>
         ) : null}

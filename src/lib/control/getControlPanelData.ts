@@ -89,15 +89,41 @@ export type ControlPanelData = {
   recoveryStates: {
     staleMarketplaceBlocks: number | null;
     supplierDriftBlocks: number | null;
+    combinedBlocks: number | null;
+    marketplaceRefreshPending: number | null;
+    supplierRefreshPending: number | null;
     refreshJobsPending: number | null;
     reEvaluationNeeded: number | null;
     rePromotionReady: number | null;
     sourceWired: {
       staleMarketplaceBlocks: boolean;
       supplierDriftBlocks: boolean;
+      combinedBlocks: boolean;
+      marketplaceRefreshPending: boolean;
+      supplierRefreshPending: boolean;
       refreshJobsPending: boolean;
       reEvaluationNeeded: boolean;
       rePromotionReady: boolean;
+    };
+    actionHints: Array<{
+      id: string;
+      label: string;
+      technicalLabel: string;
+      hint: string;
+      severity: "critical" | "info";
+    }>;
+  };
+  purchaseSafety: {
+    notCheckedYet: number | null;
+    checkedPass: number | null;
+    checkedManualReview: number | null;
+    blockedStaleSupplierData: number | null;
+    blockedSupplierDrift: number | null;
+    blockedEconomics: number | null;
+    sourceWired: {
+      orders: boolean;
+      orderEvents: boolean;
+      safetyPayload: boolean;
     };
     actionHints: Array<{
       id: string;
@@ -770,6 +796,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     : [];
 
   const ordersExists = await tableExists("orders");
+  const orderEventsExists = await tableExists("order_events");
   const ordersSummary = ordersExists
     ? (
         await runQuery(`
@@ -834,20 +861,55 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         )
       : null;
 
-  const refreshJobsPending = jobsExists && jobsHasStatus && jobsHasJobType
+  const combinedBlocks =
+    profitableCandidatesExists &&
+    profitableCandidatesHasListingEligible &&
+    profitableCandidatesHasListingBlockReason
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              where pc.listing_eligible = false
+                and upper(coalesce(pc.listing_block_reason, '')) like '%STALE_MARKETPLACE%'
+                and (
+                  upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_PRICE_DRIFT%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_DRIFT%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%STALE_SUPPLIER%'
+                )
+            `)
+          )[0]?.count
+        )
+      : null;
+
+  const marketplaceRefreshPending = jobsExists && jobsHasStatus && jobsHasJobType
     ? toNum(
         (
           await runQuery(`
             select count(*)::int as count
             from jobs
             where upper(coalesce(status, '')) in ('QUEUED', 'RUNNING')
-              and (
-                job_type = 'SCAN_MARKETPLACE_PRICE'
-                or job_type = 'supplier:discover'
-              )
+              and job_type = 'SCAN_MARKETPLACE_PRICE'
           `)
         )[0]?.count
       )
+    : null;
+
+  const supplierRefreshPending = jobsExists && jobsHasStatus && jobsHasJobType
+    ? toNum(
+        (
+          await runQuery(`
+            select count(*)::int as count
+            from jobs
+            where upper(coalesce(status, '')) in ('QUEUED', 'RUNNING')
+              and job_type = 'supplier:discover'
+          `)
+        )[0]?.count
+      )
+    : null;
+
+  const refreshJobsPending = jobsExists && jobsHasStatus && jobsHasJobType
+    ? (marketplaceRefreshPending ?? 0) + (supplierRefreshPending ?? 0)
     : null;
 
   const reEvaluationNeeded =
@@ -916,6 +978,33 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       severity: "critical",
     });
   }
+  if ((combinedBlocks ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "combined-blocks",
+      label: "Blocked for safety",
+      technicalLabel: "COMBINED_STALE_AND_DRIFT_BLOCK",
+      hint: "Clear both market freshness and supplier safety checks before re-promotion.",
+      severity: "critical",
+    });
+  }
+  if ((marketplaceRefreshPending ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "marketplace-refresh-pending",
+      label: "Waiting for market refresh",
+      technicalLabel: "MARKETPLACE_REFRESH_PENDING",
+      hint: "Wait for market refresh jobs, then re-check blocked listings.",
+      severity: "info",
+    });
+  }
+  if ((supplierRefreshPending ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "supplier-refresh-pending",
+      label: "Waiting for supplier refresh",
+      technicalLabel: "SUPPLIER_REFRESH_PENDING",
+      hint: "Wait for supplier refresh jobs, then re-check blocked listings.",
+      severity: "info",
+    });
+  }
   if ((refreshJobsPending ?? 0) > 0) {
     recoveryActionHints.push({
       id: "waiting-for-refresh",
@@ -940,6 +1029,97 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       label: "Ready for re-promotion",
       technicalLabel: "REPROMOTION_READY",
       hint: "Promote from PREVIEW to READY_TO_PUBLISH when checks pass.",
+      severity: "info",
+    });
+  }
+
+  const purchaseSafetyStats = ordersExists && orderEventsExists
+    ? (
+        await runQuery(`
+          with latest_checks as (
+            select distinct on (oe.order_id)
+              oe.order_id,
+              coalesce(oe.details ->> 'status', '') as safety_status
+            from order_events oe
+            where oe.event_type = 'MANUAL_NOTE'
+              and coalesce(oe.details ->> 'action', '') = 'PURCHASE_SAFETY_CHECK'
+            order by oe.order_id, oe.event_ts desc nulls last, oe.id desc
+          )
+          select
+            (select count(*)::int from orders where lower(coalesce(marketplace, '')) = 'ebay') as total_orders,
+            count(*)::int as checked_orders,
+            count(*) filter (where safety_status = 'READY_FOR_PURCHASE_REVIEW')::int as checked_pass,
+            count(*) filter (where safety_status = 'MANUAL_REVIEW_REQUIRED')::int as checked_manual_review,
+            count(*) filter (where safety_status = 'BLOCKED_STALE_DATA')::int as blocked_stale_supplier_data,
+            count(*) filter (where safety_status = 'BLOCKED_SUPPLIER_DRIFT')::int as blocked_supplier_drift,
+            count(*) filter (where safety_status = 'BLOCKED_ECONOMICS_OUT_OF_BOUNDS')::int as blocked_economics
+          from latest_checks
+        `)
+      )[0] ?? {}
+    : {};
+
+  const totalOrdersForSafety = toNum(purchaseSafetyStats.total_orders);
+  const checkedOrdersForSafety = toNum(purchaseSafetyStats.checked_orders) ?? 0;
+  const purchaseSafetyNotCheckedYet =
+    totalOrdersForSafety == null ? null : Math.max(0, totalOrdersForSafety - checkedOrdersForSafety);
+  const purchaseSafetyCheckedPass = toNum(purchaseSafetyStats.checked_pass);
+  const purchaseSafetyCheckedManualReview = toNum(purchaseSafetyStats.checked_manual_review);
+  const purchaseSafetyBlockedStaleSupplierData = toNum(purchaseSafetyStats.blocked_stale_supplier_data);
+  const purchaseSafetyBlockedSupplierDrift = toNum(purchaseSafetyStats.blocked_supplier_drift);
+  const purchaseSafetyBlockedEconomics = toNum(purchaseSafetyStats.blocked_economics);
+
+  const purchaseSafetyHints: ControlPanelData["purchaseSafety"]["actionHints"] = [];
+  if ((purchaseSafetyNotCheckedYet ?? 0) > 0) {
+    purchaseSafetyHints.push({
+      id: "purchase-safety-not-checked",
+      label: "Purchase safety not checked",
+      technicalLabel: "VALIDATION_NEEDED",
+      hint: "Run purchase safety check before approving purchase.",
+      severity: "critical",
+    });
+  }
+  if ((purchaseSafetyCheckedManualReview ?? 0) > 0) {
+    purchaseSafetyHints.push({
+      id: "purchase-manual-review",
+      label: "Purchase needs manual review",
+      technicalLabel: "MANUAL_REVIEW_REQUIRED",
+      hint: "Review safety reasons in /admin/orders before purchase approval.",
+      severity: "critical",
+    });
+  }
+  if ((purchaseSafetyBlockedStaleSupplierData ?? 0) > 0) {
+    purchaseSafetyHints.push({
+      id: "purchase-blocked-stale-supplier",
+      label: "Blocked: stale supplier data",
+      technicalLabel: "BLOCKED_STALE_DATA",
+      hint: "Wait for fresh supplier data, then re-check purchase safety.",
+      severity: "critical",
+    });
+  }
+  if ((purchaseSafetyBlockedSupplierDrift ?? 0) > 0) {
+    purchaseSafetyHints.push({
+      id: "purchase-blocked-supplier-drift",
+      label: "Blocked: supplier changed",
+      technicalLabel: "BLOCKED_SUPPLIER_DRIFT",
+      hint: "Review supplier change before approving purchase.",
+      severity: "critical",
+    });
+  }
+  if ((purchaseSafetyBlockedEconomics ?? 0) > 0) {
+    purchaseSafetyHints.push({
+      id: "purchase-blocked-economics",
+      label: "Blocked: poor economics",
+      technicalLabel: "BLOCKED_ECONOMICS_OUT_OF_BOUNDS",
+      hint: "Do not approve purchase until economics are safe.",
+      severity: "critical",
+    });
+  }
+  if ((purchaseSafetyCheckedPass ?? 0) > 0) {
+    purchaseSafetyHints.push({
+      id: "purchase-safety-passed",
+      label: "Purchase safety passed",
+      technicalLabel: "READY_FOR_PURCHASE_REVIEW",
+      hint: "Manual-assisted purchase is allowed after operator review.",
       severity: "info",
     });
   }
@@ -1213,6 +1393,9 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     recoveryStates: {
       staleMarketplaceBlocks,
       supplierDriftBlocks,
+      combinedBlocks,
+      marketplaceRefreshPending,
+      supplierRefreshPending,
       refreshJobsPending,
       reEvaluationNeeded,
       rePromotionReady,
@@ -1225,6 +1408,12 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           profitableCandidatesExists &&
           profitableCandidatesHasListingEligible &&
           profitableCandidatesHasListingBlockReason,
+        combinedBlocks:
+          profitableCandidatesExists &&
+          profitableCandidatesHasListingEligible &&
+          profitableCandidatesHasListingBlockReason,
+        marketplaceRefreshPending: jobsExists && jobsHasStatus && jobsHasJobType,
+        supplierRefreshPending: jobsExists && jobsHasStatus && jobsHasJobType,
         refreshJobsPending: jobsExists && jobsHasStatus && jobsHasJobType,
         reEvaluationNeeded:
           profitableCandidatesExists &&
@@ -1238,6 +1427,20 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           listingsExists,
       },
       actionHints: recoveryActionHints,
+    },
+    purchaseSafety: {
+      notCheckedYet: purchaseSafetyNotCheckedYet,
+      checkedPass: purchaseSafetyCheckedPass,
+      checkedManualReview: purchaseSafetyCheckedManualReview,
+      blockedStaleSupplierData: purchaseSafetyBlockedStaleSupplierData,
+      blockedSupplierDrift: purchaseSafetyBlockedSupplierDrift,
+      blockedEconomics: purchaseSafetyBlockedEconomics,
+      sourceWired: {
+        orders: ordersExists,
+        orderEvents: orderEventsExists,
+        safetyPayload: ordersExists && orderEventsExists,
+      },
+      actionHints: purchaseSafetyHints,
     },
     listingThroughput,
     listingLifecycle: {
