@@ -1,249 +1,316 @@
-# QuickAIBuy System Architecture (v1)
+QuickAIBuy System Architecture
+Stale Data Recovery Contract (v1)
+Status
 
-## Current status (2026-03-11)
+Approved architecture contract.
 
-- v1 stale-snapshot guarded publish path is implemented and proven in real worker flow.
-- Marketplace stale block and supplier drift block are fail-closed.
-- Marketplace refresh enqueue on stale block is active.
-- Marketplace Price Scanner is now in v1 maintenance/bug-fix mode (no redesign in v1).
+Scope
 
-## Official stale-data recovery contract (controlled listing publish)
+This document defines the official QuickAIBuy v1 behavior when a listing publish attempt is blocked due to:
 
-This contract defines fail-closed behavior when listing publish eligibility is blocked by stale marketplace data, supplier drift/freshness risk, or both.
+stale marketplace data
 
-### Safety boundary (v1)
+supplier price drift
 
-- No broad auto-publish.
-- No scanner redesign.
-- Human approval remains the publish safety boundary.
-- Re-entry to publish must be explicit and auditable.
+supplier freshness failure
 
-## A) Stale marketplace block
+combined marketplace + supplier failure
 
-When a publish attempt is blocked because marketplace data is stale:
+The contract preserves fail-closed behavior and maintains the human approval boundary required for controlled publishing.
 
-- Publish must stop **before** any live publish action.
-- Listing must not advance to `ACTIVE`.
-- Listing remains non-live.
-- Marketplace refresh job is enqueued.
-- Audit trail records:
-  - stale block detected
-  - refresh job requested/enqueued
-  - listing/candidate left non-live
+Core Principles
 
-### State behavior (v1)
+QuickAIBuy v1 operates under the following safety rules:
 
-- If still pre-execution, keep in `READY_TO_PUBLISH` **only if worker has not claimed it**.
-- If worker already claimed execution, move to `PUBLISH_FAILED` with explicit stale-data reason.
-- Never silently return row to live execution flow.
-- Never auto-promote back after refresh.
+Fail-Closed Publish Safety
 
-Operational meaning:
+Listings must never be published when marketplace or supplier inputs are stale or unsafe.
 
-- Listing/candidate is temporarily unsafe to publish.
-- Refresh has been requested.
-- Human/operator decides next step after fresh data exists.
+Explicit Operator Control
 
-## B) Supplier drift block
+Publish eligibility restoration must always be explicit and auditable in v1.
 
-When a publish attempt is blocked because supplier drift/freshness is unsafe:
+No Hidden Queue Movement
 
-- Publish must stop **before** any live publish action.
-- Listing remains non-live.
-- Supplier revalidation/refresh path is triggered when available.
-- Audit trail records:
-  - supplier drift block detected
-  - refresh/recheck requested
-  - listing/candidate left non-live
+The system must never automatically move blocked listings back into the publish queue.
 
-### State behavior (v1)
+Auditability First
 
-- Supplier drift lands in the same non-live fail-closed path as stale marketplace block.
-- No continued publish movement.
-- No auto-retry publish.
+All blocking decisions and recovery steps must produce structured audit events.
 
-## C) Combined failure (marketplace + supplier)
+Blocking Conditions
 
-If both checks fail:
+A listing publish attempt may be blocked for the following reasons.
 
-- Treat as a combined fail-closed block.
-- Enqueue required refresh/revalidation for **both** sides.
-- Write both reasons in audit details.
-- Listing remains non-live.
-- Re-evaluation waits until **both** conditions are healthy.
+1. Stale Marketplace Snapshot
 
-Priority rule:
+Marketplace price data exceeds the freshness threshold.
 
-- Combined failure is not an override case.
-- Both issues must clear before publish eligibility can return.
+Typical causes:
 
-## Audit trail contract
+scanner snapshot older than freshness window
 
-### Required conceptual events
+marketplace price scan incomplete
 
-Stale marketplace block:
+listing candidate created from outdated marketplace results
 
-- `LISTING_BLOCKED_STALE_MARKETPLACE_DATA`
-- `MARKETPLACE_REFRESH_ENQUEUED`
+2. Supplier Drift / Supplier Freshness
 
-Supplier drift block:
+Supplier-side price or availability is unsafe.
 
-- `LISTING_BLOCKED_SUPPLIER_DRIFT`
-- `SUPPLIER_RECHECK_ENQUEUED` (or equivalent supplier refresh event)
+Examples:
 
-Combined block:
+supplier price drift exceeds threshold
 
-- Either both block events separately, or one combined event carrying both reasons.
+supplier snapshot exceeds freshness window
 
-Re-evaluation / re-entry:
+supplier availability changed
 
-- `LISTING_REEVALUATION_REQUESTED`
-- `LISTING_REEVALUATION_COMPLETED`
-- `LISTING_READY_TO_PUBLISH_RESTORED` (only when explicitly restored)
-- `LISTING_READY_REPROMOTED_BY_OPERATOR` (manual re-promotion)
+3. Combined Failure
 
-### Minimum audit details
+Both marketplace freshness and supplier freshness are unsafe.
 
-- listing id
-- candidate id
-- marketplace key
-- stale/freshness reason
-- supplier drift reason (when present)
-- refresh job ids / queue keys (when available)
-- actor type (`WORKER`, `SYSTEM`, `ADMIN`)
-- whether re-entry was manual vs automated
+Combined failures must be treated as compound blocks.
 
-## Refresh enqueue behavior (v1)
+Both conditions must be cleared before the listing becomes publish-eligible again.
 
-Refresh enqueue is automatic when a block is detected because enqueueing refresh is safe and does not publish.
+Publish Worker Behavior
 
-- stale marketplace block → enqueue marketplace refresh job
-- supplier drift block → enqueue supplier revalidation/refresh job (if available)
+When a publish worker encounters a blocked listing:
 
-This only refreshes inputs and does not restore live publish flow.
+Step 1 — Stop Publish
 
-## Re-evaluation behavior (v1)
+The worker must immediately stop before any marketplace API call.
 
-**Decision:** Operator-triggered in v1; automation deferred.
+Step 2 — Write Audit Event
 
-Flow:
+An audit event must be written describing the block.
 
-- stale/drift block detected
-- refresh/recheck enqueued automatically
-- listing/candidate stays non-live
-- operator reviews fresh result
-- operator re-promotes when appropriate
+Step 3 — Enqueue Refresh
 
-Rationale:
+A refresh job should be automatically enqueued for the relevant dataset.
 
-- Automatic re-evaluation creates hidden queue movement.
-- Hidden movement conflicts with controlled publishing for v1.
+Step 4 — Leave Listing Non-Live
 
-After refresh completes, system may update snapshots/candidate inputs, but must not auto-return listing to publish execution in v1.
+The listing must remain non-live and must not re-enter the publish queue automatically.
 
-## Responsibility split (v1)
+State Transition Contract
 
-- Refresh jobs update input data.
-- Profit Engine / candidate evaluation tools recalculate as needed.
-- Operator confirms and re-promotes when appropriate.
-- Publish worker is **not** the hidden re-evaluation orchestrator.
+The system must maintain explicit state transitions.
 
-## Restoring `READY_TO_PUBLISH` eligibility
+Allowed Transitions
+READY_TO_PUBLISH
+   ↓
+PUBLISH_IN_PROGRESS
+   ↓
+BLOCKED_STALE_DATA
+   ↓
+PUBLISH_FAILED
 
-Eligibility returns only when all are true:
+or
 
-- marketplace data is fresh
-- supplier drift/freshness is acceptable
-- candidate still passes Price Guard / safety checks
-- candidate remains approved/listing-eligible
-- operator explicitly re-promotes (v1)
+READY_TO_PUBLISH
+   ↓
+PUBLISH_FAILED
 
-Restore flow:
+depending on implementation detail.
 
-- stale/drift block
-- refresh/recheck jobs run
-- fresh data available
-- candidate re-evaluated
-- operator confirms
-- listing restored/recreated to `READY_TO_PUBLISH`
+The key guarantee:
 
-## Re-promotion rule (v1)
+Blocked listings must never transition directly to ACTIVE.
 
-Re-promotion is operator-triggered.
+Refresh Job Behavior
 
-- No automatic direct requeue to publish from blocked state.
-- Preserving the old listing row is acceptable if state transitions are explicit and audited, and operator action is required.
-- Recreating a fresh `PREVIEW` then promoting is also acceptable if explicit and auditable.
+Refresh jobs are automatically enqueued when a block occurs.
 
-## Listing monitor role (v1)
+Marketplace Block
 
-Listing monitor is observational in stale-data recovery.
+Enqueue:
 
-It may:
+MARKETPLACE_PRICE_SCAN
+Supplier Block
 
-- surface stale `PUBLISH_IN_PROGRESS`
-- surface repeated `PUBLISH_FAILED`
-- surface `ACTIVE` rows missing external ids
-- surface blocked/non-recovered listings for operations visibility
+Enqueue:
 
-It must not:
+SUPPLIER_PRODUCT_REFRESH
+Combined Block
 
-- auto-re-promote listings
-- auto-trigger publish retries
-- bypass review/approval boundary
+Both refresh jobs must be enqueued.
 
-## v1 boundary vs later automation
+Refresh jobs only update input data.
 
-### v1 boundary
+Refresh jobs must not change publish state.
 
-- block publish on stale marketplace data or supplier drift
-- auto-enqueue refresh/recheck jobs
-- keep listing non-live
-- require operator review/re-promotion
-- maintain complete audit trail
-- preserve fail-closed behavior
+Re-Evaluation Behavior
 
-### Later phase (not v1)
+After refresh jobs complete:
 
-- auto re-evaluation after successful refresh
-- auto restore publish eligibility when all checks pass
-- auto requeue for publish
+new marketplace data may exist
 
-## Pipeline impact
+new supplier data may exist
 
-- Marketplace Scan
-- Profit Engine / Price Guard
-- Listing Execution
-- Listing Monitor
-- `/admin/control`
-- operator review/re-promotion flow
+However:
 
-## Official decision record
+v1 Rule
 
-Stale block or supplier drift block:
+Re-evaluation must be operator-triggered.
 
-1. publish stops
-2. refresh/recheck job enqueued automatically
-3. candidate/listing remains non-live
-4. fresh data produced
-5. operator reviews
-6. operator re-promotes when appropriate
+The system must not automatically re-run publish evaluation.
 
-Additional decision:
+Reason:
 
-- combined marketplace stale + supplier drift requires both to clear
-- re-evaluation after refresh is operator-triggered in v1
-- automatic re-evaluation deferred to later phase
+Automatic re-evaluation would introduce hidden queue movement and reduce operational visibility.
 
-## Operational next actions
+Restore Eligibility Contract
 
-- Run refresh jobs on cadence and monitor stale/fresh ratios.
-- Keep stale/drift block paths observable via audit and control-panel views.
-- Apply bug fixes only for v1 scanner behavior; defer redesign to later phase.
-- Continue architecture work on guarded re-run behavior and publish/monitor worker contracts.
+A listing becomes eligible for promotion back to READY_TO_PUBLISH only when:
 
-## Answer to hub question
+marketplace data is fresh
 
-Should v1 re-evaluation after successful refresh be automatic, or operator-triggered?
+supplier data is fresh
 
-**Recommended/official v1 answer: operator-triggered in v1, automatic later.**
+supplier drift is acceptable
+
+price guard passes
+
+listing candidate remains valid
+
+operator explicitly re-promotes
+
+If any condition fails, the listing must remain blocked.
+
+Audit Event Model
+
+Every blocking and recovery step must produce structured audit events.
+
+Required Events
+Marketplace Block
+LISTING_BLOCKED_STALE_MARKETPLACE_DATA
+MARKETPLACE_REFRESH_ENQUEUED
+Supplier Drift Block
+LISTING_BLOCKED_SUPPLIER_DRIFT
+SUPPLIER_REFRESH_ENQUEUED
+Combined Block
+
+Both block events must be recorded.
+
+Recovery
+LISTING_REEVALUATION_REQUESTED
+LISTING_REEVALUATION_COMPLETED
+LISTING_READY_REPROMOTED_BY_OPERATOR
+Audit Payload Requirements
+
+Every audit event must include:
+
+listing_id
+candidate_id
+marketplace_key
+block_reason
+supplier_drift_pct (if relevant)
+snapshot_age_hours
+actor_type
+timestamp
+job_id (if refresh job triggered)
+
+Actor types:
+
+WORKER
+SYSTEM
+ADMIN
+Listing Monitor Worker
+
+The monitor worker must remain observational only in this architecture.
+
+The monitor worker may:
+
+detect stuck listings
+
+detect repeated failures
+
+surface stale listings to admin control panel
+
+The monitor worker must not:
+
+auto-promote listings
+
+auto-trigger publish retries
+
+auto-restore publish eligibility
+
+Safe v1 Boundary
+
+v1 must preserve explicit operator control.
+
+The recovery flow is therefore:
+
+stale/drift block
+        ↓
+refresh job enqueued
+        ↓
+fresh data produced
+        ↓
+operator reviews
+        ↓
+operator re-promotes listing
+        ↓
+publish worker may attempt publish again
+
+No automated recovery occurs in v1.
+
+Pipeline Impact
+
+This contract affects the following system components:
+
+Price Guard
+
+Listing Execution Worker
+
+Marketplace Scanner
+
+Supplier Crawlers
+
+Listing Monitor Worker
+
+Admin Control Panel
+
+Listing Promotion Tools
+
+Decision Record
+
+Decision:
+
+Re-evaluation after refresh is operator-triggered in v1.
+
+Future version may allow automatic re-evaluation.
+
+Next Implementation Actions
+
+The Auto Listing System thread should implement:
+
+explicit block state handling in publish worker
+
+audit event generation
+
+refresh enqueue integration
+
+explicit re-promotion tooling
+
+admin visibility for blocked listings
+
+Hub Question Resolution
+
+Should v1 re-evaluation after successful refresh be automatic or operator-triggered?
+
+Decision:
+
+Operator-triggered in v1.
+
+Automatic re-evaluation may be added in later versions once publish automation is fully stabilized.
+
+What you should do now
+
+Send Codex:
+
+Replace docs/system-architecture.md with the updated version provided.
+
+No other code changes are required yet.
