@@ -97,7 +97,11 @@ function purchaseSafetyTone(status: string): string {
   if (status === "READY_FOR_PURCHASE_REVIEW") {
     return "border-emerald-300/30 bg-emerald-500/10 text-emerald-100";
   }
-  if (status === "BLOCKED_STALE_DATA" || status === "BLOCKED_SUPPLIER_DRIFT") {
+  if (
+    status === "BLOCKED_STALE_DATA" ||
+    status === "BLOCKED_SUPPLIER_DRIFT" ||
+    status === "BLOCKED_ECONOMICS_OUT_OF_BOUNDS"
+  ) {
     return "border-rose-300/30 bg-rose-500/10 text-rose-100";
   }
   if (status === "MANUAL_REVIEW_REQUIRED") {
@@ -232,7 +236,6 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const canReadyReview =
     detail != null &&
     ["MANUAL_REVIEW", "NEW", "NEW_ORDER"].includes(String(detail.order.status).toUpperCase());
-  const canApprove = detail != null && String(detail.order.status).toUpperCase() === "READY_FOR_PURCHASE_REVIEW";
   const canRecordPurchase =
     detail != null &&
     ["PURCHASE_APPROVED", "PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(
@@ -249,6 +252,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const operatorHints = detail ? buildOperatorHints(detail) : [];
   const profitSnapshot = detail ? buildProfitSnapshot(detail) : null;
   const purchaseSafety = detail ? await getOrderPurchaseSafetyStatus(detail) : null;
+  const canApprove =
+    detail != null &&
+    String(detail.order.status).toUpperCase() === "READY_FOR_PURCHASE_REVIEW" &&
+    purchaseSafety?.status === "READY_FOR_PURCHASE_REVIEW";
   const actionHints = detail
     ? Array.from(new Set([purchaseSafety?.hint, purchaseSafety?.secondaryHint, ...operatorHints].filter(Boolean) as string[])).slice(0, 2)
     : [];
@@ -514,6 +521,11 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <button disabled={!canApprove} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                         Approve purchase
                       </button>
+                      {!canApprove && purchaseSafety?.status !== "READY_FOR_PURCHASE_REVIEW" ? (
+                        <div className="mt-2 text-xs text-amber-100">
+                          Disabled: {purchaseSafety?.label ?? "Not checked yet"}.
+                        </div>
+                      ) : null}
                     </form>
 
                     <form action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">

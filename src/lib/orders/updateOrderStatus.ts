@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { orderEvents, orders } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createOrderEvent } from "./orderEvents";
+import { assertOrderPurchaseSafetyForApproval } from "./purchaseSafety";
 import { canTransitionOrderStatus } from "./transitions";
 import { isOrderStatus, type OrderStatus } from "./statuses";
 
@@ -113,11 +114,21 @@ export async function approveOrderForPurchase(input: {
   actorId?: string;
   reason?: string;
 }) {
+  const safetyStatus = await assertOrderPurchaseSafetyForApproval({
+    orderId: input.orderId,
+    actorId: input.actorId,
+  });
+
   const result = await transitionOrderStatus({
     orderId: input.orderId,
     nextStatus: "PURCHASE_APPROVED",
     actorId: input.actorId,
     reason: input.reason ?? "Purchase approved for manual placement",
+    details: {
+      purchaseSafetyStatus: safetyStatus.status,
+      purchaseSafetyReasons: safetyStatus.reasons,
+      purchaseSafetyCheckedAt: safetyStatus.checkedAt,
+    },
   });
 
   if (result.changed) {

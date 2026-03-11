@@ -1,10 +1,12 @@
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
-import type { AdminOrderDetail } from "./getAdminOrdersPageData";
+import { createOrderEvent } from "./orderEvents";
+import { getAdminOrderDetail, type AdminOrderDetail } from "./getAdminOrdersPageData";
 
 export type OrderPurchaseSafetyStatusCode =
   | "VALIDATION_NEEDED"
   | "BLOCKED_STALE_DATA"
   | "BLOCKED_SUPPLIER_DRIFT"
+  | "BLOCKED_ECONOMICS_OUT_OF_BOUNDS"
   | "MANUAL_REVIEW_REQUIRED"
   | "READY_FOR_PURCHASE_REVIEW";
 
@@ -46,6 +48,16 @@ function statusFromReasons(reasons: string[]): OrderPurchaseSafetyStatusCode {
     reasons.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE");
   if (hasDrift) return "BLOCKED_SUPPLIER_DRIFT";
 
+  const hasEconomicsBlock =
+    reasons.includes("PROFIT_BELOW_MINIMUM") ||
+    reasons.includes("MARGIN_BELOW_MINIMUM") ||
+    reasons.includes("ROI_BELOW_MINIMUM") ||
+    reasons.includes("INCOMPLETE_ECONOMICS") ||
+    reasons.includes("MISSING_SUPPLIER_PRICE") ||
+    reasons.includes("MISSING_MARKETPLACE_PRICE") ||
+    reasons.includes("MISSING_SHIPPING_DATA");
+  if (hasEconomicsBlock) return "BLOCKED_ECONOMICS_OUT_OF_BOUNDS";
+
   if (reasons.length > 0) return "MANUAL_REVIEW_REQUIRED";
   return "READY_FOR_PURCHASE_REVIEW";
 }
@@ -59,7 +71,7 @@ function mapStatusPresentation(status: OrderPurchaseSafetyStatusCode): {
 } {
   if (status === "READY_FOR_PURCHASE_REVIEW") {
     return {
-      label: "Ready for purchase review",
+      label: "Checked - pass",
       technicalLabel: "PRICE_GUARD_ALLOW",
       hint: "Manual review is still required before any purchase step.",
       secondaryHint: "Re-check supplier price before future auto-purchase execution.",
@@ -69,7 +81,7 @@ function mapStatusPresentation(status: OrderPurchaseSafetyStatusCode): {
 
   if (status === "BLOCKED_STALE_DATA") {
     return {
-      label: "Supplier data may be stale",
+      label: "Blocked - stale supplier data",
       technicalLabel: "STALE_SNAPSHOT_BLOCK",
       hint: "Validation needed before purchase.",
       secondaryHint: "Refresh data, then re-check supplier price before purchase.",
@@ -79,7 +91,7 @@ function mapStatusPresentation(status: OrderPurchaseSafetyStatusCode): {
 
   if (status === "BLOCKED_SUPPLIER_DRIFT") {
     return {
-      label: "Supplier product changed",
+      label: "Blocked - supplier drift",
       technicalLabel: "SUPPLIER_DRIFT_BLOCK",
       hint: "Manual review required.",
       secondaryHint: "Re-check supplier price before purchase.",
@@ -87,9 +99,19 @@ function mapStatusPresentation(status: OrderPurchaseSafetyStatusCode): {
     };
   }
 
+  if (status === "BLOCKED_ECONOMICS_OUT_OF_BOUNDS") {
+    return {
+      label: "Blocked - economics out of bounds",
+      technicalLabel: "ECONOMICS_BLOCK",
+      hint: "Manual review required.",
+      secondaryHint: "Do not approve purchase until economics are safe.",
+      manualReviewRequired: true,
+    };
+  }
+
   if (status === "MANUAL_REVIEW_REQUIRED") {
     return {
-      label: "Manual review required",
+      label: "Checked - manual review",
       technicalLabel: "PRICE_GUARD_MANUAL_REVIEW",
       hint: "Validation needed before purchase.",
       secondaryHint: "Re-check supplier price and availability before purchase.",
@@ -98,12 +120,79 @@ function mapStatusPresentation(status: OrderPurchaseSafetyStatusCode): {
   }
 
   return {
-    label: "Validation needed before purchase",
+    label: "Not checked yet",
     technicalLabel: "VALIDATION_NOT_RUN",
     hint: "Manual review required.",
     secondaryHint: "Link order to listing candidate, then run a fresh safety check.",
     manualReviewRequired: true,
   };
+}
+
+function buildSafetyCheckEventPayload(input: {
+  status: OrderPurchaseSafetyStatus;
+  actorId?: string;
+  gate: "READ_ONLY" | "APPROVAL_GUARD";
+  passed: boolean;
+}): Record<string, unknown> {
+  return {
+    action: "PURCHASE_SAFETY_CHECK",
+    gate: input.gate,
+    passed: input.passed,
+    actorId: input.actorId ?? null,
+    checkedAt: input.status.checkedAt,
+    status: input.status.status,
+    label: input.status.label,
+    technicalLabel: input.status.technicalLabel,
+    reasons: input.status.reasons,
+    candidateId: input.status.candidateId,
+    listingId: input.status.listingId,
+    futureExecutionHook: input.status.futureExecutionHook,
+  };
+}
+
+export async function getOrderPurchaseSafetyStatusByOrderId(input: {
+  orderId: string;
+  actorId?: string;
+  writeEvent?: boolean;
+  gate?: "READ_ONLY" | "APPROVAL_GUARD";
+}): Promise<OrderPurchaseSafetyStatus> {
+  const detail = await getAdminOrderDetail(input.orderId);
+  if (!detail) throw new Error(`Order not found: ${input.orderId}`);
+  const status = await getOrderPurchaseSafetyStatus(detail);
+
+  if (input.writeEvent) {
+    await createOrderEvent({
+      orderId: input.orderId,
+      eventType: "MANUAL_NOTE",
+      details: buildSafetyCheckEventPayload({
+        status,
+        actorId: input.actorId,
+        gate: input.gate ?? "READ_ONLY",
+        passed: status.status === "READY_FOR_PURCHASE_REVIEW",
+      }),
+    });
+  }
+
+  return status;
+}
+
+export async function assertOrderPurchaseSafetyForApproval(input: {
+  orderId: string;
+  actorId?: string;
+}): Promise<OrderPurchaseSafetyStatus> {
+  const status = await getOrderPurchaseSafetyStatusByOrderId({
+    orderId: input.orderId,
+    actorId: input.actorId,
+    writeEvent: true,
+    gate: "APPROVAL_GUARD",
+  });
+
+  if (status.status !== "READY_FOR_PURCHASE_REVIEW") {
+    throw new Error(
+      `Approval blocked by purchase safety: ${status.label}. ${status.secondaryHint ?? status.hint}`
+    );
+  }
+  return status;
 }
 
 export async function getOrderPurchaseSafetyStatus(
