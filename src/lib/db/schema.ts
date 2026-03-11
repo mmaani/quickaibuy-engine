@@ -343,23 +343,102 @@ export const orders = pgTable(
   "orders",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    listingId: uuid("listing_id"),
-    marketplaceKey: text("marketplace_key").notNull(),
-    orderId: text("order_id").notNull(),
+    marketplace: text("marketplace").notNull(),
+    marketplaceOrderId: text("marketplace_order_id").notNull(),
+    buyerName: text("buyer_name"),
+    buyerCountry: text("buyer_country"),
+    totalPrice: numeric("total_price", { precision: 12, scale: 2 }),
+    currency: text("currency").notNull().default("USD"),
     status: text("status").notNull().default("NEW"),
-    quantity: integer("quantity").notNull().default(1),
-    totalAmount: numeric("total_amount", { precision: 12, scale: 2 }),
-    currency: text("currency").default("USD"),
-    rawPayload: jsonb("raw_payload").$type<unknown>(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => ({
-    ordersMarketplaceIdx: index("orders_marketplace_idx").on(t.marketplaceKey),
+    ordersMarketplaceIdx: index("orders_marketplace_idx").on(t.marketplace),
     ordersStatusIdx: index("orders_status_idx").on(t.status),
-    ordersUniqueMarketplaceOrder: uniqueIndex("orders_unique_marketplace_order").on(
-      t.marketplaceKey,
-      t.orderId
+    ordersUniqueMarketplaceOrder: uniqueIndex("orders_marketplace_marketplace_order_unique").on(
+      t.marketplace,
+      t.marketplaceOrderId
+    ),
+    ordersMarketplaceOrderIdx: index("orders_marketplace_marketplace_order_idx").on(
+      t.marketplace,
+      t.marketplaceOrderId
     ),
   })
 );
+
+export const orderItems = pgTable(
+  "order_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    listingId: uuid("listing_id").references(() => listings.id, { onDelete: "set null" }),
+    supplierKey: text("supplier_key").notNull(),
+    supplierProductId: text("supplier_product_id").notNull(),
+    quantity: integer("quantity").notNull(),
+    itemPrice: numeric("item_price", { precision: 12, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    orderItemsOrderIdIdx: index("order_items_order_id_idx").on(t.orderId),
+    orderItemsListingIdIdx: index("order_items_listing_id_idx").on(t.listingId),
+  })
+);
+
+export const orderEvents = pgTable(
+  "order_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    eventTs: timestamp("event_ts").notNull().defaultNow(),
+    details: jsonb("details").$type<unknown>(),
+  },
+  (t) => ({
+    orderEventsOrderIdIdx: index("order_events_order_id_idx").on(t.orderId),
+    orderEventsEventTypeIdx: index("order_events_event_type_idx").on(t.eventType),
+  })
+);
+
+export const supplierOrders = pgTable(
+  "supplier_orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    supplierKey: text("supplier_key").notNull(),
+    attemptNo: integer("attempt_no").notNull().default(1),
+    supplierOrderRef: text("supplier_order_ref"),
+    purchaseStatus: text("purchase_status").notNull(),
+    trackingNumber: text("tracking_number"),
+    trackingStatus: text("tracking_status").notNull().default("NOT_AVAILABLE"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    supplierOrdersOrderIdIdx: index("supplier_orders_order_id_idx").on(t.orderId),
+    supplierOrdersPurchaseStatusIdx: index("supplier_orders_purchase_status_idx").on(
+      t.purchaseStatus
+    ),
+    supplierOrdersTrackingStatusIdx: index("supplier_orders_tracking_status_idx").on(
+      t.trackingStatus
+    ),
+    supplierOrdersOrderSupplierAttemptUnique: uniqueIndex(
+      "supplier_orders_order_supplier_attempt_unique"
+    ).on(t.orderId, t.supplierKey, t.attemptNo),
+  })
+);
+
+export type OrderRow = typeof orders.$inferSelect;
+export type OrderInsert = typeof orders.$inferInsert;
+export type OrderItemRow = typeof orderItems.$inferSelect;
+export type OrderItemInsert = typeof orderItems.$inferInsert;
+export type OrderEventRow = typeof orderEvents.$inferSelect;
+export type OrderEventInsert = typeof orderEvents.$inferInsert;
+export type SupplierOrderRow = typeof supplierOrders.$inferSelect;
+export type SupplierOrderInsert = typeof supplierOrders.$inferInsert;
