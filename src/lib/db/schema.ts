@@ -375,8 +375,8 @@ export const orderItems = pgTable(
       .notNull()
       .references(() => orders.id, { onDelete: "cascade" }),
     listingId: uuid("listing_id").references(() => listings.id, { onDelete: "set null" }),
-    supplierKey: text("supplier_key").notNull(),
-    supplierProductId: text("supplier_product_id").notNull(),
+    supplierKey: text("supplier_key"),
+    supplierProductId: text("supplier_product_id"),
     quantity: integer("quantity").notNull(),
     itemPrice: numeric("item_price", { precision: 12, scale: 2 }).notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),

@@ -11,6 +11,7 @@ import { runProfitEngine } from "../lib/profit/profitEngine";
 import { prepareListingPreviews } from "../lib/listings/prepareListingPreviews";
 import { markJobFailed, markJobQueued, markJobRunning, markJobSucceeded } from "../lib/jobs/jobLedger";
 import { pool } from "../lib/db";
+import { runOrderSyncWorker } from "./orderSync.worker";
 
 const jobsQueue = new Queue("jobs", { connection: bullConnection });
 console.log("[jobs.worker] booted and waiting for jobs");
@@ -381,7 +382,8 @@ export const jobsWorker = new Worker(
 
         return result;
       }
-            case JOB_NAMES.LISTING_PREPARE: {
+
+      case JOB_NAMES.LISTING_PREPARE: {
         const result = await prepareListingPreviews({
           limit: Number(job.data?.limit ?? 20),
           marketplace: (job.data?.marketplace ?? "ebay") as "ebay" | "amazon",
@@ -396,6 +398,43 @@ export const jobsWorker = new Worker(
           eventType: "LISTING_PREVIEWS_PREPARED",
           details: {
             source: "listing-readiness",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return result;
+      }
+
+      case JOB_NAMES.ORDER_SYNC: {
+        const result = await runOrderSyncWorker({
+          limit: Number(job.data?.limit ?? process.env.ORDER_SYNC_FETCH_LIMIT ?? 25),
+          lookbackHours: Number(job.data?.lookbackHours ?? process.env.ORDER_SYNC_LOOKBACK_HOURS ?? 48),
+          actorId: JOB_NAMES.ORDER_SYNC,
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.ORDER_SYNC,
+          entityType: "ORDER",
+          entityId: "batch",
+          eventType: "ORDER_SYNC_JOB_COMPLETED",
+          details: {
+            source: "order-sync-ebay",
             jobId: String(job.id ?? ""),
             ...result,
           },

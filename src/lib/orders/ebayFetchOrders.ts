@@ -1,0 +1,193 @@
+import {
+  getEbayPublishEnvValidation,
+  getEbaySellAccessToken,
+} from "@/lib/marketplaces/ebayPublish";
+import { normalizeOrderMarketplace } from "./statuses";
+
+type EbayMoney = {
+  value?: string | number;
+  currency?: string;
+};
+
+type EbayLineItem = {
+  lineItemId?: string;
+  legacyItemId?: string;
+  itemId?: string;
+  sku?: string;
+  quantity?: number;
+  lineItemCost?: EbayMoney;
+  total?: EbayMoney;
+};
+
+type EbayOrder = {
+  orderId?: string;
+  legacyOrderId?: string;
+  creationDate?: string;
+  lastModifiedDate?: string;
+  orderFulfillmentStatus?: string;
+  buyer?: {
+    username?: string;
+    registrationAddress?: { fullName?: string; countryCode?: string };
+  };
+  pricingSummary?: {
+    total?: EbayMoney;
+  };
+  fulfillmentStartInstructions?: Array<{
+    shippingStep?: {
+      shipTo?: {
+        fullName?: string;
+        contactAddress?: { countryCode?: string };
+      };
+    };
+  }>;
+  lineItems?: EbayLineItem[];
+};
+
+type EbayOrderListResponse = {
+  orders?: EbayOrder[];
+};
+
+export type NormalizedEbayOrderItem = {
+  marketplaceOrderItemId: string | null;
+  listingExternalId: string | null;
+  quantity: number;
+  itemPrice: number | null;
+};
+
+export type NormalizedEbayOrder = {
+  marketplace: "ebay";
+  marketplaceOrderId: string;
+  buyerName: string | null;
+  buyerCountry: string | null;
+  totalPrice: number | null;
+  currency: string | null;
+  createdAt: Date;
+  sourceStatus: string | null;
+  lineItems: NormalizedEbayOrderItem[];
+};
+
+export type FetchEbayOrdersResult = {
+  fetchedCount: number;
+  normalizedCount: number;
+  orders: NormalizedEbayOrder[];
+  lookbackHours: number;
+  limit: number;
+};
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function toDateOrNow(value: string | null): Date {
+  if (!value) return new Date();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function normalizeLineItem(item: EbayLineItem): NormalizedEbayOrderItem {
+  return {
+    marketplaceOrderItemId: cleanString(item.lineItemId),
+    listingExternalId:
+      cleanString(item.legacyItemId) ??
+      cleanString(item.itemId) ??
+      cleanString(item.sku),
+    quantity: Math.max(1, Math.trunc(toNumber(item.quantity) ?? 1)),
+    itemPrice: toNumber(item.lineItemCost?.value ?? item.total?.value),
+  };
+}
+
+function normalizeOrder(order: EbayOrder): NormalizedEbayOrder | null {
+  const marketplaceOrderId = cleanString(order.orderId) ?? cleanString(order.legacyOrderId);
+  if (!marketplaceOrderId) return null;
+
+  const shippingStep = order.fulfillmentStartInstructions?.[0]?.shippingStep;
+  const buyerName =
+    cleanString(shippingStep?.shipTo?.fullName) ??
+    cleanString(order.buyer?.registrationAddress?.fullName) ??
+    cleanString(order.buyer?.username);
+  const buyerCountry =
+    cleanString(shippingStep?.shipTo?.contactAddress?.countryCode) ??
+    cleanString(order.buyer?.registrationAddress?.countryCode);
+
+  const totalPrice = toNumber(order.pricingSummary?.total?.value);
+  const currency = cleanString(order.pricingSummary?.total?.currency);
+  const createdAt = toDateOrNow(cleanString(order.creationDate) ?? cleanString(order.lastModifiedDate));
+  const sourceStatus = cleanString(order.orderFulfillmentStatus);
+  const lineItems = (order.lineItems ?? []).map(normalizeLineItem);
+
+  return {
+    marketplace: "ebay",
+    marketplaceOrderId,
+    buyerName,
+    buyerCountry,
+    totalPrice,
+    currency,
+    createdAt,
+    sourceStatus,
+    lineItems,
+  };
+}
+
+export async function fetchEbayOrders(input?: {
+  limit?: number;
+  lookbackHours?: number;
+}): Promise<FetchEbayOrdersResult> {
+  const limit = Math.max(1, Math.min(100, Number(input?.limit ?? process.env.ORDER_SYNC_FETCH_LIMIT ?? "25")));
+  const lookbackHours = Math.max(
+    1,
+    Math.min(24 * 14, Number(input?.lookbackHours ?? process.env.ORDER_SYNC_LOOKBACK_HOURS ?? "48"))
+  );
+
+  const validation = getEbayPublishEnvValidation();
+  if (!validation.ok || !validation.config) {
+    throw new Error(`eBay order sync env invalid: ${validation.errors.join("; ")}`);
+  }
+
+  const token = await getEbaySellAccessToken(validation.config);
+  const marketplace = normalizeOrderMarketplace(validation.config.marketplaceId) || "ebay_us";
+  const startTs = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
+  const filter = `creationdate:[${startTs}..]`;
+  const url = `https://api.ebay.com/sell/fulfillment/v1/order?limit=${limit}&filter=${encodeURIComponent(filter)}`;
+
+  const resp = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "Content-Language": "en-US",
+      "X-EBAY-C-MARKETPLACE-ID": marketplace.toUpperCase(),
+    },
+  });
+
+  const text = await resp.text();
+  const body = (text ? JSON.parse(text) : {}) as EbayOrderListResponse;
+
+  if (!resp.ok) {
+    throw new Error(`eBay order fetch failed: ${resp.status} ${text.slice(0, 500)}`);
+  }
+
+  const rawOrders = Array.isArray(body.orders) ? body.orders : [];
+  const normalized = rawOrders
+    .map(normalizeOrder)
+    .filter((order): order is NormalizedEbayOrder => Boolean(order));
+
+  return {
+    fetchedCount: rawOrders.length,
+    normalizedCount: normalized.length,
+    orders: normalized,
+    lookbackHours,
+    limit,
+  };
+}
