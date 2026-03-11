@@ -14,6 +14,7 @@ const navItems = [
   { label: "Why Now", href: "#why-now" },
   { label: "Platform", href: "#platform" },
   { label: "How It Works", href: "#how-it-works" },
+  { label: "Outcomes", href: "#outcomes" },
   { label: "Benefits", href: "#benefits" },
   { label: "FAQ", href: "#faq" },
   { label: "Contact", href: "#contact" },
@@ -99,6 +100,36 @@ const benefitGroups = [
       "Lean architecture already aligned with real workflow stages",
       "Multiple future monetization layers beyond monitoring alone",
     ],
+  },
+];
+
+const outcomes = [
+  {
+    title: "Faster product decisions",
+    desc: "Move from scattered research notes to ranked opportunities in one workflow that can be reviewed quickly.",
+  },
+  {
+    title: "Better publish confidence",
+    desc: "Use pricing and guardrail checks before listing so teams can reduce avoidable mistakes and costly reversals.",
+  },
+  {
+    title: "Operator-ready visibility",
+    desc: "Give decision-makers clear signals about what to act on now, what to monitor, and what to hold.",
+  },
+];
+
+const audienceCards = [
+  {
+    label: "Marketplace sellers",
+    desc: "Teams that need quicker sourcing and pricing validation without sacrificing control.",
+  },
+  {
+    label: "Commerce operators",
+    desc: "Operators building repeatable workflows for discovery, review, and guarded execution.",
+  },
+  {
+    label: "Strategic partners",
+    desc: "Partners exploring scalable product intelligence as a growth layer for commerce operations.",
   },
 ];
 
@@ -316,6 +347,11 @@ export default function Home() {
 
         <section className="grid gap-12 pb-16 pt-10 md:pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:items-start lg:gap-14 lg:pb-24">
           <div className="animate-rise">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+              eBay-first execution live • multi-marketplace architecture in progress
+            </div>
+
             <SectionPill>AI-powered product discovery intelligence</SectionPill>
 
             <h1 className="mt-5 max-w-4xl text-balance text-[2.2rem] font-extrabold leading-[1.03] tracking-[-0.04em] text-white sm:text-5xl lg:text-7xl">
@@ -515,6 +551,19 @@ export default function Home() {
           </div>
         </section>
 
+        <section className="section-block pt-0">
+          <div className="grid gap-4 md:grid-cols-3">
+            {audienceCards.map((card) => (
+              <div key={card.label} className="glass-card rounded-3xl p-6">
+                <div className="text-sm font-semibold uppercase tracking-[0.16em] text-sky-100/90">
+                  {card.label}
+                </div>
+                <p className="mt-4 text-sm leading-7 text-white/65 sm:text-base">{card.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section id="why-now" className="section-block">
           <div className="max-w-3xl">
             <SectionPill>Why now</SectionPill>
@@ -599,6 +648,28 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+
+        <section id="outcomes" className="section-block">
+          <div className="max-w-3xl">
+            <SectionPill>Outcomes</SectionPill>
+            <h2 className="mt-5 text-balance text-3xl font-bold tracking-[-0.03em] text-white sm:text-4xl lg:text-5xl">
+              Built to improve speed, confidence, and control
+            </h2>
+            <p className="mt-5 text-pretty text-base leading-8 text-white/68 sm:text-lg">
+              QuickAIBuy is designed to be practically useful for daily operations now,
+              while also creating a stronger software foundation for future expansion.
+            </p>
+          </div>
+
+          <div className="mt-10 grid gap-4 lg:grid-cols-3">
+            {outcomes.map((outcome) => (
+              <article key={outcome.title} className="glass-card rounded-3xl p-6 sm:p-7">
+                <h3 className="text-xl font-bold text-white">{outcome.title}</h3>
+                <p className="mt-4 text-sm leading-7 text-white/64 sm:text-base">{outcome.desc}</p>
+              </article>
+            ))}
           </div>
         </section>
 
