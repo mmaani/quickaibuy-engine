@@ -345,7 +345,7 @@ export default function Home() {
           </div>
         </header>
 
-        <section className="grid gap-12 pb-16 pt-10 md:pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:items-start lg:gap-14 lg:pb-24">
+        <section className="grid gap-12 pb-16 pt-10 md:pt-14 xl:grid-cols-[1.2fr_0.8fr] xl:items-start xl:gap-14 lg:pb-24">
           <div className="animate-rise">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1.5 text-xs font-semibold text-emerald-100">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
@@ -406,7 +406,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="animate-rise-delayed lg:-mt-6">
+          <div className="animate-rise-delayed xl:-mt-4 xl:justify-self-end xl:w-full xl:max-w-[560px]">
             <div className="dashboard-frame rounded-[32px] p-3 sm:p-4">
               <div className="glass-panel rounded-[28px] p-4 sm:p-5">
                 <div className="flex flex-col gap-3 rounded-2xl border border-white/8 bg-white/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
