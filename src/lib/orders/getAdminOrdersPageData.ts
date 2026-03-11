@@ -31,6 +31,7 @@ export type AdminOrderRow = {
 export type AdminOrderItem = {
   id: string;
   listingId: string | null;
+  candidateId: string | null;
   listingExternalId: string | null;
   supplierKey: string | null;
   supplierProductId: string | null;
@@ -226,6 +227,7 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
       SELECT
         oi.id::text AS id,
         oi.listing_id::text AS "listingId",
+        l.candidate_id::text AS "candidateId",
         l.published_external_id AS "listingExternalId",
         oi.supplier_key AS "supplierKey",
         oi.supplier_product_id AS "supplierProductId",

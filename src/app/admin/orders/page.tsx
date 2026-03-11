@@ -8,6 +8,7 @@ import {
   buildCompactOrderTimeline,
   buildOperatorHints,
   buildProfitSnapshot,
+  getOrderPurchaseSafetyStatus,
   getAdminOrderDetail,
   getAdminOrdersRows,
   getPurchaseStatusIndicator,
@@ -89,6 +90,19 @@ function indicatorTone(indicator: ReturnType<typeof getPurchaseStatusIndicator>)
   if (indicator === "TRACKING_SYNCED") return "border-emerald-300/30 bg-emerald-500/10 text-emerald-100";
   if (indicator === "TRACKING_READY") return "border-cyan-300/30 bg-cyan-500/10 text-cyan-100";
   if (indicator === "PURCHASE_RECORDED") return "border-amber-300/30 bg-amber-500/10 text-amber-100";
+  return "border-white/15 bg-white/[0.05] text-white/90";
+}
+
+function purchaseSafetyTone(status: string): string {
+  if (status === "READY_FOR_PURCHASE_REVIEW") {
+    return "border-emerald-300/30 bg-emerald-500/10 text-emerald-100";
+  }
+  if (status === "BLOCKED_STALE_DATA" || status === "BLOCKED_SUPPLIER_DRIFT") {
+    return "border-rose-300/30 bg-rose-500/10 text-rose-100";
+  }
+  if (status === "MANUAL_REVIEW_REQUIRED") {
+    return "border-amber-300/30 bg-amber-500/10 text-amber-100";
+  }
   return "border-white/15 bg-white/[0.05] text-white/90";
 }
 
@@ -234,6 +248,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const progressIndicator = detail ? getPurchaseStatusIndicator(detail) : "NOT_PURCHASED";
   const operatorHints = detail ? buildOperatorHints(detail) : [];
   const profitSnapshot = detail ? buildProfitSnapshot(detail) : null;
+  const purchaseSafety = detail ? await getOrderPurchaseSafetyStatus(detail) : null;
+  const actionHints = detail
+    ? Array.from(new Set([purchaseSafety?.hint, purchaseSafety?.secondaryHint, ...operatorHints].filter(Boolean) as string[])).slice(0, 2)
+    : [];
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -418,6 +436,34 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                 </section>
 
                 <section className="glass-panel rounded-3xl border border-white/10 p-5">
+                  <h2 className="mb-3 text-lg font-semibold">Purchase safety check</h2>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs text-white/45">Safety status</div>
+                    <div className="mt-2">
+                      <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${purchaseSafetyTone(purchaseSafety?.status ?? "VALIDATION_NEEDED")}`}>
+                        {purchaseSafety?.label ?? "Validation needed before purchase"}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-sm text-white/80">{purchaseSafety?.hint ?? "Manual review required."}</div>
+                    {purchaseSafety?.secondaryHint ? <div className="mt-1 text-xs text-white/65">{purchaseSafety.secondaryHint}</div> : null}
+                    <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-white/45">
+                      {purchaseSafety?.technicalLabel ?? "VALIDATION_NOT_RUN"}
+                    </div>
+                    <div className="mt-2 text-xs text-white/55">
+                      Future execution hook: require fresh supplier validation every time.
+                    </div>
+                    {purchaseSafety?.checkedAt ? (
+                      <div className="mt-1 text-xs text-white/55">Checked: {formatDateTime(purchaseSafety.checkedAt)}</div>
+                    ) : null}
+                    {purchaseSafety?.reasons.length ? (
+                      <div className="mt-2 text-xs text-white/55">
+                        Reason codes: {purchaseSafety.reasons.join(", ")}
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="glass-panel rounded-3xl border border-white/10 p-5">
                   <h2 className="mb-3 text-lg font-semibold">Order event timeline</h2>
                   {timelineRows.length ? (
                     <div className="space-y-2">
@@ -443,11 +489,11 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                   <div className="mb-4 rounded-xl border border-cyan-300/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">
                     Step 1: Review | Step 2: Approve | Step 3: Record supplier order | Step 4: Record tracking | Step 5: Check readiness | Step 6: Sync to eBay
                   </div>
-                  {operatorHints.length ? (
+                  {actionHints.length ? (
                     <div className="mb-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100">
                       <div className="font-semibold">Operator hint</div>
-                      <div className="mt-1">{operatorHints[0]}</div>
-                      {operatorHints[1] ? <div className="mt-1 text-xs text-amber-100/90">{operatorHints[1]}</div> : null}
+                      <div className="mt-1">{actionHints[0]}</div>
+                      {actionHints[1] ? <div className="mt-1 text-xs text-amber-100/90">{actionHints[1]}</div> : null}
                     </div>
                   ) : null}
 
