@@ -185,6 +185,12 @@ export default async function DashboardPage() {
                 >
                   Open Review Console
                 </a>
+                <a
+                  href="/admin/orders"
+                  className="rounded-2xl border border-violet-300/30 bg-violet-500/10 px-4 py-3 text-sm font-semibold text-violet-100"
+                >
+                  Open Orders Console
+                </a>
               </div>
             </Section>
           </div>

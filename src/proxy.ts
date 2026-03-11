@@ -36,6 +36,7 @@ export const config = {
     "/dashboard/:path*",
     "/admin/review/:path*",
     "/admin/control/:path*",
+    "/admin/orders/:path*",
     "/api/admin/review/:path*",
     "/api/admin/pipeline/:path*",
     "/api/ops/:path*",

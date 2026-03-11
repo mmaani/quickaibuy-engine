@@ -8,3 +8,4 @@ export * from "./updateOrderStatus";
 export * from "./manualPurchaseFlow";
 export * from "./trackingSync";
 export * from "./syncTrackingToEbay";
+export * from "./getAdminOrdersPageData";
