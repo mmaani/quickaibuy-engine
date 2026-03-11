@@ -347,14 +347,14 @@ export default function Home() {
 
         <section className="grid gap-12 pb-16 pt-10 md:pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:items-start lg:gap-14 lg:pb-24">
           <div className="animate-rise">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1.5 text-xs font-semibold text-emerald-100">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
-              eBay-first execution live • multi-marketplace architecture in progress
+              eBay-first execution live
             </div>
 
             <SectionPill>AI-powered product discovery intelligence</SectionPill>
 
-            <h1 className="mt-5 max-w-4xl text-balance text-[2.2rem] font-extrabold leading-[1.03] tracking-[-0.04em] text-white sm:text-5xl lg:text-7xl">
+            <h1 className="mt-6 max-w-4xl text-balance text-[2.2rem] font-extrabold leading-[1.03] tracking-[-0.04em] text-white sm:text-5xl lg:text-7xl">
               Run safer product discovery and guarded execution through{" "}
               <span className="bg-gradient-to-r from-sky-200 via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
                 supplier intelligence, marketplace monitoring, and operator-first controls
@@ -383,25 +383,22 @@ export default function Home() {
               </a>
             </div>
 
-            <div className="mt-8 flex flex-wrap items-center gap-3 text-sm text-white/58">
+            <div className="mt-8 flex flex-wrap items-center gap-2.5 text-sm text-white/58">
               <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                 Built for operator-controlled workflows
               </span>
               <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                 Current live focus: eBay-first
               </span>
-              <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                Contact-ready via WhatsApp
-              </span>
             </div>
 
-            <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {metrics.map((item) => (
                 <div key={item.label} className="glass-card rounded-2xl p-4">
-                  <div className="text-sm font-semibold text-white sm:text-base">
+                  <div className="text-sm font-semibold leading-5 text-white sm:text-base">
                     {item.value}
                   </div>
-                  <div className="mt-1 text-xs leading-5 text-white/55 sm:text-sm">
+                  <div className="mt-2 text-xs leading-5 text-white/55 sm:text-sm">
                     {item.label}
                   </div>
                 </div>
