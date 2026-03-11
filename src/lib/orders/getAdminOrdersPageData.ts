@@ -36,6 +36,8 @@ export type AdminOrderItem = {
   supplierProductId: string | null;
   quantity: number;
   itemPrice: string;
+  estimatedSupplierCost: string | null;
+  estimatedProfit: string | null;
 };
 
 export type AdminSupplierAttempt = {
@@ -74,6 +76,14 @@ export type AdminOrderDetail = {
   latestAttempt: AdminSupplierAttempt | null;
   readiness: Awaited<ReturnType<typeof getTrackingSyncReadiness>>;
   lastSyncState: Awaited<ReturnType<typeof getTrackingSyncAttemptState>> | null;
+  events: AdminOrderEvent[];
+};
+
+export type AdminOrderEvent = {
+  id: string;
+  eventType: string;
+  eventTs: string | null;
+  details: unknown;
 };
 
 function isFilter(value: string | null | undefined): value is AdminOrdersFilter {
@@ -211,7 +221,7 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
   const order = baseRows.rows?.[0] ?? null;
   if (!order) return null;
 
-  const [itemsRows, attemptsRows, readiness] = await Promise.all([
+  const [itemsRows, attemptsRows, readiness, eventsRows] = await Promise.all([
     db.execute<AdminOrderItem>(sql`
       SELECT
         oi.id::text AS id,
@@ -220,9 +230,12 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
         oi.supplier_key AS "supplierKey",
         oi.supplier_product_id AS "supplierProductId",
         oi.quantity AS quantity,
-        oi.item_price::text AS "itemPrice"
+        oi.item_price::text AS "itemPrice",
+        pc.estimated_cogs::text AS "estimatedSupplierCost",
+        pc.estimated_profit::text AS "estimatedProfit"
       FROM order_items oi
       LEFT JOIN listings l ON l.id = oi.listing_id
+      LEFT JOIN profitable_candidates pc ON pc.id = l.candidate_id
       WHERE oi.order_id = ${orderId}
       ORDER BY oi.created_at ASC
     `),
@@ -248,6 +261,17 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
       ORDER BY so.attempt_no DESC, so.updated_at DESC, so.created_at DESC
     `),
     getTrackingSyncReadiness({ orderId }),
+    db.execute<AdminOrderEvent>(sql`
+      SELECT
+        oe.id::text AS id,
+        oe.event_type AS "eventType",
+        oe.event_ts::text AS "eventTs",
+        oe.details AS details
+      FROM order_events oe
+      WHERE oe.order_id = ${orderId}
+      ORDER BY oe.event_ts DESC, oe.id DESC
+      LIMIT 100
+    `),
   ]);
 
   const attempts = attemptsRows.rows ?? [];
@@ -264,5 +288,6 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
     latestAttempt,
     readiness,
     lastSyncState,
+    events: eventsRows.rows ?? [],
   };
 }
