@@ -10,11 +10,15 @@ import {
   buildOperatorHints,
   buildProfitSnapshot,
   getOperatorOrderStep,
+  getOperatorOrderStepFromRow,
+  getOperatorRowNextAction,
+  getTimelineEventTitle,
   getOrderPurchaseSafetyStatus,
   getAdminOrderDetail,
   getAdminOrdersRows,
   getPurchaseStatusIndicator,
   normalizeAdminOrdersFilter,
+  prepareTrackingSyncPayload,
   recordSupplierPurchase,
   recordSupplierTracking,
   setOrderReadyForPurchaseReview,
@@ -99,14 +103,6 @@ function stageTone(state: "completed" | "current" | "upcoming"): string {
   if (state === "completed") return "border-emerald-300/30 bg-emerald-500/10 text-emerald-100";
   if (state === "current") return "border-cyan-300/30 bg-cyan-500/10 text-cyan-100";
   return "border-white/15 bg-white/[0.03] text-white/65";
-}
-
-function timelineTitle(eventType: string): string {
-  if (eventType === "ORDER_INGESTED") return "New order";
-  if (eventType === "SUPPLIER_PURCHASE_RECORDED") return "Purchase recorded";
-  if (eventType === "TRACKING_ADDED") return "Tracking added";
-  if (eventType === "TRACKING_SYNCED") return "Synced";
-  return "Status changed";
 }
 
 function purchaseSafetyTone(status: string): string {
@@ -279,6 +275,16 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
     : [];
   const hasSupplierLinkage =
     detail?.items.some((item) => Boolean(item.supplierKey && item.supplierProductId)) ?? false;
+  const showTrackingPreview =
+    detail != null &&
+    (detail.readiness.ready ||
+      ["TRACKING_RECEIVED", "TRACKING_PENDING", "PURCHASE_PLACED"].includes(
+        String(detail.order.status || "").toUpperCase()
+      ));
+  const trackingPreviewPayload =
+    showTrackingPreview && detail?.readiness.ready
+      ? await prepareTrackingSyncPayload({ orderId: detail.order.id })
+      : null;
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -345,6 +351,8 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     {[
                       "Order ID",
                       "eBay order ID",
+                      "Current stage",
+                      "Next action",
                       "Buyer country",
                       "Total",
                       "Order status",
@@ -363,7 +371,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                 <tbody>
                   {!rows.length ? (
                     <tr>
-                      <td colSpan={10} className="px-3 py-8 text-center text-sm text-white/65">
+                      <td colSpan={12} className="px-3 py-8 text-center text-sm text-white/65">
                         No orders found for this filter. Sync orders, then refresh this page.
                       </td>
                     </tr>
@@ -379,6 +387,14 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                           </Link>
                         </td>
                         <td className="border-b border-white/5 px-3 py-3">{row.ebayOrderId}</td>
+                        <td className="border-b border-white/5 px-3 py-3">
+                          <span className="rounded-full border border-white/15 bg-white/[0.05] px-2 py-1 text-xs text-white/90">
+                            {getOperatorOrderStepFromRow(row)}
+                          </span>
+                        </td>
+                        <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
+                          {getOperatorRowNextAction(row)}
+                        </td>
                         <td className="border-b border-white/5 px-3 py-3">{row.buyerCountry ?? "-"}</td>
                         <td className="border-b border-white/5 px-3 py-3">{row.totalDisplay ?? "-"}</td>
                         <td className="border-b border-white/5 px-3 py-3">
@@ -528,13 +544,13 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                 </section>
 
                 <section className="glass-panel rounded-3xl border border-white/10 p-5">
-                  <h2 className="mb-3 text-lg font-semibold">Order event timeline</h2>
+                  <h2 className="mb-3 text-lg font-semibold">Event history</h2>
                   {timelineRows.length ? (
                     <div className="space-y-2">
-                      {timelineRows.map((event) => (
+                      {timelineRows.slice(0, 8).map((event) => (
                         <div key={event.id} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm">
                           <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium text-white/90">{timelineTitle(event.eventType)}</div>
+                            <div className="font-medium text-white/90">{getTimelineEventTitle(event.eventType)}</div>
                             <div className="text-xs text-white/50">{formatDateTime(event.timestamp)}</div>
                           </div>
                           <div className="mt-1 text-white/75">{event.description}</div>
@@ -546,7 +562,54 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       No timeline events yet.
                     </div>
                   )}
+                  {timelineRows.length > 8 ? (
+                    <div className="mt-2 text-xs text-white/55">Showing latest 8 events.</div>
+                  ) : null}
                 </section>
+
+                {showTrackingPreview ? (
+                  <section className="glass-panel rounded-3xl border border-white/10 p-5">
+                    <h2 className="mb-3 text-lg font-semibold">Tracking sync preview (dry-run)</h2>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div>
+                          <div className="text-xs text-white/45">eBay order id</div>
+                          <div className="mt-1">{detail.order.marketplaceOrderId}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-white/45">Sync readiness</div>
+                          <div className="mt-1">{detail.readiness.ready ? "Ready to sync" : "Not ready yet"}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-white/45">Tracking number</div>
+                          <div className="mt-1">
+                            {trackingPreviewPayload?.tracking.trackingNumber ?? detail.latestAttempt?.trackingNumber ?? "-"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-white/45">Carrier</div>
+                          <div className="mt-1">
+                            {trackingPreviewPayload?.tracking.trackingCarrier ?? detail.latestAttempt?.trackingCarrier ?? "-"}
+                          </div>
+                        </div>
+                      </div>
+                      {!detail.readiness.ready ? (
+                        <div className="mt-3 text-xs text-amber-100">
+                          Preview only. Complete purchase and tracking details before live sync.
+                        </div>
+                      ) : (
+                        <div className="mt-3 text-xs text-white/65">
+                          Preview only. This does not execute a live eBay sync.
+                        </div>
+                      )}
+                      {!detail.readiness.ready && detail.readiness.blockingReasons.length ? (
+                        <div className="mt-2 text-xs text-white/65">
+                          Missing: {detail.readiness.blockingReasons[0]}
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
 
                 <section className="glass-panel rounded-3xl border border-white/10 p-5">
                   <h2 className="mb-3 text-lg font-semibold">Action flow</h2>

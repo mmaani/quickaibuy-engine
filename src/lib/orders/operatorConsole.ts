@@ -19,6 +19,23 @@ export type OperatorOrderStepFlowRow = {
   state: "completed" | "current" | "upcoming";
 };
 
+export type OperatorRowNextAction =
+  | "Review for purchase"
+  | "Approve purchase"
+  | "Record supplier purchase"
+  | "Add tracking"
+  | "Sync tracking"
+  | "Done";
+
+type OperatorOrderStageInput = {
+  orderStatus: string | null | undefined;
+  purchaseStatus: string | null | undefined;
+  trackingStatus: string | null | undefined;
+  trackingReady: boolean;
+  trackingSynced: boolean;
+  trackingNumberPresent: boolean;
+};
+
 export type OrderTimelineRow = {
   id: string;
   eventType:
@@ -130,6 +147,14 @@ function normalizeTimelineEvent(event: AdminOrderEvent): OrderTimelineRow | null
   return null;
 }
 
+export function getTimelineEventTitle(eventType: OrderTimelineRow["eventType"]): string {
+  if (eventType === "ORDER_INGESTED") return "New order";
+  if (eventType === "SUPPLIER_PURCHASE_RECORDED") return "Purchase recorded";
+  if (eventType === "TRACKING_ADDED") return "Tracking added";
+  if (eventType === "TRACKING_SYNCED") return "Synced";
+  return "Status changed";
+}
+
 export function buildCompactOrderTimeline(events: AdminOrderEvent[]): OrderTimelineRow[] {
   return events
     .map(normalizeTimelineEvent)
@@ -162,21 +187,76 @@ export function getPurchaseStatusIndicator(detail: AdminOrderDetail): PurchaseSt
   return "NOT_PURCHASED";
 }
 
-export function getOperatorOrderStep(detail: AdminOrderDetail): OperatorOrderStepLabel {
-  const indicator = getPurchaseStatusIndicator(detail);
+export function getOperatorOrderStepFromSignals(input: OperatorOrderStageInput): OperatorOrderStepLabel {
+  const orderStatus = String(input.orderStatus ?? "").toUpperCase();
+  const purchaseStatus = String(input.purchaseStatus ?? "").toUpperCase();
+  const trackingStatus = String(input.trackingStatus ?? "").toUpperCase();
 
-  if (indicator === "TRACKING_SYNCED") return "Synced";
-  if (indicator === "TRACKING_READY") return "Ready to sync";
+  if (input.trackingSynced || orderStatus === "TRACKING_SYNCED") return "Synced";
+  if (input.trackingReady || trackingStatus === "TRACKING_RECEIVED") return "Ready to sync";
 
-  const orderStatus = String(detail.order.status || "").toUpperCase();
+  const purchaseRecorded =
+    purchaseStatus === "SUBMITTED" || purchaseStatus === "CONFIRMED" || orderStatus === "PURCHASE_PLACED";
+
+  if (purchaseRecorded && !input.trackingNumberPresent) return "Tracking needed";
+  if (purchaseRecorded) return "Purchase recorded";
+
   if (orderStatus === "NEW" || orderStatus === "NEW_ORDER") return "New order";
+  return "Review for purchase";
+}
 
-  if (indicator === "PURCHASE_RECORDED") {
-    const hasTrackingNumber = Boolean(detail.latestAttempt?.trackingNumber?.trim());
-    if (!hasTrackingNumber) return "Tracking needed";
-    return "Purchase recorded";
+export function getOperatorOrderStep(detail: AdminOrderDetail): OperatorOrderStepLabel {
+  return getOperatorOrderStepFromSignals({
+    orderStatus: detail.order.status,
+    purchaseStatus: detail.latestAttempt?.purchaseStatus,
+    trackingStatus: detail.latestAttempt?.trackingStatus,
+    trackingReady: detail.readiness.ready,
+    trackingSynced:
+      Boolean(detail.latestAttempt?.trackingSyncedAt) ||
+      Boolean(detail.lastSyncState?.trackingSyncedAt),
+    trackingNumberPresent: Boolean(detail.latestAttempt?.trackingNumber?.trim()),
+  });
+}
+
+export function getOperatorOrderStepFromRow(row: {
+  status: string;
+  purchaseStatus: string | null;
+  trackingStatus: string | null;
+  trackingReady: boolean;
+}): OperatorOrderStepLabel {
+  return getOperatorOrderStepFromSignals({
+    orderStatus: row.status,
+    purchaseStatus: row.purchaseStatus,
+    trackingStatus: row.trackingStatus,
+    trackingReady: row.trackingReady,
+    trackingSynced: String(row.status || "").toUpperCase() === "TRACKING_SYNCED",
+    trackingNumberPresent: String(row.trackingStatus ?? "").toUpperCase() !== "NOT_AVAILABLE",
+  });
+}
+
+export function getOperatorRowNextAction(row: {
+  status: string;
+  purchaseStatus: string | null;
+  trackingStatus: string | null;
+  trackingReady: boolean;
+}): OperatorRowNextAction {
+  const status = String(row.status || "").toUpperCase();
+  const purchaseStatus = String(row.purchaseStatus || "").toUpperCase();
+  const trackingStatus = String(row.trackingStatus || "").toUpperCase();
+
+  if (status === "TRACKING_SYNCED") return "Done";
+  if (row.trackingReady || status === "TRACKING_RECEIVED") return "Sync tracking";
+  if (
+    purchaseStatus === "SUBMITTED" ||
+    purchaseStatus === "CONFIRMED" ||
+    status === "PURCHASE_PLACED" ||
+    status === "TRACKING_PENDING"
+  ) {
+    if (trackingStatus === "NOT_AVAILABLE" || trackingStatus === "") return "Add tracking";
+    return "Sync tracking";
   }
-
+  if (status === "PURCHASE_APPROVED") return "Record supplier purchase";
+  if (status === "READY_FOR_PURCHASE_REVIEW") return "Approve purchase";
   return "Review for purchase";
 }
 
