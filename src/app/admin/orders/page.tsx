@@ -37,6 +37,13 @@ export const metadata: Metadata = {
 };
 
 type SearchParams = Record<string, string | string[] | undefined>;
+type QuickActionKey =
+  | "mark-purchase"
+  | "supplier-ref"
+  | "tracking"
+  | "preview-sync"
+  | "sync-ebay"
+  | "view-safety";
 
 function one(value: string | string[] | undefined): string | null {
   return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
@@ -131,6 +138,31 @@ const filters: Array<{ key: AdminOrdersFilter; label: string }> = [
   { key: "synced", label: "Synced" },
   { key: "needs-attention", label: "Failed / needs attention" },
 ];
+
+function orderDetailsHref(input: {
+  filter: AdminOrdersFilter;
+  orderId: string;
+  quickAction?: QuickActionKey;
+  anchor?: string;
+}): string {
+  const q = new URLSearchParams();
+  q.set("filter", input.filter);
+  q.set("orderId", input.orderId);
+  if (input.quickAction) q.set("quickAction", input.quickAction);
+  const anchor = input.anchor ? `#${input.anchor}` : "";
+  return `/admin/orders?${q.toString()}${anchor}`;
+}
+
+function normalizePurchaseStatus(value: string | null | undefined): string {
+  const key = String(value ?? "").toUpperCase();
+  if (["PENDING", "SUBMITTED", "CONFIRMED", "FAILED", "CANCELED"].includes(key)) return key;
+  return "SUBMITTED";
+}
+
+function quickActionButtonTone(enabled: boolean): string {
+  if (!enabled) return "pointer-events-none cursor-not-allowed border-white/10 bg-white/[0.02] text-white/35";
+  return "border-white/15 bg-white/[0.05] text-white/85 hover:bg-white/[0.08]";
+}
 
 async function runOrderAction(formData: FormData) {
   "use server";
@@ -238,6 +270,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const message = one(resolved?.message);
   const error = one(resolved?.error);
   const requestedOrderId = one(resolved?.orderId);
+  const requestedQuickAction = one(resolved?.quickAction);
 
   const rows = await getAdminOrdersRows({ filter, limit: 200 });
   const selectedOrderId = requestedOrderId || rows[0]?.orderId || null;
@@ -285,6 +318,23 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
     showTrackingPreview && detail?.readiness.ready
       ? await prepareTrackingSyncPayload({ orderId: detail.order.id })
       : null;
+  const supplierRefButtonLabel = detail?.latestAttempt?.supplierOrderRef ? "Update supplier ref" : "Add supplier ref";
+  const trackingButtonLabel = detail?.latestAttempt?.trackingNumber ? "Update tracking" : "Add tracking";
+  const canViewSafety = detail != null && (purchaseSafety?.status ?? "VALIDATION_NEEDED") !== "READY_FOR_PURCHASE_REVIEW";
+  const quickActionHint =
+    requestedQuickAction === "mark-purchase"
+      ? "Shortcut selected: mark purchase recorded."
+      : requestedQuickAction === "supplier-ref"
+        ? "Shortcut selected: add or update supplier reference."
+        : requestedQuickAction === "tracking"
+          ? "Shortcut selected: add or update tracking."
+          : requestedQuickAction === "preview-sync"
+            ? "Shortcut selected: preview sync readiness."
+            : requestedQuickAction === "sync-ebay"
+              ? "Shortcut selected: sync tracking to eBay."
+              : requestedQuickAction === "view-safety"
+                ? "Shortcut selected: review purchase safety details."
+                : null;
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -361,6 +411,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       "Supplier product ID",
                       "Purchase status",
                       "Tracking status",
+                      "Quick actions",
                     ].map((h) => (
                       <th key={h} className="border-b border-white/10 px-3 py-2 text-left text-[11px] uppercase tracking-[0.16em] text-white/55">
                         {h}
@@ -371,14 +422,28 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                 <tbody>
                   {!rows.length ? (
                     <tr>
-                      <td colSpan={12} className="px-3 py-8 text-center text-sm text-white/65">
+                      <td colSpan={13} className="px-3 py-8 text-center text-sm text-white/65">
                         No orders found for this filter. Sync orders, then refresh this page.
                       </td>
                     </tr>
                   ) : null}
                   {rows.map((row) => {
-                    const href = `/admin/orders?filter=${encodeURIComponent(filter)}&orderId=${encodeURIComponent(row.orderId)}`;
+                    const href = orderDetailsHref({ filter, orderId: row.orderId });
                     const selected = row.orderId === selectedOrderId;
+                    const status = String(row.status || "").toUpperCase();
+                    const rowCanMarkPurchase = ["PURCHASE_APPROVED", "PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
+                    const rowCanTracking = ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
+                    const rowCanPreview =
+                      row.trackingReady || ["TRACKING_RECEIVED", "TRACKING_PENDING", "PURCHASE_PLACED"].includes(status);
+                    const rowCanSync = row.trackingReady;
+                    const rowCanViewSafety =
+                      ["MANUAL_REVIEW", "NEW", "NEW_ORDER", "READY_FOR_PURCHASE_REVIEW", "PURCHASE_APPROVED"].includes(status);
+                    const rowSupplierRefLabel = row.purchaseStatus ? "Update supplier ref" : "Add supplier ref";
+                    const rowTrackingLabel =
+                      row.trackingStatus && String(row.trackingStatus).toUpperCase() !== "NOT_AVAILABLE"
+                        ? "Update tracking"
+                        : "Add tracking";
+                    const purchaseDefaultStatus = normalizePurchaseStatus(row.purchaseStatus);
                     return (
                       <tr key={row.orderId} className={selected ? "bg-cyan-500/10" : "odd:bg-transparent even:bg-white/[0.02]"}>
                         <td className="border-b border-white/5 px-3 py-3">
@@ -407,6 +472,87 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         <td className="border-b border-white/5 px-3 py-3">{row.supplierProductId ?? "-"}</td>
                         <td className="border-b border-white/5 px-3 py-3">{row.purchaseStatus ?? "-"}</td>
                         <td className="border-b border-white/5 px-3 py-3">{row.trackingStatus ?? "-"}</td>
+                        <td className="border-b border-white/5 px-3 py-3">
+                          <div className="flex flex-wrap gap-1 text-xs">
+                            <form action={runOrderAction}>
+                              <input type="hidden" name="actionType" value="record-purchase" />
+                              <input type="hidden" name="orderId" value={row.orderId} />
+                              <input type="hidden" name="filter" value={filter} />
+                              <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
+                              <input type="hidden" name="purchaseStatus" value={purchaseDefaultStatus} />
+                              <button
+                                disabled={!rowCanMarkPurchase || !row.supplierDisplay}
+                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanMarkPurchase && Boolean(row.supplierDisplay))}`}
+                              >
+                                Mark purchase recorded
+                              </button>
+                            </form>
+                            <Link
+                              href={orderDetailsHref({
+                                filter,
+                                orderId: row.orderId,
+                                quickAction: "supplier-ref",
+                                anchor: "supplier-ref-form",
+                              })}
+                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanMarkPurchase)}`}
+                              aria-disabled={!rowCanMarkPurchase}
+                              tabIndex={rowCanMarkPurchase ? undefined : -1}
+                            >
+                              {rowSupplierRefLabel}
+                            </Link>
+                            <Link
+                              href={orderDetailsHref({
+                                filter,
+                                orderId: row.orderId,
+                                quickAction: "tracking",
+                                anchor: "tracking-form",
+                              })}
+                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanTracking)}`}
+                              aria-disabled={!rowCanTracking}
+                              tabIndex={rowCanTracking ? undefined : -1}
+                            >
+                              {rowTrackingLabel}
+                            </Link>
+                            <Link
+                              href={orderDetailsHref({
+                                filter,
+                                orderId: row.orderId,
+                                quickAction: "preview-sync",
+                                anchor: "tracking-preview",
+                              })}
+                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanPreview)}`}
+                              aria-disabled={!rowCanPreview}
+                              tabIndex={rowCanPreview ? undefined : -1}
+                            >
+                              Preview sync
+                            </Link>
+                            <form action={runOrderAction}>
+                              <input type="hidden" name="actionType" value="sync-ebay" />
+                              <input type="hidden" name="orderId" value={row.orderId} />
+                              <input type="hidden" name="filter" value={filter} />
+                              <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
+                              <button
+                                disabled={!rowCanSync}
+                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanSync)}`}
+                              >
+                                Sync to eBay
+                              </button>
+                            </form>
+                            <Link
+                              href={orderDetailsHref({
+                                filter,
+                                orderId: row.orderId,
+                                quickAction: "view-safety",
+                                anchor: "purchase-safety",
+                              })}
+                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanViewSafety)}`}
+                              aria-disabled={!rowCanViewSafety}
+                              tabIndex={rowCanViewSafety ? undefined : -1}
+                            >
+                              View safety
+                            </Link>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -510,7 +656,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                   </div>
                 </section>
 
-                <section className="glass-panel rounded-3xl border border-white/10 p-5">
+                <section id="purchase-safety" className="glass-panel rounded-3xl border border-white/10 p-5">
                   <h2 className="mb-3 text-lg font-semibold">Purchase safety check</h2>
                   <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                     <div className="text-xs text-white/45">Safety status</div>
@@ -568,7 +714,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                 </section>
 
                 {showTrackingPreview ? (
-                  <section className="glass-panel rounded-3xl border border-white/10 p-5">
+                  <section id="tracking-preview" className="glass-panel rounded-3xl border border-white/10 p-5">
                     <h2 className="mb-3 text-lg font-semibold">Tracking sync preview (dry-run)</h2>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
                       <div className="grid gap-3 md:grid-cols-2">
@@ -612,10 +758,64 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                 ) : null}
 
                 <section className="glass-panel rounded-3xl border border-white/10 p-5">
+                  <h2 className="mb-3 text-lg font-semibold">Quick actions</h2>
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    <form action={runOrderAction}>
+                      <input type="hidden" name="actionType" value="record-purchase" />
+                      <input type="hidden" name="orderId" value={detail.order.id} />
+                      <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="supplierKey" value={defaultSupplierKey} />
+                      <input type="hidden" name="purchaseStatus" value={normalizePurchaseStatus(detail.latestAttempt?.purchaseStatus)} />
+                      <button
+                        disabled={!canRecordPurchase || !defaultSupplierKey}
+                        className={`rounded-lg border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50 ${quickActionButtonTone(canRecordPurchase && Boolean(defaultSupplierKey))}`}
+                      >
+                        Mark purchase recorded
+                      </button>
+                    </form>
+                    <a href="#supplier-ref-form" className={`rounded-lg border px-3 py-2 ${quickActionButtonTone(canRecordPurchase)}`}>
+                      {supplierRefButtonLabel}
+                    </a>
+                    <a href="#tracking-form" className={`rounded-lg border px-3 py-2 ${quickActionButtonTone(canRecordTracking)}`}>
+                      {trackingButtonLabel}
+                    </a>
+                    <a href="#tracking-preview" className={`rounded-lg border px-3 py-2 ${quickActionButtonTone(showTrackingPreview)}`}>
+                      Preview sync
+                    </a>
+                    <form action={runOrderAction}>
+                      <input type="hidden" name="actionType" value="sync-ebay" />
+                      <input type="hidden" name="orderId" value={detail.order.id} />
+                      <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="supplierOrderId" value={detail.latestAttempt?.id ?? ""} />
+                      <input type="hidden" name="supplierKey" value={defaultSupplierKey} />
+                      <button
+                        disabled={!canSync}
+                        className={`rounded-lg border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50 ${quickActionButtonTone(canSync)}`}
+                      >
+                        Sync to eBay
+                      </button>
+                    </form>
+                    <a href="#purchase-safety" className={`rounded-lg border px-3 py-2 ${quickActionButtonTone(canViewSafety)}`}>
+                      View safety
+                    </a>
+                  </div>
+                  {!defaultSupplierKey ? (
+                    <div className="mt-2 text-xs text-amber-100">
+                      Add supplier information first, then use quick actions.
+                    </div>
+                  ) : null}
+                </section>
+
+                <section id="action-flow" className="glass-panel rounded-3xl border border-white/10 p-5">
                   <h2 className="mb-3 text-lg font-semibold">Action flow</h2>
                   <div className="mb-4 rounded-xl border border-cyan-300/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">
                     Step 1: Review | Step 2: Approve | Step 3: Record supplier order | Step 4: Record tracking | Step 5: Check readiness | Step 6: Sync to eBay
                   </div>
+                  {quickActionHint ? (
+                    <div className="mb-4 rounded-xl border border-cyan-300/20 bg-cyan-500/10 p-3 text-sm text-cyan-100">
+                      {quickActionHint}
+                    </div>
+                  ) : null}
                   {actionHints.length ? (
                     <div className="mb-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100">
                       <div className="font-semibold">Operator hint</div>
@@ -648,14 +848,14 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       ) : null}
                     </form>
 
-                    <form action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <form id="supplier-ref-form" action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">
                       <input type="hidden" name="actionType" value="record-purchase" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
-                      <div className="mb-2 text-xs text-white/55">Record supplier order</div>
+                      <div className="mb-2 text-xs text-white/55">Mark purchase recorded and add supplier ref</div>
                       <div className="grid gap-2 md:grid-cols-2">
                         <input name="supplierKey" defaultValue={defaultSupplierKey} className="contact-input" placeholder="Supplier" required />
-                        <input name="supplierOrderRef" defaultValue={detail.latestAttempt?.supplierOrderRef ?? ""} className="contact-input" placeholder="Supplier order reference" />
+                        <input name="supplierOrderRef" defaultValue={detail.latestAttempt?.supplierOrderRef ?? ""} className="contact-input" placeholder="Supplier ref" />
                         <select name="purchaseStatus" defaultValue={detail.latestAttempt?.purchaseStatus ?? "SUBMITTED"} className="contact-input">
                           <option value="PENDING">PENDING</option>
                           <option value="SUBMITTED">SUBMITTED</option>
@@ -666,16 +866,16 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         <input name="manualNote" defaultValue={detail.latestAttempt?.manualNote ?? ""} className="contact-input" placeholder="Optional note" />
                       </div>
                       <button disabled={!canRecordPurchase} className="mt-3 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
-                        Save supplier order
+                        Save purchase and supplier ref
                       </button>
                     </form>
 
-                    <form action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <form id="tracking-form" action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">
                       <input type="hidden" name="actionType" value="record-tracking" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
                       <input type="hidden" name="supplierOrderId" value={detail.latestAttempt?.id ?? ""} />
-                      <div className="mb-2 text-xs text-white/55">Record tracking</div>
+                      <div className="mb-2 text-xs text-white/55">Add or update tracking</div>
                       <div className="grid gap-2 md:grid-cols-2">
                         <input name="supplierKey" defaultValue={defaultSupplierKey} className="contact-input" placeholder="Supplier" required />
                         <input name="trackingNumber" defaultValue={detail.latestAttempt?.trackingNumber ?? ""} className="contact-input" placeholder="Tracking number" required />
@@ -689,7 +889,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         </select>
                       </div>
                       <button disabled={!canRecordTracking} className="mt-3 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
-                        Save tracking
+                        {trackingButtonLabel}
                       </button>
                     </form>
                   </div>
