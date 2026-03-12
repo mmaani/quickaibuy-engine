@@ -399,6 +399,20 @@ function ReviewActions({ candidate }: { candidate: CandidateDetail["candidate"] 
   );
 }
 
+
+
+function parseBatchSkipSummary(value: string): Array<{ reason: string; count: number }> {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as Record<string, number>;
+    return Object.entries(parsed)
+      .filter((entry) => typeof entry[1] === "number" && entry[1] > 0)
+      .map(([reason, count]) => ({ reason, count }));
+  } catch {
+    return [];
+  }
+}
+
 function EmptyDetailPane() {
   return (
     <div className="glass-panel rounded-3xl border border-white/10 p-8 text-center text-sm text-white/55">
@@ -415,6 +429,11 @@ export default async function ReviewPage({
   const resolvedSearchParams = await searchParams;
   const previewUpdated = String(resolvedSearchParams?.previewUpdated ?? "").trim() === "1";
   const previewError = String(resolvedSearchParams?.previewError ?? "").trim();
+  const batchUpdated = String(resolvedSearchParams?.batchUpdated ?? "").trim() === "1";
+  const batchAction = String(resolvedSearchParams?.batchAction ?? "").trim().toUpperCase();
+  const batchApplied = Number(String(resolvedSearchParams?.batchApplied ?? "0").trim() || "0");
+  const batchSkipped = Number(String(resolvedSearchParams?.batchSkipped ?? "0").trim() || "0");
+  const batchSkipSummary = parseBatchSkipSummary(String(resolvedSearchParams?.batchSkipSummary ?? "").trim());
   const filters = getReviewFiltersFromSearchParams(resolvedSearchParams);
   const [filterOptions, candidates] = await Promise.all([
     getReviewFilterOptions(),
@@ -460,6 +479,22 @@ export default async function ReviewPage({
           {previewError ? (
             <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
               {previewError}
+            </div>
+          ) : null}
+          {batchUpdated ? (
+            <div className="mt-4 rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">
+              <div className="font-semibold">
+                Batch {batchAction || "decision"}: applied {batchApplied}, skipped {batchSkipped}
+              </div>
+              {batchSkipSummary.length ? (
+                <ul className="mt-2 list-disc pl-5 text-xs text-cyan-50/90">
+                  {batchSkipSummary.map((item) => (
+                    <li key={item.reason}>
+                      {item.reason}: {item.count}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
 
@@ -514,26 +549,48 @@ export default async function ReviewPage({
 
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,760px)_minmax(0,1fr)]">
           <section className="glass-panel rounded-3xl border border-white/10 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-white">Candidate Queue</h2>
-              <div className="text-xs text-white/45">{candidates.length} row(s)</div>
-            </div>
-            <div className="overflow-hidden rounded-2xl border border-white/10">
-              <div className="max-h-[78vh] overflow-auto">
-                <table className="min-w-full border-collapse text-sm text-white/90">
-                  <thead className="sticky top-0 z-10 bg-[#111827]">
-                    <tr>
-                      {["candidate", "supplier", "marketplace", "profit", "margin", "roi", "status", "calc_ts"].map((label) => (
-                        <th
-                          key={label}
-                          className="border-b border-white/10 px-3 py-3 text-left text-[11px] uppercase tracking-[0.16em] text-white/45"
-                        >
-                          {label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
+            <form action="/api/admin/review/decision" method="post">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-white">Candidate Queue</h2>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-white/45">{candidates.length} row(s)</div>
+                  <button
+                    type="submit"
+                    name="decisionStatus"
+                    value="APPROVED"
+                    className="rounded-2xl border border-emerald-300/30 bg-emerald-400/12 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-100"
+                  >
+                    Batch Approve Safe
+                  </button>
+                  <button
+                    type="submit"
+                    name="decisionStatus"
+                    value="REJECTED"
+                    className="rounded-2xl border border-rose-300/30 bg-rose-400/12 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-rose-100"
+                  >
+                    Batch Reject
+                  </button>
+                </div>
+              </div>
+              <p className="mb-3 text-xs text-white/55">
+                Batch approve is intentionally limited to clearly safe candidates. Manual-review/risky edge cases are skipped and must be handled in detail view.
+              </p>
+              <div className="overflow-hidden rounded-2xl border border-white/10">
+                <div className="max-h-[78vh] overflow-auto">
+                  <table className="min-w-full border-collapse text-sm text-white/90">
+                    <thead className="sticky top-0 z-10 bg-[#111827]">
+                      <tr>
+                        {["select", "candidate", "supplier", "marketplace", "profit", "margin", "roi", "status", "calc_ts"].map((label) => (
+                          <th
+                            key={label}
+                            className="border-b border-white/10 px-3 py-3 text-left text-[11px] uppercase tracking-[0.16em] text-white/45"
+                          >
+                            {label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
                     {candidates.length ? (
                       candidates.map((candidate) => {
                         const selected = detail?.candidate.id === candidate.id;
@@ -542,6 +599,12 @@ export default async function ReviewPage({
                             key={candidate.id}
                             className={selected ? "bg-cyan-300/[0.08]" : "odd:bg-transparent even:bg-white/[0.02]"}
                           >
+                            <td className="border-b border-white/5 px-3 py-3 align-top">
+                              <input type="checkbox" name="candidateIds" value={candidate.id} aria-label={`Select ${candidate.id}`} />
+                              {candidate.decisionStatus === "MANUAL_REVIEW" || candidate.blockingRiskFlags.length ? (
+                                <div className="mt-2 text-[10px] uppercase tracking-[0.12em] text-amber-200">Manual required</div>
+                              ) : null}
+                            </td>
                             <td className="border-b border-white/5 px-3 py-3 align-top">
                               <a href={buildReviewHref(filters, candidate.id)} className="block text-cyan-100">
                                 <div className="font-semibold">{candidate.id}</div>
@@ -585,15 +648,17 @@ export default async function ReviewPage({
                       })
                     ) : (
                       <tr>
-                        <td colSpan={8} className="px-4 py-10 text-center text-sm text-white/55">
+                        <td colSpan={9} className="px-4 py-10 text-center text-sm text-white/55">
                           No profitable candidates match the current filters.
                         </td>
                       </tr>
                     )}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+              <input type="hidden" name="reason" value="batch-triage" />
+            </form>
           </section>
 
           <div className="grid gap-5">
