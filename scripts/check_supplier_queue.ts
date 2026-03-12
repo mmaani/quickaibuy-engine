@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { lookup } from "node:dns/promises";
 import { Queue, type ConnectionOptions } from "bullmq";
-import { JOBS_QUEUE_NAME } from "../src/lib/jobs/jobNames";
+import { BULL_PREFIX, JOBS_QUEUE_NAME } from "../src/lib/jobs/jobNames";
 
 type ConnectivityResult = {
   ok: boolean;
@@ -71,6 +71,7 @@ async function preflightQueueConnectivity(): Promise<ConnectivityResult> {
       enableOfflineQueue: false,
       retryStrategy: () => null,
     },
+    prefix: BULL_PREFIX,
   });
 
   try {
@@ -111,7 +112,7 @@ async function main() {
   }
 
   console.log("QUEUE_CONNECTIVITY = OK");
-  const queue = new Queue(JOBS_QUEUE_NAME, { connection });
+  const queue = new Queue(JOBS_QUEUE_NAME, { connection, prefix: BULL_PREFIX });
 
   const waiting = await queue.getWaiting();
   const active = await queue.getActive();

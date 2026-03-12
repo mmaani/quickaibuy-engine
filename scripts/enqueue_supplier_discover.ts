@@ -1,10 +1,10 @@
 import "dotenv/config";
 import { Queue } from "bullmq";
 import { bullConnection } from "../src/lib/bull";
-import { JOBS_QUEUE_NAME, JOB_NAMES } from "../src/lib/jobs/jobNames";
+import { BULL_PREFIX, JOBS_QUEUE_NAME, JOB_NAMES } from "../src/lib/jobs/jobNames";
 
 async function main() {
-  const queue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection });
+  const queue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 
   const job = await queue.add(
     JOB_NAMES.SUPPLIER_DISCOVER,

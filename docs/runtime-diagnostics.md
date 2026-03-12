@@ -56,6 +56,12 @@ Compare local vs Vercel env values:
 pnpm diag:env-compare
 ```
 
+Check resolved queue namespace contract:
+
+```bash
+pnpm diag:queue-namespace
+```
+
 Find a real order for tracking-sync test:
 
 ```bash

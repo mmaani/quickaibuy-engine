@@ -1,6 +1,6 @@
 import { Worker, Queue } from "bullmq";
 import { bullConnection } from "../lib/bull";
-import { JOB_NAMES } from "../lib/jobNames";
+import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "../lib/jobNames";
 import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 import { discoverProductsForCandidate } from "../lib/products/discoverProducts";
@@ -13,7 +13,7 @@ import { markJobFailed, markJobQueued, markJobRunning, markJobSucceeded } from "
 import { pool } from "../lib/db";
 import { runOrderSyncWorker } from "./orderSync.worker";
 
-const jobsQueue = new Queue("jobs", { connection: bullConnection });
+const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 console.log("[jobs.worker] booted and waiting for jobs");
 
 
@@ -54,7 +54,7 @@ async function logWorkerRun(args: {
 }
 
 export const jobsWorker = new Worker(
-  "jobs",
+  JOBS_QUEUE_NAME,
   async (job) => {
     const startedAtMs = Date.now();
     const idempotencyKey = String(job.id ?? `${job.name}-${Date.now()}`);
@@ -464,6 +464,7 @@ export const jobsWorker = new Worker(
   {
     connection: bullConnection,
     concurrency: 10,
+    prefix: BULL_PREFIX,
   }
 );
 

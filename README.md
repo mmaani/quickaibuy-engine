@@ -32,3 +32,28 @@ All incident handling and operational procedures are documented in:
 - `docs/operator-runbook.md`
 - `docs/runtime-diagnostics.md`
 - `docs/database-migrations.md`
+
+## Migration provenance (v1)
+
+- Authoritative migration path going forward: `migrations/*.sql` only (forward-only additive SQL).
+- Historical Drizzle ledger (`drizzle/`) remains as provenance metadata and transition diagnostics only.
+- Pre/post migration verification command:
+
+```bash
+pnpm exec tsx scripts/check_migration_baseline.ts
+```
+
+(Equivalent alias: `pnpm exec tsx scripts/check_migration_ledger.ts`.)
+
+## Queue namespace isolation contract
+
+QuickAIBuy enforces environment-safe queue namespaces:
+
+- Development: `BULL_PREFIX=qaib-dev`, `JOBS_QUEUE_NAME=jobs-dev`
+- Production: `BULL_PREFIX=qaib-prod`, `JOBS_QUEUE_NAME=jobs-prod`
+
+Production requires explicit `BULL_PREFIX=qaib-prod`; startup assertions fail fast when namespace values are unsafe or ambiguous. Use diagnostics:
+
+```bash
+pnpm exec tsx scripts/queue_namespace_diagnostics.ts
+```

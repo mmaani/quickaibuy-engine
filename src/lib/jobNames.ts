@@ -1,5 +1,13 @@
-export const JOBS_QUEUE_NAME = process.env.JOBS_QUEUE_NAME || "jobs";
-export const BULL_PREFIX = process.env.BULL_PREFIX || "qaib";
+import {
+  assertSafeQueueNamespace,
+  getQueueNamespaceDiagnostics,
+} from "./queueNamespace";
+
+const namespace = assertSafeQueueNamespace("jobNames");
+
+export const JOBS_QUEUE_NAME = namespace.jobsQueueName;
+export const BULL_PREFIX = namespace.bullPrefix;
+export const QUEUE_NAMESPACE_DIAGNOSTICS = getQueueNamespaceDiagnostics();
 
 export const JOB_NAMES = {
   TREND_EXPAND: "trend:expand",

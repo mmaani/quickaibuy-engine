@@ -9,7 +9,7 @@ async function main() {
   const { eq, desc } = await import("drizzle-orm");
   const { Queue } = await import("bullmq");
   const { bullConnection } = await import("../src/lib/bull");
-  const { JOB_NAMES } = await import("../src/lib/jobNames");
+  const { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } = await import("../src/lib/jobNames");
 
   const limit = Number(process.argv[2] || "10");
   const marketplace = (process.argv[3] || "ebay").toLowerCase();
@@ -32,7 +32,7 @@ async function main() {
     (r) => String(r.marketplaceKey).toLowerCase() === marketplace
   );
 
-  const queue = new Queue("jobs", { connection: bullConnection });
+  const queue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 
   const enqueued = [];
 

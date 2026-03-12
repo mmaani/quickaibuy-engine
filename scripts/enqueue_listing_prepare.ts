@@ -5,13 +5,13 @@ dotenv.config();
 async function main() {
   const { Queue } = await import("bullmq");
   const { bullConnection } = await import("../src/lib/bull");
-  const { JOB_NAMES } = await import("../src/lib/jobNames");
+  const { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } = await import("../src/lib/jobNames");
 
   const limit = Number(process.argv[2] || "20");
   const marketplace = (process.argv[3] || "ebay") as "ebay" | "amazon";
   const forceRefresh = String(process.argv[4] || "").toLowerCase() === "true";
 
-  const queue = new Queue("jobs", { connection: bullConnection });
+  const queue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 
   const job = await queue.add(
     JOB_NAMES.LISTING_PREPARE,
