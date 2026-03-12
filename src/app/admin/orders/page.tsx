@@ -6,8 +6,10 @@ import RefreshButton from "@/app/_components/RefreshButton";
 import {
   approveOrderForPurchase,
   buildCompactOrderTimeline,
+  buildOperatorOrderStepFlow,
   buildOperatorHints,
   buildProfitSnapshot,
+  getOperatorOrderStep,
   getOrderPurchaseSafetyStatus,
   getAdminOrderDetail,
   getAdminOrdersRows,
@@ -91,6 +93,20 @@ function indicatorTone(indicator: ReturnType<typeof getPurchaseStatusIndicator>)
   if (indicator === "TRACKING_READY") return "border-cyan-300/30 bg-cyan-500/10 text-cyan-100";
   if (indicator === "PURCHASE_RECORDED") return "border-amber-300/30 bg-amber-500/10 text-amber-100";
   return "border-white/15 bg-white/[0.05] text-white/90";
+}
+
+function stageTone(state: "completed" | "current" | "upcoming"): string {
+  if (state === "completed") return "border-emerald-300/30 bg-emerald-500/10 text-emerald-100";
+  if (state === "current") return "border-cyan-300/30 bg-cyan-500/10 text-cyan-100";
+  return "border-white/15 bg-white/[0.03] text-white/65";
+}
+
+function timelineTitle(eventType: string): string {
+  if (eventType === "ORDER_INGESTED") return "New order";
+  if (eventType === "SUPPLIER_PURCHASE_RECORDED") return "Purchase recorded";
+  if (eventType === "TRACKING_ADDED") return "Tracking added";
+  if (eventType === "TRACKING_SYNCED") return "Synced";
+  return "Status changed";
 }
 
 function purchaseSafetyTone(status: string): string {
@@ -249,6 +265,8 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const canSync = detail?.readiness.ready ?? false;
   const timelineRows = detail ? buildCompactOrderTimeline(detail.events) : [];
   const progressIndicator = detail ? getPurchaseStatusIndicator(detail) : "NOT_PURCHASED";
+  const stageLabel = detail ? getOperatorOrderStep(detail) : null;
+  const stageFlow = detail ? buildOperatorOrderStepFlow(detail) : [];
   const operatorHints = detail ? buildOperatorHints(detail) : [];
   const profitSnapshot = detail ? buildProfitSnapshot(detail) : null;
   const purchaseSafety = detail ? await getOrderPurchaseSafetyStatus(detail) : null;
@@ -259,6 +277,8 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const actionHints = detail
     ? Array.from(new Set([purchaseSafety?.hint, purchaseSafety?.secondaryHint, ...operatorHints].filter(Boolean) as string[])).slice(0, 2)
     : [];
+  const hasSupplierLinkage =
+    detail?.items.some((item) => Boolean(item.supplierKey && item.supplierProductId)) ?? false;
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -341,6 +361,13 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                   </tr>
                 </thead>
                 <tbody>
+                  {!rows.length ? (
+                    <tr>
+                      <td colSpan={10} className="px-3 py-8 text-center text-sm text-white/65">
+                        No orders found for this filter. Sync orders, then refresh this page.
+                      </td>
+                    </tr>
+                  ) : null}
                   {rows.map((row) => {
                     const href = `/admin/orders?filter=${encodeURIComponent(filter)}&orderId=${encodeURIComponent(row.orderId)}`;
                     const selected = row.orderId === selectedOrderId;
@@ -375,12 +402,29 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
           <section className="space-y-5">
             {!detail ? (
               <div className="glass-panel rounded-3xl border border-white/10 p-5 text-sm text-white/60">
-                Select an order from the table to see details and actions.
+                {rows.length
+                  ? "Select an order from the table to review the current step and next action."
+                  : "No orders yet. Run order sync and come back to review and process orders."}
               </div>
             ) : (
               <>
                 <section className="glass-panel rounded-3xl border border-white/10 p-5">
                   <h2 className="mb-3 text-lg font-semibold">Order details</h2>
+                  <div className="mb-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs text-white/45">Current stage</div>
+                    <div className="mt-2">
+                      <span className="rounded-full border border-cyan-300/30 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-100">
+                        {stageLabel}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {stageFlow.map((step) => (
+                        <span key={step.label} className={`rounded-full border px-2 py-1 text-xs ${stageTone(step.state)}`}>
+                          {step.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Order status</div><div className="mt-1">{statusLabel(detail.order.status)}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">eBay order ID</div><div className="mt-1">{detail.order.marketplaceOrderId}</div></div>
@@ -398,6 +442,11 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       ))}
                       {!detail.items.length ? <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">No line items found.</div> : null}
                     </div>
+                    {!hasSupplierLinkage ? (
+                      <div className="mt-2 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                        Supplier linkage is missing. Review listing-to-supplier linkage before recording purchase.
+                      </div>
+                    ) : null}
                   </div>
                 </section>
 
@@ -417,6 +466,9 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${indicatorTone(progressIndicator)}`}>
                         {progressIndicator}
                       </span>
+                    </div>
+                    <div className="mt-2 text-xs text-white/65">
+                      Operator stage: {stageLabel}
                     </div>
                   </div>
                 </section>
@@ -467,6 +519,11 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         Reason codes: {purchaseSafety.reasons.join(", ")}
                       </div>
                     ) : null}
+                    {purchaseSafety?.status === "VALIDATION_NEEDED" ? (
+                      <div className="mt-2 text-xs text-amber-100">
+                        Purchase safety not checked yet. Review supplier price and run a fresh check before approval.
+                      </div>
+                    ) : null}
                   </div>
                 </section>
 
@@ -477,7 +534,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       {timelineRows.map((event) => (
                         <div key={event.id} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm">
                           <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium text-white/90">{event.eventType}</div>
+                            <div className="font-medium text-white/90">{timelineTitle(event.eventType)}</div>
                             <div className="text-xs text-white/50">{formatDateTime(event.timestamp)}</div>
                           </div>
                           <div className="mt-1 text-white/75">{event.description}</div>
@@ -592,6 +649,11 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         <li key={reason}>{reason}</li>
                       ))}
                     </ul>
+                  ) : null}
+                  {!canSync && !detail.readiness.blockingReasons.length ? (
+                    <div className="mt-3 text-sm text-white/70">
+                      Sync is blocked until purchase and tracking details are complete.
+                    </div>
                   ) : null}
 
                   <form action={runOrderAction} className="mt-4">

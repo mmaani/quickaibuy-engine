@@ -6,6 +6,19 @@ export type PurchaseStatusIndicator =
   | "TRACKING_READY"
   | "TRACKING_SYNCED";
 
+export type OperatorOrderStepLabel =
+  | "New order"
+  | "Review for purchase"
+  | "Purchase recorded"
+  | "Tracking needed"
+  | "Ready to sync"
+  | "Synced";
+
+export type OperatorOrderStepFlowRow = {
+  label: OperatorOrderStepLabel;
+  state: "completed" | "current" | "upcoming";
+};
+
 export type OrderTimelineRow = {
   id: string;
   eventType:
@@ -147,6 +160,47 @@ export function getPurchaseStatusIndicator(detail: AdminOrderDetail): PurchaseSt
   if (hasPurchaseRecorded) return "PURCHASE_RECORDED";
 
   return "NOT_PURCHASED";
+}
+
+export function getOperatorOrderStep(detail: AdminOrderDetail): OperatorOrderStepLabel {
+  const indicator = getPurchaseStatusIndicator(detail);
+
+  if (indicator === "TRACKING_SYNCED") return "Synced";
+  if (indicator === "TRACKING_READY") return "Ready to sync";
+
+  const orderStatus = String(detail.order.status || "").toUpperCase();
+  if (orderStatus === "NEW" || orderStatus === "NEW_ORDER") return "New order";
+
+  if (indicator === "PURCHASE_RECORDED") {
+    const hasTrackingNumber = Boolean(detail.latestAttempt?.trackingNumber?.trim());
+    if (!hasTrackingNumber) return "Tracking needed";
+    return "Purchase recorded";
+  }
+
+  return "Review for purchase";
+}
+
+export function buildOperatorOrderStepFlow(detail: AdminOrderDetail): OperatorOrderStepFlowRow[] {
+  const steps: OperatorOrderStepLabel[] = [
+    "New order",
+    "Review for purchase",
+    "Purchase recorded",
+    "Tracking needed",
+    "Ready to sync",
+    "Synced",
+  ];
+  const current = getOperatorOrderStep(detail);
+  const currentIndex = steps.indexOf(current);
+
+  return steps.map((label, index) => {
+    if (index < currentIndex) {
+      return { label, state: "completed" as const };
+    }
+    if (index === currentIndex) {
+      return { label, state: "current" as const };
+    }
+    return { label, state: "upcoming" as const };
+  });
 }
 
 export function buildProfitSnapshot(detail: AdminOrderDetail): ProfitSnapshot {
