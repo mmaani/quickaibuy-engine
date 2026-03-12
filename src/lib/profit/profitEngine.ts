@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { getProductsRawLatestOrderBySql, getProductsRawTimestampExprSql } from "@/lib/db/productsRaw";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { extractAvailabilityFromRawPayload, normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
 import { sql } from "drizzle-orm";
@@ -70,6 +71,8 @@ export async function runProfitEngine(input?: {
     input?.supplierKey && String(input.supplierKey).trim()
       ? String(input.supplierKey).trim().toLowerCase()
       : null;
+  const productsRawOrderBySql = await getProductsRawLatestOrderBySql("pr");
+  const productsRawSnapshotTsSql = await getProductsRawTimestampExprSql("pr");
 
   const rowsResult = await db.execute<ProfitRow>(sql`
     WITH ranked_matches AS (
@@ -112,12 +115,12 @@ export async function runProfitEngine(input?: {
         pr.supplier_key,
         pr.supplier_product_id,
         pr.price_min,
-        pr.snapshot_ts,
+        ${productsRawSnapshotTsSql} AS snapshot_ts,
         pr.availability_status,
         pr.raw_payload,
         ROW_NUMBER() OVER (
           PARTITION BY pr.supplier_key, pr.supplier_product_id
-          ORDER BY pr.id DESC
+          ORDER BY ${productsRawOrderBySql}
         ) AS rn
       FROM products_raw pr
       ${supplierKeyFilter ? sql`WHERE LOWER(pr.supplier_key) = ${supplierKeyFilter}` : sql``}

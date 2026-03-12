@@ -87,3 +87,48 @@ export async function countProductsRawWithTitle() {
 
   return rows[0]?.count ?? 0;
 }
+
+type ProductsRawOrderColumn = "snapshot_ts" | "created_at" | "id";
+
+let productsRawOrderColumnCache: ProductsRawOrderColumn | null = null;
+
+async function resolveProductsRawOrderColumn(): Promise<ProductsRawOrderColumn> {
+  if (productsRawOrderColumnCache) return productsRawOrderColumnCache;
+
+  const result = await db.execute<{ column_name: string }>(sql`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'products_raw'
+      AND column_name IN ('snapshot_ts', 'created_at')
+  `);
+
+  const columns = new Set((result.rows ?? []).map((row) => String(row.column_name || "")));
+  if (columns.has("snapshot_ts")) {
+    productsRawOrderColumnCache = "snapshot_ts";
+    return productsRawOrderColumnCache;
+  }
+  if (columns.has("created_at")) {
+    productsRawOrderColumnCache = "created_at";
+    return productsRawOrderColumnCache;
+  }
+
+  productsRawOrderColumnCache = "id";
+  return productsRawOrderColumnCache;
+}
+
+export async function getProductsRawLatestOrderBySql(alias: string): Promise<ReturnType<typeof sql.raw>> {
+  const orderColumn = await resolveProductsRawOrderColumn();
+  if (orderColumn === "id") {
+    return sql.raw(`${alias}.id DESC`);
+  }
+  return sql.raw(`${alias}.${orderColumn} DESC, ${alias}.id DESC`);
+}
+
+export async function getProductsRawTimestampExprSql(alias: string): Promise<ReturnType<typeof sql.raw>> {
+  const orderColumn = await resolveProductsRawOrderColumn();
+  if (orderColumn === "snapshot_ts" || orderColumn === "created_at") {
+    return sql.raw(`${alias}.${orderColumn}`);
+  }
+  return sql.raw(`NULL::timestamp`);
+}
