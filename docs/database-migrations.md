@@ -45,6 +45,12 @@ Run this check before applying any new migration and again afterward:
 pnpm exec tsx scripts/check_migration_baseline.ts
 ```
 
+Alias:
+
+```bash
+pnpm exec tsx scripts/check_migration_ledger.ts
+```
+
 This verifies:
 - expected v1 hybrid baseline markers
 - required post-baseline runtime tables/columns
@@ -64,6 +70,9 @@ node scripts/run_sql_file.mjs migrations/<file>.sql
 ```bash
 pnpm exec tsx scripts/check_migration_baseline.ts
 ```
+
+## Build/Ops note
+`pnpm build` can emit transient `ENETUNREACH` during build-time network calls in restricted environments. Treat this as an operations/network preflight issue, not as migration-ledger corruption.
 
 ## Do not do this
 - Do not mutate live tables to force a cleaner migration narrative.

@@ -30,8 +30,10 @@ function loadEnvConfig(file: string, env: EnvName): EnvConfig {
   const abs = path.resolve(file);
   const parsed = fs.existsSync(abs) ? dotenv.parse(fs.readFileSync(abs, "utf8")) : {};
   const redisUrl = String(parsed.REDIS_URL ?? "").trim() || null;
-  const bullPrefix = String(parsed.BULL_PREFIX ?? "qaib").trim() || "qaib";
-  const jobsQueueName = String(parsed.JOBS_QUEUE_NAME ?? "jobs").trim() || "jobs";
+  const bullPrefix =
+    String(parsed.BULL_PREFIX ?? "").trim() || (env === "prod" ? "qaib-prod" : "qaib-dev");
+  const jobsQueueName =
+    String(parsed.JOBS_QUEUE_NAME ?? "").trim() || (env === "prod" ? "jobs-prod" : "jobs-dev");
 
   return {
     env,
@@ -154,7 +156,7 @@ async function main() {
     recommendation:
       warnings.length === 0
         ? "Upstash setup is isolated and reachable."
-        : "Use separate REDIS_URL and/or BULL_PREFIX per environment to isolate queues.",
+        : "Use explicit per-environment REDIS_URL, BULL_PREFIX, and JOBS_QUEUE_NAME to isolate queues.",
   };
 
   console.log(JSON.stringify(output, null, 2));
