@@ -238,6 +238,49 @@ This runbook governs operator behavior across:
 
 ## Decision Made
 
+The runbook defines:
+
+- daily operational flow
+- incident response procedures
+- listing recovery procedures
+- order safety procedures
+- override usage rules
+- audit logging requirements
+- escalation ladder for operators
+
+The runbook is written so **non-technical operators can safely operate the system**.
+
+---
+
+# Safety Model
+
+The platform is designed to **fail safely and keep operator control**.
+
+Key safety properties:
+
+- review gate remains required
+- eBay publish flow is guarded and rate-limited
+- duplicate listing protections are enforced
+- listing economics are protected by Price Guard
+- stale marketplace data blocks listing promotion
+- supplier price drift blocks unsafe listings
+- supplier availability checks protect order purchase
+
+Manual overrides exist for incident response:
+
+- `PAUSE_PUBLISHING`
+- `PAUSE_MARKETPLACE_SCAN`
+- `PAUSE_ORDER_SYNC`
+- `EMERGENCY_READ_ONLY`
+
+Override state is:
+
+- persisted in the database
+- fully audit logged
+- visible in `/admin/control`
+
+For operational procedures see:
+
 QuickAIBuy v1 operations follow:
 - fail-closed behavior
 - operator-driven approvals

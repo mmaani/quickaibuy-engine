@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 const environment = process.argv[2] || "production";
 const localEnvFile = ".env.local";
 const pulledEnvFile = `.env.vercel.${environment}.compare.tmp`;
+const verbose = process.env.DIAG_VERBOSE === "1";
 
 const keysToCompare = [
   "DATABASE_URL",
@@ -48,8 +49,53 @@ function compareValues(a, b) {
   return "different";
 }
 
+function classifyPullFailure(stderr, stdout) {
+  const text = `${stderr}\n${stdout}`.toLowerCase();
+
+  if (text.includes("not logged in") || text.includes("login")) {
+    return {
+      class: "AUTH_FAILURE",
+      reason: "Vercel CLI is not logged in",
+      nextStep: "Run `vercel login` and retry `pnpm diag:env-compare`.",
+    };
+  }
+
+  if (text.includes("link") || text.includes("project") || text.includes(".vercel")) {
+    return {
+      class: "CONFIG_MISSING",
+      reason: "Vercel project is not linked",
+      nextStep: "Run `vercel link` in this repo and retry.",
+    };
+  }
+
+  if (text.includes("eai_again") || text.includes("enotfound") || text.includes("dns")) {
+    return {
+      class: "DNS_FAILURE",
+      reason: "Vercel env pull failed due to DNS/network resolution",
+      nextStep: "Retry after connectivity stabilizes.",
+    };
+  }
+
+  return {
+    class: "UNKNOWN",
+    reason: "Vercel env pull failed",
+    nextStep: "Run with DIAG_VERBOSE=1 and inspect stderr details.",
+  };
+}
+
 if (!fs.existsSync(localEnvFile)) {
-  console.error(`${localEnvFile} not found`);
+  console.log(
+    JSON.stringify(
+      {
+        status: "FAILED",
+        class: "CONFIG_MISSING",
+        reason: ".env.local not found",
+        nextStep: "Create .env.local and retry.",
+      },
+      null,
+      2
+    )
+  );
   process.exit(1);
 }
 
@@ -60,8 +106,23 @@ const pull = spawnSync(
 );
 
 if (pull.status !== 0) {
-  console.error("Failed to pull Vercel env.");
-  console.error(pull.stderr || pull.stdout);
+  const c = classifyPullFailure(pull.stderr || "", pull.stdout || "");
+  console.log(
+    JSON.stringify(
+      {
+        status: "FAILED",
+        class: c.class,
+        reason: c.reason,
+        nextStep: c.nextStep,
+        detail: `${pull.stderr || ""}\n${pull.stdout || ""}`.trim(),
+      },
+      null,
+      2
+    )
+  );
+  if (verbose) {
+    console.error(pull.stderr || pull.stdout);
+  }
   process.exit(pull.status ?? 1);
 }
 
@@ -89,6 +150,7 @@ try {
 console.log(
   JSON.stringify(
     {
+      status: "OK",
       environment,
       pulledEnvFile,
       lowMatchConfidenceThresholdFromSource: threshold,

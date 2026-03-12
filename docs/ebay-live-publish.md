@@ -86,3 +86,42 @@ Recommended retry sequence:
 2. `pnpm exec tsx scripts/fix_single_listing_payload_for_retry.ts <listing_id> China CN`
 3. `pnpm exec tsx scripts/promote_single_listing_ready.ts <listing_id>`
 4. `ENABLE_EBAY_LIVE_PUBLISH=true pnpm exec tsx scripts/run_first_guarded_live_publish.ts <listing_id>`
+
+---
+
+# Order Automation Scope (Current)
+
+Implemented foundation:
+
+- eBay order sync ingestion with idempotent persistence
+- one-page `/admin/orders` console for beginner operators
+- manual purchase and tracking recording
+- tracking readiness checks
+- controlled per-order real tracking sync to eBay
+
+Boundary (not implemented as autonomous flow yet):
+
+- supplier API auto-purchase
+- broad auto-sync / auto-fulfillment
+- customer notification automation
+
+Order operations remain **operator-assisted in v1** to maintain safety and auditability.
+
+---
+
+# Local Setup
+
+## Requirements
+
+- Node.js 20+
+- pnpm
+- PostgreSQL (`DATABASE_URL`)
+- Redis (`REDIS_URL`) for queue/worker paths
+
+---
+
+# Install
+
+```bash
+pnpm install
+```

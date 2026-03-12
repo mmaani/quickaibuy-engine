@@ -10,7 +10,7 @@ async function main() {
 
   if (!orderId) {
     throw new Error(
-      "Usage: pnpm exec tsx scripts/test_ebay_tracking_sync.ts <orderId> [supplierOrderId] [runLive=true|false]"
+      "Usage: pnpm exec tsx scripts/test_ebay_tracking_sync.ts <orderId> [supplierOrderId] [runLive=true|false]\nHint: run `pnpm exec tsx scripts/check_tracking_sync_test_order.ts` to find a valid orderId."
     );
   }
 
