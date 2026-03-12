@@ -32,3 +32,10 @@ All incident handling and operational procedures are documented in:
 - `docs/operator-runbook.md`
 - `docs/runtime-diagnostics.md`
 - `docs/database-migrations.md`
+
+---
+
+# Upstash Safety Checks
+
+- `DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_supplier_queue.ts`
+- `node --import tsx scripts/check_upstash_isolation.ts`
