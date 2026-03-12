@@ -31,3 +31,4 @@ QuickAIBuy uses an **operator-first safety model**.
 All incident handling and operational procedures are documented in:
 - `docs/operator-runbook.md`
 - `docs/runtime-diagnostics.md`
+- `docs/database-migrations.md`
