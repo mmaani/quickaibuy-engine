@@ -74,6 +74,19 @@ export type FetchEbayOrdersResult = {
   limit: number;
 };
 
+function logOrderSyncDebug(event: string, payload: Record<string, unknown>) {
+  // TEMPORARY DIAGNOSTIC: enable with ORDER_SYNC_DEBUG=1 while investigating zero-fetch behavior.
+  if (process.env.ORDER_SYNC_DEBUG !== "1") return;
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      scope: "ebay.order_sync",
+      event,
+      ...payload,
+    })
+  );
+}
+
 function toNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -154,11 +167,30 @@ export async function fetchEbayOrders(input?: {
     throw new Error(`eBay order sync env invalid: ${validation.errors.join("; ")}`);
   }
 
-  const token = await getEbaySellAccessToken(validation.config);
   const marketplace = normalizeOrderMarketplace(validation.config.marketplaceId) || "ebay_us";
   const startTs = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
   const filter = `creationdate:[${startTs}..]`;
   const url = `https://api.ebay.com/sell/fulfillment/v1/order?limit=${limit}&filter=${encodeURIComponent(filter)}`;
+
+  logOrderSyncDebug("fetch_context", {
+    marketplace,
+    limit,
+    lookbackHours,
+    startTs,
+    filter,
+    finalUrl: url,
+  });
+
+  let token: string;
+  try {
+    token = await getEbaySellAccessToken(validation.config);
+  } catch (error) {
+    logOrderSyncDebug("token_fetch_failed", {
+      marketplace,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 
   const resp = await fetch(url, {
     method: "GET",
@@ -174,11 +206,23 @@ export async function fetchEbayOrders(input?: {
   const text = await resp.text();
   const body = (text ? JSON.parse(text) : {}) as EbayOrderListResponse;
 
+  const rawOrders = Array.isArray(body.orders) ? body.orders : [];
+  logOrderSyncDebug("fetch_response", {
+    marketplace,
+    status: resp.status,
+    ok: resp.ok,
+    bodyHasOrders: Array.isArray(body.orders),
+    ordersLength: rawOrders.length,
+    firstOrderId:
+      cleanString(rawOrders[0]?.orderId) ??
+      cleanString(rawOrders[0]?.legacyOrderId) ??
+      null,
+  });
+
   if (!resp.ok) {
     throw new Error(`eBay order fetch failed: ${resp.status} ${text.slice(0, 500)}`);
   }
 
-  const rawOrders = Array.isArray(body.orders) ? body.orders : [];
   const normalized = rawOrders
     .map(normalizeOrder)
     .filter((order): order is NormalizedEbayOrder => Boolean(order));
