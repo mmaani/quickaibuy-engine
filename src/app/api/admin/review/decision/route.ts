@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
-import { REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
+import { BLOCKING_RISK_FLAGS, REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import {
@@ -15,6 +15,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
+const BATCH_APPROVE_ALLOWED_STATUSES = new Set(["PENDING", "RECHECK", "APPROVED"]);
+
+type CandidateDecisionRow = {
+  id: string;
+  supplier_key: string;
+  supplier_product_id: string;
+  marketplace_key: string;
+  marketplace_listing_id: string;
+  decision_status: string;
+  risk_flags: string[] | null;
+};
 
 function unauthorizedResponse(): NextResponse {
   return NextResponse.json(
@@ -40,57 +51,60 @@ function buildRedirectUrl(request: Request): URL {
   return new URL(REVIEW_ROUTE, request.url);
 }
 
-export async function POST(request: Request) {
-  const authorization = request.headers.get("authorization");
-  if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(authorization)) {
-    return unauthorizedResponse();
-  }
-
-  const formData = await request.formData();
-  const candidateId = String(formData.get("candidateId") ?? "").trim();
-  const decisionStatus = String(formData.get("decisionStatus") ?? "").trim().toUpperCase();
-  const reasonValue = String(formData.get("reason") ?? "").trim();
-  const reason = reasonValue ? reasonValue : null;
-  const actorId = getReviewActorIdFromAuthorizationHeader(authorization);
-
-  if (!candidateId) {
-    return NextResponse.json({ ok: false, error: "candidateId required" }, { status: 400 });
-  }
-
-  if (!REVIEW_ACTION_STATUSES.includes(decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number])) {
-    return NextResponse.json({ ok: false, error: "invalid decisionStatus" }, { status: 400 });
-  }
-
-  const candidateResult = await pool.query<{
-    id: string;
-    supplier_key: string;
-    supplier_product_id: string;
-    marketplace_key: string;
-    marketplace_listing_id: string;
-    decision_status: string;
-  }>(
+async function getCandidateById(candidateId: string): Promise<CandidateDecisionRow | null> {
+  const candidateResult = await pool.query<CandidateDecisionRow>(
     `
-      SELECT id, supplier_key, supplier_product_id, marketplace_key, marketplace_listing_id, decision_status
+      SELECT id, supplier_key, supplier_product_id, marketplace_key, marketplace_listing_id, decision_status, risk_flags
       FROM profitable_candidates
       WHERE id = $1
       LIMIT 1
     `,
     [candidateId]
   );
+  return candidateResult.rows[0] ?? null;
+}
 
-  const existing = candidateResult.rows[0];
+async function applyCandidateDecision(input: {
+  candidateId: string;
+  requestedDecisionStatus: (typeof REVIEW_ACTION_STATUSES)[number];
+  reason: string | null;
+  actorId: string;
+  source: "review-console" | "review-console-batch";
+  enforceBatchSafeApprove: boolean;
+}): Promise<{
+  ok: boolean;
+  skipped?: string;
+  previousStatus?: string;
+  effectiveDecisionStatus?: string;
+}> {
+  const existing = await getCandidateById(input.candidateId);
   if (!existing) {
-    return NextResponse.json({ ok: false, error: "candidate not found" }, { status: 404 });
+    return { ok: false, skipped: "candidate_not_found" };
   }
 
-  const approvalReason = reason ?? `decision:${decisionStatus}`;
-  let effectiveDecisionStatus = decisionStatus;
-  let listingEligible = decisionStatus === "APPROVED" && existing.marketplace_key === "ebay";
+  const approvalReason = input.reason ?? `decision:${input.requestedDecisionStatus}`;
+  let effectiveDecisionStatus: string = input.requestedDecisionStatus;
+  let listingEligible =
+    input.requestedDecisionStatus === "APPROVED" && existing.marketplace_key === "ebay";
   let listingBlockReason: string | null = listingEligible ? null : approvalReason;
 
-  if (decisionStatus === "APPROVED" && existing.marketplace_key === "ebay") {
+  if (input.requestedDecisionStatus === "APPROVED" && input.enforceBatchSafeApprove) {
+    if (!BATCH_APPROVE_ALLOWED_STATUSES.has(existing.decision_status)) {
+      return { ok: false, skipped: "status_requires_manual_review" };
+    }
+
+    if (existing.marketplace_key !== "ebay") {
+      return { ok: false, skipped: "batch_approve_non_ebay_not_allowed" };
+    }
+
+    if ((existing.risk_flags ?? []).some((flag) => BLOCKING_RISK_FLAGS.has(flag))) {
+      return { ok: false, skipped: "blocking_risk_flag" };
+    }
+  }
+
+  if (input.requestedDecisionStatus === "APPROVED" && existing.marketplace_key === "ebay") {
     const priceGuard = await validateProfitSafety({
-      candidateId,
+      candidateId: input.candidateId,
       mode: "publish",
     });
     const driftMetricAvailable = priceGuard.metrics.supplier_price_drift_pct != null;
@@ -103,7 +117,7 @@ export async function POST(request: Request) {
     if (staleSupplierSnapshot) {
       try {
         await enqueueSupplierDiscoverRefresh({
-          idempotencySuffix: candidateId,
+          idempotencySuffix: input.candidateId,
           reason: "supplier-snapshot-age-gt-48h",
         });
       } catch {}
@@ -116,6 +130,10 @@ export async function POST(request: Request) {
       effectiveDecisionStatus = "MANUAL_REVIEW";
       listingEligible = false;
       listingBlockReason = `PRICE_GUARD_${priceGuard.decision}: ${reasons.join(", ")}`;
+
+      if (input.enforceBatchSafeApprove) {
+        return { ok: false, skipped: "price_guard_requires_manual_review" };
+      }
     }
   }
 
@@ -141,30 +159,117 @@ export async function POST(request: Request) {
         listing_block_reason = $6
       WHERE id = $1
     `,
-    [candidateId, effectiveDecisionStatus, reason, actorId, listingEligible, listingBlockReason]
+    [input.candidateId, effectiveDecisionStatus, input.reason, input.actorId, listingEligible, listingBlockReason]
   );
 
   await writeAuditLog({
     actorType: "ADMIN",
-    actorId,
+    actorId: input.actorId,
     entityType: "PROFITABLE_CANDIDATE",
-    entityId: candidateId,
+    entityId: input.candidateId,
     eventType: `DECISION_${effectiveDecisionStatus}`,
     details: {
       previousStatus: existing.decision_status,
       nextStatus: effectiveDecisionStatus,
-      reason,
+      reason: input.reason,
       supplierKey: existing.supplier_key,
       supplierProductId: existing.supplier_product_id,
       marketplaceKey: existing.marketplace_key,
       marketplaceListingId: existing.marketplace_listing_id,
       listingEligible,
-      source: "review-console",
+      source: input.source,
     },
   });
 
+  return {
+    ok: true,
+    previousStatus: existing.decision_status,
+    effectiveDecisionStatus,
+  };
+}
+
+export async function POST(request: Request) {
+  const authorization = request.headers.get("authorization");
+  if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(authorization)) {
+    return unauthorizedResponse();
+  }
+
+  const formData = await request.formData();
+  const decisionStatus = String(formData.get("decisionStatus") ?? "")
+    .trim()
+    .toUpperCase();
+  const reasonValue = String(formData.get("reason") ?? "").trim();
+  const reason = reasonValue ? reasonValue : null;
+  const actorId = getReviewActorIdFromAuthorizationHeader(authorization) ?? "review-console";
+
+  if (!REVIEW_ACTION_STATUSES.includes(decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number])) {
+    return NextResponse.json({ ok: false, error: "invalid decisionStatus" }, { status: 400 });
+  }
+
   const redirectUrl = buildRedirectUrl(request);
-  redirectUrl.searchParams.set("decisionStatus", effectiveDecisionStatus);
+  const batchCandidateIds = formData
+    .getAll("candidateIds")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  if (batchCandidateIds.length > 0) {
+    const uniqueCandidateIds = Array.from(new Set(batchCandidateIds));
+
+    let appliedCount = 0;
+    let skippedCount = 0;
+    const skippedReasons: Record<string, number> = {};
+
+    for (const candidateId of uniqueCandidateIds) {
+      const result = await applyCandidateDecision({
+        candidateId,
+        requestedDecisionStatus: decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number],
+        reason,
+        actorId,
+        source: "review-console-batch",
+        enforceBatchSafeApprove: decisionStatus === "APPROVED",
+      });
+
+      if (result.ok) {
+        appliedCount += 1;
+      } else {
+        skippedCount += 1;
+        const key = result.skipped ?? "unknown";
+        skippedReasons[key] = (skippedReasons[key] ?? 0) + 1;
+      }
+    }
+
+    redirectUrl.searchParams.set("batchUpdated", "1");
+    redirectUrl.searchParams.set("batchAction", decisionStatus);
+    redirectUrl.searchParams.set("batchApplied", String(appliedCount));
+    redirectUrl.searchParams.set("batchSkipped", String(skippedCount));
+    if (Object.keys(skippedReasons).length > 0) {
+      redirectUrl.searchParams.set("batchSkipSummary", JSON.stringify(skippedReasons));
+    } else {
+      redirectUrl.searchParams.delete("batchSkipSummary");
+    }
+
+    return NextResponse.redirect(redirectUrl, { status: 303 });
+  }
+
+  const candidateId = String(formData.get("candidateId") ?? "").trim();
+  if (!candidateId) {
+    return NextResponse.json({ ok: false, error: "candidateId required" }, { status: 400 });
+  }
+
+  const result = await applyCandidateDecision({
+    candidateId,
+    requestedDecisionStatus: decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number],
+    reason,
+    actorId,
+    source: "review-console",
+    enforceBatchSafeApprove: false,
+  });
+
+  if (!result.ok) {
+    return NextResponse.json({ ok: false, error: result.skipped ?? "decision_failed" }, { status: 400 });
+  }
+
+  redirectUrl.searchParams.set("decisionStatus", result.effectiveDecisionStatus ?? decisionStatus);
   redirectUrl.searchParams.delete("riskOnly");
   redirectUrl.searchParams.set("candidateId", candidateId);
   redirectUrl.searchParams.set("updated", "1");
