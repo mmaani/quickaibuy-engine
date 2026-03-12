@@ -87,22 +87,27 @@ export type ControlPanelData = {
     manualReviewCount: number | null;
   };
   publishPerformance: {
+    activeListings: number | null;
     publishedToday: number | null;
     publishedThisWeek: number | null;
     publishAttempts: number | null;
     publishSuccesses: number | null;
     publishSuccessRatePct: number | null;
+    blockedListings: number | null;
     publishFailureReasons: Array<{ reason: string; count: number; technicalDetail: string | null }>;
     sourceWired: {
       listings: boolean;
       audit: boolean;
       successRate: boolean;
+      blockedListings: boolean;
       failureReasons: boolean;
     };
   };
   recoveryStates: {
     staleMarketplaceBlocks: number | null;
     supplierDriftBlocks: number | null;
+    supplierAvailabilityManualReview: number | null;
+    supplierAvailabilityBlocks: number | null;
     combinedBlocks: number | null;
     marketplaceRefreshPending: number | null;
     supplierRefreshPending: number | null;
@@ -112,6 +117,8 @@ export type ControlPanelData = {
     sourceWired: {
       staleMarketplaceBlocks: boolean;
       supplierDriftBlocks: boolean;
+      supplierAvailabilityManualReview: boolean;
+      supplierAvailabilityBlocks: boolean;
       combinedBlocks: boolean;
       marketplaceRefreshPending: boolean;
       supplierRefreshPending: boolean;
@@ -149,6 +156,7 @@ export type ControlPanelData = {
   };
   orderOperations: {
     totalOrders: number | null;
+    purchaseSafetyPending: number | null;
     purchaseSafetyPassed: number | null;
     purchaseSafetyManualReview: number | null;
     purchaseSafetyBlocked: number | null;
@@ -751,6 +759,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
 
   const publishSuccesses = listingThroughput.active;
   const publishFailuresTotal = listingThroughput.publishFailed;
+  const activeListings = listingThroughput.active;
   const publishAttempts =
     publishSuccesses == null || publishFailuresTotal == null
       ? null
@@ -860,6 +869,21 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       : [];
 
   const publishAttempts24h = listingThroughput.recentPublishAttempts24h;
+
+  const blockedListings = listingsExists && profitableCandidatesExists
+    ? toNum(
+        (
+          await runQuery(`
+            select count(*)::int as count
+            from listings l
+            inner join profitable_candidates pc on pc.id = l.candidate_id
+            where lower(coalesce(l.marketplace_key, '')) = 'ebay'
+              and upper(coalesce(l.status, '')) in ('PREVIEW', 'READY_TO_PUBLISH', 'PUBLISH_FAILED')
+              and coalesce(pc.listing_eligible, false) = false
+          `)
+        )[0]?.count
+      )
+    : null;
 
   const dailyCapRow = listingDailyCapsExists
     ? (
@@ -1035,6 +1059,42 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         )
       : null;
 
+  const supplierAvailabilityManualReview =
+    profitableCandidatesExists &&
+    profitableCandidatesHasListingEligible &&
+    profitableCandidatesHasListingBlockReason
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              where pc.listing_eligible = false
+                and (
+                  upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY_UNKNOWN%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_LOW_STOCK%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY_LOW_CONFIDENCE%'
+                )
+            `)
+          )[0]?.count
+        )
+      : null;
+
+  const supplierAvailabilityBlocks =
+    profitableCandidatesExists &&
+    profitableCandidatesHasListingEligible &&
+    profitableCandidatesHasListingBlockReason
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              where pc.listing_eligible = false
+                and upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_OUT_OF_STOCK%'
+            `)
+          )[0]?.count
+        )
+      : null;
+
   const combinedBlocks =
     profitableCandidatesExists &&
     profitableCandidatesHasListingEligible &&
@@ -1152,6 +1212,24 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       severity: "critical",
     });
   }
+  if ((supplierAvailabilityManualReview ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "supplier-availability-manual-review",
+      label: "Supplier availability changed",
+      technicalLabel: "SUPPLIER_AVAILABILITY_MANUAL_REVIEW",
+      hint: "Re-check supplier stock certainty in /admin/review before publish.",
+      severity: "critical",
+    });
+  }
+  if ((supplierAvailabilityBlocks ?? 0) > 0) {
+    recoveryActionHints.push({
+      id: "supplier-availability-blocked",
+      label: "Supplier out of stock",
+      technicalLabel: "SUPPLIER_AVAILABILITY_BLOCK",
+      hint: "Do not publish blocked items until supplier stock recovers.",
+      severity: "critical",
+    });
+  }
   if ((combinedBlocks ?? 0) > 0) {
     recoveryActionHints.push({
       id: "combined-blocks",
@@ -1245,6 +1323,10 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     (purchaseSafetyBlockedStaleSupplierData ?? 0) +
     (purchaseSafetyBlockedSupplierDrift ?? 0) +
     (purchaseSafetyBlockedEconomics ?? 0);
+  const purchaseSafetyPendingTotal =
+    (purchaseSafetyNotCheckedYet ?? 0) +
+    (purchaseSafetyCheckedManualReview ?? 0) +
+    purchaseSafetyBlockedTotal;
 
   const purchaseSafetyHints: ControlPanelData["purchaseSafety"]["actionHints"] = [];
   if ((purchaseSafetyNotCheckedYet ?? 0) > 0) {
@@ -1571,6 +1653,8 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     recoveryStates: {
       staleMarketplaceBlocks,
       supplierDriftBlocks,
+      supplierAvailabilityManualReview,
+      supplierAvailabilityBlocks,
       combinedBlocks,
       marketplaceRefreshPending,
       supplierRefreshPending,
@@ -1583,6 +1667,14 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           profitableCandidatesHasListingEligible &&
           profitableCandidatesHasListingBlockReason,
         supplierDriftBlocks:
+          profitableCandidatesExists &&
+          profitableCandidatesHasListingEligible &&
+          profitableCandidatesHasListingBlockReason,
+        supplierAvailabilityManualReview:
+          profitableCandidatesExists &&
+          profitableCandidatesHasListingEligible &&
+          profitableCandidatesHasListingBlockReason,
+        supplierAvailabilityBlocks:
           profitableCandidatesExists &&
           profitableCandidatesHasListingEligible &&
           profitableCandidatesHasListingBlockReason,
@@ -1622,6 +1714,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     },
     orderOperations: {
       totalOrders: ordersExists ? toNum(ordersSummary.total_orders) : null,
+      purchaseSafetyPending: purchaseSafetyPendingTotal,
       purchaseSafetyPassed: purchaseSafetyCheckedPass,
       purchaseSafetyManualReview: purchaseSafetyCheckedManualReview,
       purchaseSafetyBlocked: purchaseSafetyBlockedTotal,
@@ -1634,16 +1727,19 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       },
     },
     publishPerformance: {
+      activeListings,
       publishedToday,
       publishedThisWeek,
       publishAttempts,
       publishSuccesses,
       publishSuccessRatePct,
+      blockedListings,
       publishFailureReasons: publishFailureReasonRows,
       sourceWired: {
         listings: listingsExists,
         audit: false,
         successRate: listingsExists,
+        blockedListings: listingsExists && profitableCandidatesExists,
         failureReasons: listingsExists && listingsHasLastPublishError,
       },
     },

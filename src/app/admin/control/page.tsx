@@ -215,6 +215,8 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   const hasCriticalRecoveryBlock =
     (data.recoveryStates.staleMarketplaceBlocks ?? 0) > 0 ||
     (data.recoveryStates.supplierDriftBlocks ?? 0) > 0 ||
+    (data.recoveryStates.supplierAvailabilityManualReview ?? 0) > 0 ||
+    (data.recoveryStates.supplierAvailabilityBlocks ?? 0) > 0 ||
     (data.recoveryStates.combinedBlocks ?? 0) > 0 ||
     (data.recoveryStates.reEvaluationNeeded ?? 0) > 0;
   const hasCriticalPurchaseSafety =
@@ -234,6 +236,20 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
     { key: "dry-run", label: "Run listing execution dry-run" },
     { key: "monitor", label: "Run listing monitor" },
   ];
+
+  const nextSteps: string[] = [];
+  if ((data.publishPerformance.blockedListings ?? 0) > 0) {
+    nextSteps.push(`${data.publishPerformance.blockedListings} listings are blocked. Review in /admin/listings.`);
+  }
+  if ((data.recoveryStates.supplierDriftBlocks ?? 0) > 0) {
+    nextSteps.push("Supplier data changed. Re-check listings before publishing.");
+  }
+  if ((data.listingThroughput.recentPublishFailures24h ?? 0) > 0) {
+    nextSteps.push(`${data.listingThroughput.recentPublishFailures24h} publish failures in 24h. Review /admin/review.`);
+  }
+  if ((data.orderOperations.purchaseSafetyPending ?? 0) > 0) {
+    nextSteps.push("Orders need purchase checks in /admin/orders.");
+  }
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -257,6 +273,25 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <div className="mt-3 rounded-xl border border-rose-300/30 bg-rose-500/10 p-3 text-sm text-rose-100">{actionError}</div>
           ) : null}
         </header>
+
+        <Section title="What To Do Next">
+          {nextSteps.length ? (
+            <div className="space-y-2 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+              {nextSteps.slice(0, 4).map((step) => (
+                <div key={step}>- {step}</div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/75">
+              No urgent operator actions right now.
+            </div>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/listings</Link>
+            <Link href="/admin/review" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/review</Link>
+            <Link href="/admin/orders" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/orders</Link>
+          </div>
+        </Section>
 
         <Section title="Manual Override / Safety Controls">
           {!data.manualOverrides.available ? (
@@ -338,7 +373,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <div className="rounded-xl border border-rose-300/35 bg-rose-500/10 p-3 text-xs text-rose-100">
               Publishability is currently blocked for one or more listings.
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <StatCard
                 label="Market data too old (STALE_MARKETPLACE_BLOCK)"
                 value={metricOrUnknown(
@@ -351,6 +386,20 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 value={metricOrUnknown(
                   data.recoveryStates.supplierDriftBlocks,
                   data.recoveryStates.sourceWired.supplierDriftBlocks
+                )}
+              />
+              <StatCard
+                label="Supplier availability review"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierAvailabilityManualReview,
+                  data.recoveryStates.sourceWired.supplierAvailabilityManualReview
+                )}
+              />
+              <StatCard
+                label="Supplier availability blocked"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierAvailabilityBlocks,
+                  data.recoveryStates.sourceWired.supplierAvailabilityBlocks
                 )}
               />
               <StatCard
@@ -417,31 +466,37 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
               <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
                 Open /admin/listings for recovery actions
               </Link>
+              <Link href="/admin/review" className="ml-2 inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+                Open /admin/review for supplier safety review
+              </Link>
             </div>
           </Section>
         ) : null}
 
-        <Section title="Publish Performance">
+        <Section title="Publish Operations">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
             Compact publish KPI view from listing lifecycle truth.
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
-              label="Published today"
-              value={metricOrUnknown(data.publishPerformance.publishedToday, data.publishPerformance.sourceWired.listings)}
+              label="Active listings"
+              value={metricOrUnknown(data.publishPerformance.activeListings, data.publishPerformance.sourceWired.listings)}
             />
             <StatCard
-              label="Published this week"
-              value={metricOrUnknown(data.publishPerformance.publishedThisWeek, data.publishPerformance.sourceWired.listings)}
+              label="Published today"
+              value={metricOrUnknown(data.publishPerformance.publishedToday, data.publishPerformance.sourceWired.listings)}
             />
             <StatCard
               label="Success rate"
               value={percentOrUnknown(data.publishPerformance.publishSuccessRatePct, data.publishPerformance.sourceWired.successRate)}
             />
             <StatCard
-              label="Publish attempts"
-              value={metricOrUnknown(data.publishPerformance.publishAttempts, data.publishPerformance.sourceWired.listings)}
+              label="Blocked listings"
+              value={metricOrUnknown(data.publishPerformance.blockedListings, data.publishPerformance.sourceWired.blockedListings)}
             />
+          </div>
+          <div className="mt-3 text-xs text-white/65">
+            Some listings are blocked? Review them in <Link href="/admin/listings" className="underline">/admin/listings</Link>.
           </div>
           <div className="mt-4">
             <DataTable
@@ -466,20 +521,8 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 value={metricOrUnknown(data.orderOperations.totalOrders, data.orderOperations.sourceWired.orders)}
               />
               <StatCard
-                label="Purchase safety not checked"
-                value={metricOrUnknown(data.purchaseSafety.notCheckedYet, data.purchaseSafety.sourceWired.safetyPayload)}
-              />
-              <StatCard
-                label="Purchase passed"
-                value={metricOrUnknown(data.orderOperations.purchaseSafetyPassed, data.orderOperations.sourceWired.purchaseSafety)}
-              />
-              <StatCard
-                label="Purchase needs manual review"
-                value={metricOrUnknown(data.orderOperations.purchaseSafetyManualReview, data.orderOperations.sourceWired.purchaseSafety)}
-              />
-              <StatCard
-                label="Blocked for safety"
-                value={metricOrUnknown(data.orderOperations.purchaseSafetyBlocked, data.orderOperations.sourceWired.purchaseSafety)}
+                label="Purchase safety pending"
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyPending, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
                 label="Tracking waiting"
@@ -550,7 +593,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
               Recovery metrics are currently informational and are shown below critical worker failures.
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <StatCard
                 label="Market data too old (STALE_MARKETPLACE_BLOCK)"
                 value={metricOrUnknown(
@@ -563,6 +606,20 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 value={metricOrUnknown(
                   data.recoveryStates.supplierDriftBlocks,
                   data.recoveryStates.sourceWired.supplierDriftBlocks
+                )}
+              />
+              <StatCard
+                label="Supplier availability review"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierAvailabilityManualReview,
+                  data.recoveryStates.sourceWired.supplierAvailabilityManualReview
+                )}
+              />
+              <StatCard
+                label="Supplier availability blocked"
+                value={metricOrUnknown(
+                  data.recoveryStates.supplierAvailabilityBlocks,
+                  data.recoveryStates.sourceWired.supplierAvailabilityBlocks
                 )}
               />
               <StatCard
@@ -629,6 +686,9 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
               <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
                 Open /admin/listings for recovery actions
               </Link>
+              <Link href="/admin/review" className="ml-2 inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+                Open /admin/review for supplier safety review
+              </Link>
             </div>
           </Section>
         ) : null}
@@ -644,20 +704,8 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 value={metricOrUnknown(data.orderOperations.totalOrders, data.orderOperations.sourceWired.orders)}
               />
               <StatCard
-                label="Purchase safety not checked"
-                value={metricOrUnknown(data.purchaseSafety.notCheckedYet, data.purchaseSafety.sourceWired.safetyPayload)}
-              />
-              <StatCard
-                label="Purchase passed"
-                value={metricOrUnknown(data.orderOperations.purchaseSafetyPassed, data.orderOperations.sourceWired.purchaseSafety)}
-              />
-              <StatCard
-                label="Purchase needs manual review"
-                value={metricOrUnknown(data.orderOperations.purchaseSafetyManualReview, data.orderOperations.sourceWired.purchaseSafety)}
-              />
-              <StatCard
-                label="Blocked for safety"
-                value={metricOrUnknown(data.orderOperations.purchaseSafetyBlocked, data.orderOperations.sourceWired.purchaseSafety)}
+                label="Purchase safety pending"
+                value={metricOrUnknown(data.orderOperations.purchaseSafetyPending, data.orderOperations.sourceWired.purchaseSafety)}
               />
               <StatCard
                 label="Tracking waiting"
