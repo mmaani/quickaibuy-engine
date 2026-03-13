@@ -3,7 +3,6 @@ import { pool } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { BLOCKING_RISK_FLAGS, REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
-import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import {
   REVIEW_CONSOLE_REALM,
   getReviewActorIdFromAuthorizationHeader,
@@ -70,6 +69,19 @@ async function getCandidateById(candidateId: string): Promise<CandidateDecisionR
   return candidateResult.rows[0] ?? null;
 }
 
+async function enqueueSupplierRefreshIfAvailable(input: {
+  candidateId: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    const mod = await import("@/lib/jobs/enqueueSupplierDiscover");
+    await mod.enqueueSupplierDiscoverRefresh({
+      idempotencySuffix: input.candidateId,
+      reason: input.reason,
+    });
+  } catch {}
+}
+
 async function applyCandidateDecision(input: {
   candidateId: string;
   requestedDecisionStatus: (typeof REVIEW_ACTION_STATUSES)[number];
@@ -121,12 +133,10 @@ async function applyCandidateDecision(input: {
       supplierSnapshotAgeHours > SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS;
 
     if (staleSupplierSnapshot) {
-      try {
-        await enqueueSupplierDiscoverRefresh({
-          idempotencySuffix: input.candidateId,
-          reason: "supplier-snapshot-age-gt-48h",
-        });
-      } catch {}
+      await enqueueSupplierRefreshIfAvailable({
+        candidateId: input.candidateId,
+        reason: "supplier-snapshot-age-gt-48h",
+      });
     }
 
     if (!priceGuard.allow || !driftMetricAvailable || !supplierSnapshotAgeAvailable) {
