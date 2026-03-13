@@ -7,6 +7,7 @@ import {
   getEbaySellAccessToken,
 } from "@/lib/marketplaces/ebayPublish";
 import { createOrderEvent } from "./orderEvents";
+import { ORDER_STATUS } from "./statuses";
 import { prepareTrackingSyncPayload } from "./trackingSync";
 import { transitionOrderStatus } from "./updateOrderStatus";
 
@@ -243,7 +244,7 @@ export async function syncTrackingToEbay(input: {
 
     await transitionOrderStatus({
       orderId: input.orderId,
-      nextStatus: "TRACKING_SYNCED",
+      nextStatus: ORDER_STATUS.TRACKING_SYNCED,
       actorId,
       reason: "Tracking synced to eBay",
       details: {

@@ -1,5 +1,10 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
+import {
+  LISTING_MONITOR_STATUSES,
+  LISTING_STATUSES,
+  isPausedListingStatus,
+} from "@/lib/listings/statuses";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 
 type RunListingMonitorInput = {
@@ -31,7 +36,7 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
       updated_at AS "updatedAt"
     FROM listings
     WHERE marketplace_key = ${marketplaceKey}
-      AND status IN ('READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE', 'PUBLISH_FAILED', 'PAUSED')
+      AND status IN (${sql.join(LISTING_MONITOR_STATUSES.map((status) => sql`${status}`), sql`, `)})
     ORDER BY updated_at DESC
     LIMIT ${limit}
   `);
@@ -51,14 +56,14 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
     const publishStartedTs = row.publishStartedTs ? new Date(String(row.publishStartedTs)) : null;
 
     const isStaleInProgress =
-      status === "PUBLISH_IN_PROGRESS" &&
+      status === LISTING_STATUSES.PUBLISH_IN_PROGRESS &&
       publishStartedTs instanceof Date &&
       !Number.isNaN(publishStartedTs.getTime()) &&
       Date.now() - publishStartedTs.getTime() > staleMinutes * 60 * 1000;
 
-    const isActiveMissingExternalId = status === "ACTIVE" && !publishedExternalId;
-    const isRepeatedFailure = status === "PUBLISH_FAILED" && publishAttemptCount >= failedAttemptsThreshold;
-    const isPausedStable = status === "PAUSED";
+    const isActiveMissingExternalId = status === LISTING_STATUSES.ACTIVE && !publishedExternalId;
+    const isRepeatedFailure = status === LISTING_STATUSES.PUBLISH_FAILED && publishAttemptCount >= failedAttemptsThreshold;
+    const isPausedStable = isPausedListingStatus(status);
 
     if (isStaleInProgress) {
       staleInProgress++;
