@@ -9,7 +9,7 @@ import {
   normalizeAvailabilityConfidence,
   normalizeAvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
-import { buildSupplierSnapshotQualityPayload } from "@/lib/products/supplierQuality";
+import { resolveSupplierQualityPayload } from "@/lib/products/supplierQuality";
 
 export type SupplierDiscoverResult = {
   processedCandidates: number;
@@ -41,7 +41,7 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
     availabilityEvidenceQuality === "LOW" && availabilitySignal === "UNKNOWN"
       ? Math.min(rawConfidence ?? 0.2, 0.2)
       : rawConfidence;
-  const quality = buildSupplierSnapshotQualityPayload({
+  const quality = resolveSupplierQualityPayload({
     rawPayload: product.raw,
     availabilitySignal,
     availabilityConfidence,

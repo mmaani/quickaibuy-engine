@@ -3,6 +3,12 @@ import { normalizeAvailabilityConfidence, normalizeAvailabilitySignal, type Avai
 export type SupplierSnapshotQuality = "HIGH" | "MEDIUM" | "LOW" | "STUB";
 export type SupplierTelemetrySignal = "parsed" | "fallback" | "challenge" | "low_quality";
 export type SupplierTelemetryFlags = Record<SupplierTelemetrySignal, boolean>;
+export type SupplierQualityResolution = {
+  snapshotQuality: SupplierSnapshotQuality;
+  telemetrySignals: SupplierTelemetrySignal[];
+  telemetry: SupplierTelemetryFlags;
+  changed: boolean;
+};
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -204,5 +210,84 @@ export function buildSupplierSnapshotQualityPayload(input: {
       challenge: telemetrySignals.includes("challenge"),
       low_quality: telemetrySignals.includes("low_quality"),
     },
+  };
+}
+
+function qualityRank(value: SupplierSnapshotQuality | null): number {
+  if (value === "HIGH") return 4;
+  if (value === "MEDIUM") return 3;
+  if (value === "LOW") return 2;
+  if (value === "STUB") return 1;
+  return 0;
+}
+
+function buildTelemetryFlags(signals: SupplierTelemetrySignal[]): SupplierTelemetryFlags {
+  return {
+    parsed: signals.includes("parsed"),
+    fallback: signals.includes("fallback"),
+    challenge: signals.includes("challenge"),
+    low_quality: signals.includes("low_quality"),
+  };
+}
+
+function sortTelemetrySignals(signals: Iterable<SupplierTelemetrySignal>): SupplierTelemetrySignal[] {
+  const signalSet = new Set(signals);
+  return (["parsed", "fallback", "challenge", "low_quality"] as const).filter((key) => signalSet.has(key));
+}
+
+function sameSignals(a: SupplierTelemetrySignal[], b: SupplierTelemetrySignal[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+export function resolveSupplierQualityPayload(input: {
+  rawPayload?: Record<string, unknown> | null;
+  availabilitySignal?: AvailabilitySignal | unknown;
+  availabilityConfidence?: number | null | unknown;
+  price?: string | null | unknown;
+  title?: string | null | unknown;
+  sourceUrl?: string | null | unknown;
+  images?: unknown;
+  shippingEstimates?: unknown;
+  telemetrySignals?: SupplierTelemetrySignal[] | unknown;
+}): SupplierQualityResolution {
+  const currentPayload = { ...(input.rawPayload ?? {}) };
+  const currentSnapshotQuality = normalizeSupplierSnapshotQuality(currentPayload.snapshotQuality);
+  const currentTelemetry = normalizeSupplierTelemetry(currentPayload);
+  const derived = buildSupplierSnapshotQualityPayload({
+    rawPayload: currentPayload,
+    availabilitySignal: input.availabilitySignal,
+    availabilityConfidence: input.availabilityConfidence,
+    price: input.price,
+    title: input.title,
+    sourceUrl: input.sourceUrl,
+    images: input.images,
+    shippingEstimates: input.shippingEstimates,
+    telemetrySignals: input.telemetrySignals,
+  });
+
+  const snapshotQuality =
+    qualityRank(currentSnapshotQuality) >= qualityRank(derived.snapshotQuality)
+      ? (currentSnapshotQuality ?? derived.snapshotQuality)
+      : derived.snapshotQuality;
+  const telemetrySignals = sortTelemetrySignals([
+    ...currentTelemetry.signals,
+    ...derived.telemetrySignals,
+  ]);
+  const telemetry = buildTelemetryFlags(telemetrySignals);
+  const currentTelemetrySignals = sortTelemetrySignals(currentTelemetry.signals);
+  const currentTelemetryFlags = buildTelemetryFlags(currentTelemetrySignals);
+  const changed =
+    snapshotQuality !== currentSnapshotQuality ||
+    !sameSignals(currentTelemetrySignals, telemetrySignals) ||
+    currentTelemetryFlags.parsed !== telemetry.parsed ||
+    currentTelemetryFlags.fallback !== telemetry.fallback ||
+    currentTelemetryFlags.challenge !== telemetry.challenge ||
+    currentTelemetryFlags.low_quality !== telemetry.low_quality;
+
+  return {
+    snapshotQuality,
+    telemetrySignals,
+    telemetry,
+    changed,
   };
 }
