@@ -4,6 +4,15 @@ import { computeRecoveryState, type RecoveryState } from "@/lib/listings/recover
 import { LISTING_STATUSES } from "@/lib/listings/statuses";
 
 export const LISTINGS_ROUTE = "/admin/listings";
+export const LISTINGS_RISK_FILTERS = {
+  AUTO_PAUSED: "auto-paused",
+  MANUAL_REVIEW: "manual-review",
+  STALE_SNAPSHOT: "stale-snapshot",
+  OUT_OF_STOCK: "out-of-stock",
+  SHIPPING_CHANGED: "shipping-changed",
+} as const;
+
+export type ListingRiskFilter = (typeof LISTINGS_RISK_FILTERS)[keyof typeof LISTINGS_RISK_FILTERS];
 
 type QueryRow = Record<string, unknown>;
 
@@ -41,10 +50,18 @@ export type ListingsQueueFilters = {
   listingEligible: string;
   previewPrepared: string;
   listingStatus: string;
+  riskFilter: string;
   minProfit: string;
   minMargin: string;
   minRoi: string;
   candidateId: string;
+};
+
+export type RiskFilterLegend = {
+  value: ListingRiskFilter;
+  label: string;
+  description: string;
+  technicalLabel: string;
 };
 
 export type QueueListItem = {
@@ -133,6 +150,56 @@ function toIsoString(value: unknown): string | null {
 function asObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function normalizeRiskFilter(value: string | null | undefined): ListingRiskFilter | "" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  const allowed = Object.values(LISTINGS_RISK_FILTERS) as string[];
+  return allowed.includes(normalized) ? (normalized as ListingRiskFilter) : "";
+}
+
+export function getRiskFilterLegend(filter: string): RiskFilterLegend | null {
+  const value = normalizeRiskFilter(filter);
+  if (!value) return null;
+
+  if (value === LISTINGS_RISK_FILTERS.AUTO_PAUSED) {
+    return {
+      value,
+      label: "Auto-paused listings",
+      description: "Paused automatically for safety.",
+      technicalLabel: "AUTO_PAUSE",
+    };
+  }
+  if (value === LISTINGS_RISK_FILTERS.MANUAL_REVIEW) {
+    return {
+      value,
+      label: "Manual review risk",
+      description: "Requires human review before resuming.",
+      technicalLabel: "MANUAL_REVIEW",
+    };
+  }
+  if (value === LISTINGS_RISK_FILTERS.STALE_SNAPSHOT) {
+    return {
+      value,
+      label: "Stale snapshot",
+      description: "Supplier data is too old and needs a fresh check.",
+      technicalLabel: "SNAPSHOT_TOO_OLD",
+    };
+  }
+  if (value === LISTINGS_RISK_FILTERS.OUT_OF_STOCK) {
+    return {
+      value,
+      label: "Out of stock",
+      description: "Supplier availability check failed.",
+      technicalLabel: "SUPPLIER_OUT_OF_STOCK",
+    };
+  }
+  return {
+    value,
+    label: "Shipping changed",
+    description: "Supplier shipping changed and needs review.",
+    technicalLabel: "SUPPLIER_SHIPPING_CHANGED",
+  };
 }
 
 function computeListingEligibilityReasons(row: ListingQueueRow): string[] {
@@ -251,6 +318,7 @@ export function getListingsQueueFiltersFromSearchParams(
     listingEligible: String(searchParams?.listingEligible ?? "").trim(),
     previewPrepared: String(searchParams?.previewPrepared ?? "").trim(),
     listingStatus: String(searchParams?.listingStatus ?? "").trim(),
+    riskFilter: normalizeRiskFilter(String(searchParams?.riskFilter ?? "").trim()),
     minProfit: String(searchParams?.minProfit ?? "").trim(),
     minMargin: String(searchParams?.minMargin ?? "").trim(),
     minRoi: String(searchParams?.minRoi ?? "").trim(),
@@ -377,6 +445,67 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
     conditions.push(`COALESCE(l.status, '') = $${values.length}`);
   }
 
+  if (filters.riskFilter === LISTINGS_RISK_FILTERS.AUTO_PAUSED) {
+    conditions.push(`
+      upper(coalesce(l.status, '')) = 'PAUSED'
+      AND upper(coalesce((l.response::jsonb)->'inventoryRisk'->>'action', '')) = 'AUTO_PAUSE'
+    `);
+  }
+
+  if (filters.riskFilter === LISTINGS_RISK_FILTERS.MANUAL_REVIEW) {
+    conditions.push(`
+      upper(coalesce((l.response::jsonb)->'inventoryRisk'->>'action', '')) = 'MANUAL_REVIEW'
+    `);
+  }
+
+  if (filters.riskFilter === LISTINGS_RISK_FILTERS.STALE_SNAPSHOT) {
+    conditions.push(`
+      exists (
+        select 1
+        from jsonb_array_elements(
+          case
+            when jsonb_typeof((l.response::jsonb)->'inventoryRisk'->'signals') = 'array'
+              then (l.response::jsonb)->'inventoryRisk'->'signals'
+            else '[]'::jsonb
+          end
+        ) sig
+        where upper(coalesce(sig->>'code', '')) = 'SNAPSHOT_TOO_OLD'
+      )
+    `);
+  }
+
+  if (filters.riskFilter === LISTINGS_RISK_FILTERS.OUT_OF_STOCK) {
+    conditions.push(`
+      exists (
+        select 1
+        from jsonb_array_elements(
+          case
+            when jsonb_typeof((l.response::jsonb)->'inventoryRisk'->'signals') = 'array'
+              then (l.response::jsonb)->'inventoryRisk'->'signals'
+            else '[]'::jsonb
+          end
+        ) sig
+        where upper(coalesce(sig->>'code', '')) = 'SUPPLIER_OUT_OF_STOCK'
+      )
+    `);
+  }
+
+  if (filters.riskFilter === LISTINGS_RISK_FILTERS.SHIPPING_CHANGED) {
+    conditions.push(`
+      exists (
+        select 1
+        from jsonb_array_elements(
+          case
+            when jsonb_typeof((l.response::jsonb)->'inventoryRisk'->'signals') = 'array'
+              then (l.response::jsonb)->'inventoryRisk'->'signals'
+            else '[]'::jsonb
+          end
+        ) sig
+        where upper(coalesce(sig->>'code', '')) = 'SUPPLIER_SHIPPING_CHANGED'
+      )
+    `);
+  }
+
   const minProfit = toNumber(filters.minProfit);
   if (minProfit != null) {
     values.push(minProfit);
@@ -477,6 +606,7 @@ export async function getListingsQueueDetail(candidateId: string): Promise<Listi
     listingEligible: "",
     previewPrepared: "",
     listingStatus: "",
+    riskFilter: "",
     minProfit: "",
     minMargin: "",
     minRoi: "",

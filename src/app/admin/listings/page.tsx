@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import {
   LISTINGS_ROUTE,
+  getRiskFilterLegend,
   getApprovedQueueItems,
   getListingsQueueDetail,
   getListingsQueueFilterOptions,
@@ -105,6 +106,7 @@ function recoveryTone(state: RecoveryState): string {
 export default async function ListingsPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   const resolvedSearchParams = await searchParams;
   const filters = getListingsQueueFiltersFromSearchParams(resolvedSearchParams);
+  const activeRiskLegend = getRiskFilterLegend(filters.riskFilter);
   const promoteUpdated = String(resolvedSearchParams?.promoteUpdated ?? "").trim() === "1";
   const promoteError = String(resolvedSearchParams?.promoteError ?? "").trim();
   const previewUpdated = String(resolvedSearchParams?.previewUpdated ?? "").trim() === "1";
@@ -169,6 +171,15 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
           {resumeError ? <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{resumeError}</div> : null}
         </header>
 
+        {activeRiskLegend ? (
+          <section className="mt-5 rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">
+            <div className="font-semibold">{activeRiskLegend.label}</div>
+            <div className="mt-1 text-cyan-50/90">
+              {activeRiskLegend.description} <span className="text-cyan-50/70">Filter: {activeRiskLegend.technicalLabel}</span>
+            </div>
+          </section>
+        ) : null}
+
         <section className="mt-5 grid gap-4 md:grid-cols-5">
           <OverviewCard label="Approved candidates" value={overview.approvedCandidatesCount} />
           <OverviewCard label="Listing eligible" value={overview.listingEligibleCount} />
@@ -179,6 +190,7 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
 
         <section className="glass-panel mt-5 rounded-3xl border border-white/10 p-4">
           <form action={LISTINGS_ROUTE} method="get" className="grid gap-3 xl:grid-cols-[repeat(8,minmax(0,1fr))_auto]">
+            {filters.riskFilter ? <input type="hidden" name="riskFilter" value={filters.riskFilter} /> : null}
             <select name="supplier" defaultValue={filters.supplier} className="contact-input">
               <option value="">All suppliers</option>
               {filterOptions.suppliers.map((supplier) => <option key={supplier} value={supplier}>{supplier}</option>)}
@@ -236,7 +248,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                   </thead>
                   <tbody>
                     {rows.map((row) => {
-                      const href = `${LISTINGS_ROUTE}?candidateId=${encodeURIComponent(row.id)}`;
+                      const rowSearch = new URLSearchParams();
+                      rowSearch.set("candidateId", row.id);
+                      if (filters.riskFilter) rowSearch.set("riskFilter", filters.riskFilter);
+                      const href = `${LISTINGS_ROUTE}?${rowSearch.toString()}`;
                       return (
                         <tr key={row.id} className={selectedCandidateId === row.id ? "bg-cyan-500/10" : "odd:bg-transparent even:bg-white/[0.02]"}>
                           <td className="border-b border-white/5 px-3 py-3"><Link href={href} className="text-cyan-100 underline">{row.id}</Link></td>

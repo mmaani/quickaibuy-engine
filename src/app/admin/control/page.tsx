@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import RefreshButton from "@/app/_components/RefreshButton";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
+import { LISTINGS_RISK_FILTERS, LISTINGS_ROUTE } from "@/lib/listings/getApprovedListingsQueueData";
 import { getManualOverrideSnapshot, setManualOverride, type ManualOverrideKey } from "@/lib/control/manualOverrides";
 import {
   getReviewActorIdFromAuthorizationHeader,
@@ -107,6 +108,28 @@ function percentOrUnknown(value: number | null, wired: boolean): React.ReactNode
   if (!wired) return "not wired yet";
   if (value == null) return "unknown";
   return `${value.toFixed(2)}%`;
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "unknown";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return date.toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  });
+}
+
+function yesNoUnknown(value: boolean | null): string {
+  if (value == null) return "Unknown";
+  return value ? "Yes" : "No";
+}
+
+function buildListingsRiskHref(riskFilter: string): string {
+  const params = new URLSearchParams();
+  params.set("riskFilter", riskFilter);
+  return `${LISTINGS_ROUTE}?${params.toString()}`;
 }
 
 function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>): string | null {
@@ -254,6 +277,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
     { key: "match", label: "Run matching" },
     { key: "scan", label: "Run marketplace scan" },
     { key: "profit", label: "Run profit engine" },
+    { key: "inventory-risk-scan", label: "Run inventory risk scan" },
     { key: "prepare", label: "Prepare listing previews" },
     { key: "promote", label: "Promote listing previews ready" },
     { key: "dry-run", label: "Run listing execution dry-run" },
@@ -409,13 +433,65 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             />
             <StatCard
               label="Needs manual review"
-              value={metricOrUnknown(data.inventoryRisk.manualReviewRisks, data.inventoryRisk.sourceWired.response)}
+              value={
+                <div>
+                  <div>{metricOrUnknown(data.inventoryRisk.manualReviewRisks, data.inventoryRisk.sourceWired.response)}</div>
+                  <Link href={buildListingsRiskHref(LISTINGS_RISK_FILTERS.MANUAL_REVIEW)} className="mt-2 inline-block text-xs font-medium text-cyan-100 underline">
+                    View listings needing manual review
+                  </Link>
+                </div>
+              }
             />
             <div className="rounded-2xl border border-rose-300/35 bg-rose-500/10 p-4">
               <div className="text-[11px] uppercase tracking-[0.2em] text-rose-100">Auto-paused listings</div>
               <div className="mt-2 text-2xl font-bold text-rose-100">
                 {metricOrUnknown(data.inventoryRisk.autoPausedListings, data.inventoryRisk.sourceWired.response)}
               </div>
+              <Link href={buildListingsRiskHref(LISTINGS_RISK_FILTERS.AUTO_PAUSED)} className="mt-2 inline-block text-xs font-medium text-rose-100 underline">
+                View auto-paused listings
+              </Link>
+            </div>
+          </div>
+          <div className="mt-4 rounded-2xl border border-cyan-300/25 bg-cyan-500/10 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-cyan-100">Risk scan schedule</div>
+                <div className="mt-1 text-xs text-cyan-50/85">
+                  Automatic risk protection checks live listings on a recurring schedule.
+                </div>
+              </div>
+              <div className="rounded-xl border border-cyan-200/30 bg-black/15 px-3 py-1.5 text-xs font-semibold text-cyan-50">
+                Protection active: {yesNoUnknown(data.inventoryRisk.schedule.scheduleActive)}
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-white/10 bg-black/15 p-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-white/55">Cadence</div>
+                <div className="mt-2 text-sm font-semibold text-white">
+                  {data.inventoryRisk.schedule.cadenceLabel}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/15 p-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-white/55">Next automatic run</div>
+                <div className="mt-2 text-sm font-semibold text-white">
+                  {formatDateTime(data.inventoryRisk.schedule.nextRun)}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/15 p-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-white/55">Schedule active</div>
+                <div className="mt-2 text-sm font-semibold text-white">
+                  {yesNoUnknown(data.inventoryRisk.schedule.scheduleActive)}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/15 p-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-white/55">Queue status</div>
+                <div className="mt-2 text-sm font-semibold text-white">
+                  {data.inventoryRisk.schedule.queueSummary}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 rounded-xl border border-white/10 bg-black/15 p-3 text-sm text-white/80">
+              You can also run a manual scan from the control actions if needed.
             </div>
           </div>
           <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-sm text-amber-100">
@@ -436,15 +512,36 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             />
             <StatCard
               label="Supplier out of stock"
-              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.supplierOutOfStock, data.inventoryRisk.sourceWired.response)}
+              value={
+                <div>
+                  <div>{metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.supplierOutOfStock, data.inventoryRisk.sourceWired.response)}</div>
+                  <Link href={buildListingsRiskHref(LISTINGS_RISK_FILTERS.OUT_OF_STOCK)} className="mt-2 inline-block text-xs font-medium text-cyan-100 underline">
+                    View listings where supplier is out of stock
+                  </Link>
+                </div>
+              }
             />
             <StatCard
               label="Supplier data too old"
-              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.snapshotTooOld, data.inventoryRisk.sourceWired.response)}
+              value={
+                <div>
+                  <div>{metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.snapshotTooOld, data.inventoryRisk.sourceWired.response)}</div>
+                  <Link href={buildListingsRiskHref(LISTINGS_RISK_FILTERS.STALE_SNAPSHOT)} className="mt-2 inline-block text-xs font-medium text-cyan-100 underline">
+                    View listings with old supplier data
+                  </Link>
+                </div>
+              }
             />
             <StatCard
               label="Supplier shipping changed"
-              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.supplierShippingChanged, data.inventoryRisk.sourceWired.response)}
+              value={
+                <div>
+                  <div>{metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.supplierShippingChanged, data.inventoryRisk.sourceWired.response)}</div>
+                  <Link href={buildListingsRiskHref(LISTINGS_RISK_FILTERS.SHIPPING_CHANGED)} className="mt-2 inline-block text-xs font-medium text-cyan-100 underline">
+                    View listings with changed shipping
+                  </Link>
+                </div>
+              }
             />
             <StatCard
               label="Supplier listing removed"
