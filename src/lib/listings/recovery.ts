@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
+import { isPausedListingStatus } from "./statuses";
 
 export type ReevaluateListingRecoveryInput = {
   listingId: string;
@@ -71,7 +72,7 @@ export async function reevaluateListingForRecovery(
     };
   }
 
-  if (listingStatus === "PAUSED") {
+  if (isPausedListingStatus(listingStatus)) {
     await writeAuditLog({
       actorType,
       actorId,

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
+import { LISTING_STATUSES } from "./statuses";
 import type { EbayListingPreviewPayload } from "./types";
 
 export type ListingExecutionCandidate = {
@@ -49,18 +50,18 @@ export async function getListingExecutionCandidates(
       AND (
         (
           ${targetedListingLookup} = FALSE
-          AND l.status = 'READY_TO_PUBLISH'
+          AND l.status = ${LISTING_STATUSES.READY_TO_PUBLISH}
           AND pc.marketplace_key = ${marketplace}
           AND pc.decision_status = 'APPROVED'
           AND pc.listing_eligible = TRUE
         )
         OR (
           ${targetedListingLookup} = TRUE
-          AND l.status = 'PAUSED'
+          AND l.status = ${LISTING_STATUSES.PAUSED}
         )
         OR (
           ${targetedListingLookup} = TRUE
-          AND l.status = 'READY_TO_PUBLISH'
+          AND l.status = ${LISTING_STATUSES.READY_TO_PUBLISH}
           AND pc.marketplace_key = ${marketplace}
           AND pc.decision_status = 'APPROVED'
           AND pc.listing_eligible = TRUE

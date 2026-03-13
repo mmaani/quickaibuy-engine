@@ -12,6 +12,11 @@ import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { publishToEbayListing } from "@/lib/marketplaces/ebayPublish";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
+import {
+  LISTING_PUBLISH_ENTRY_STATUS,
+  LISTING_STATUSES,
+  isPausedListingStatus,
+} from "@/lib/listings/statuses";
 
 // Supplier snapshot older than 48h must be refreshed before publish.
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
@@ -77,7 +82,7 @@ export async function runListingExecution(opts?: {
       LIMIT 1
     `);
     const currentStatus = String(currentStatusResult.rows?.[0]?.status ?? "").trim();
-    if (currentStatus === "PAUSED") {
+    if (isPausedListingStatus(currentStatus)) {
       await writeAuditLog({
         actorType: "WORKER",
         actorId,
@@ -106,7 +111,7 @@ export async function runListingExecution(opts?: {
           response = COALESCE(response, '{}'::jsonb) || '{"dryRun":true,"liveApiCalled":false}'::jsonb,
           updated_at = NOW()
         WHERE id = ${listingId}
-          AND status = 'READY_TO_PUBLISH'
+          AND status = ${LISTING_PUBLISH_ENTRY_STATUS}
       `);
 
       await writeAuditLog({
@@ -508,11 +513,11 @@ export async function runListingExecution(opts?: {
     const locked = await db.execute(sql`
       UPDATE listings
       SET
-        status = 'PUBLISH_IN_PROGRESS',
+        status = ${LISTING_STATUSES.PUBLISH_IN_PROGRESS},
         publish_started_ts = NOW(),
         updated_at = NOW()
       WHERE id = ${listingId}
-        AND status = 'READY_TO_PUBLISH'
+        AND status = ${LISTING_PUBLISH_ENTRY_STATUS}
       RETURNING id
     `);
 
@@ -566,7 +571,7 @@ export async function runListingExecution(opts?: {
       await db.execute(sql`
         UPDATE listings
         SET
-          status = 'ACTIVE',
+          status = ${LISTING_STATUSES.ACTIVE},
           published_external_id = ${result.externalListingId},
           publish_finished_ts = NOW(),
           listing_date = CURRENT_DATE,
@@ -596,7 +601,7 @@ export async function runListingExecution(opts?: {
       await db.execute(sql`
         UPDATE listings
         SET
-          status = 'PUBLISH_FAILED',
+          status = ${LISTING_STATUSES.PUBLISH_FAILED},
           last_publish_error = ${String(err)},
           publish_finished_ts = NOW(),
           updated_at = NOW()

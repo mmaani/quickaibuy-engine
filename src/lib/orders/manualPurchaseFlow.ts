@@ -3,23 +3,34 @@ import { db } from "@/lib/db";
 import { orders, supplierOrders } from "@/lib/db/schema";
 import { createOrderEvent } from "./orderEvents";
 import {
+  isOrderStatus,
   isSupplierPurchaseStatus,
   isTrackingStatus,
+  ORDER_STATUS,
+  type OrderStatus,
   type SupplierPurchaseStatus,
   type TrackingStatus,
 } from "./statuses";
+import {
+  canRecordSupplierPurchaseForOrderStatus,
+  canRecordTrackingForOrderStatus,
+} from "./transitions";
 import { transitionOrderStatus } from "./updateOrderStatus";
 
 type SupplierOrderAttemptRow = typeof supplierOrders.$inferSelect;
 
-async function getOrderStatus(orderId: string): Promise<string> {
+async function getOrderStatus(orderId: string): Promise<OrderStatus> {
   const rows = await db
     .select({ status: orders.status })
     .from(orders)
     .where(eq(orders.id, orderId))
     .limit(1);
   if (!rows[0]) throw new Error(`Order not found: ${orderId}`);
-  return rows[0].status;
+  const status = rows[0].status;
+  if (!isOrderStatus(status)) {
+    throw new Error(`Unsupported order status on row ${orderId}: ${status}`);
+  }
+  return status;
 }
 
 async function getLatestAttempt(orderId: string, supplierKey: string): Promise<SupplierOrderAttemptRow | null> {
@@ -93,23 +104,16 @@ export async function recordSupplierPurchase(input: {
 
   const now = new Date();
   const currentStatus = await getOrderStatus(input.orderId);
-  const purchasableStates = new Set([
-    "PURCHASE_APPROVED",
-    "PURCHASE_PLACED",
-    "TRACKING_PENDING",
-    "TRACKING_RECEIVED",
-    "TRACKING_SYNCED",
-  ]);
-  if (!purchasableStates.has(currentStatus)) {
+  if (!canRecordSupplierPurchaseForOrderStatus(currentStatus)) {
     throw new Error(
       `Order ${input.orderId} must be PURCHASE_APPROVED (or later) before recording purchase. Current status: ${currentStatus}`
     );
   }
 
-  if (currentStatus === "PURCHASE_APPROVED") {
+  if (currentStatus === ORDER_STATUS.PURCHASE_APPROVED) {
     await transitionOrderStatus({
       orderId: input.orderId,
-      nextStatus: "PURCHASE_PLACED",
+      nextStatus: ORDER_STATUS.PURCHASE_PLACED,
       actorId: input.actorId,
       reason: "Manual supplier purchase recorded",
     });
@@ -182,10 +186,10 @@ export async function recordSupplierPurchase(input: {
   }
 
   const orderStatusAfterPurchase = await getOrderStatus(input.orderId);
-  if (orderStatusAfterPurchase === "PURCHASE_PLACED") {
+  if (orderStatusAfterPurchase === ORDER_STATUS.PURCHASE_PLACED) {
     await transitionOrderStatus({
       orderId: input.orderId,
-      nextStatus: "TRACKING_PENDING",
+      nextStatus: ORDER_STATUS.TRACKING_PENDING,
       actorId: input.actorId,
       reason: "Awaiting supplier tracking",
     });
@@ -216,13 +220,7 @@ export async function recordSupplierTracking(input: {
     throw new Error(`Invalid tracking status: ${trackingStatus}`);
   }
   const currentStatus = await getOrderStatus(input.orderId);
-  const trackableStates = new Set([
-    "PURCHASE_PLACED",
-    "TRACKING_PENDING",
-    "TRACKING_RECEIVED",
-    "TRACKING_SYNCED",
-  ]);
-  if (!trackableStates.has(currentStatus)) {
+  if (!canRecordTrackingForOrderStatus(currentStatus)) {
     throw new Error(
       `Order ${input.orderId} must be PURCHASE_PLACED (or later) before recording tracking. Current status: ${currentStatus}`
     );
@@ -287,10 +285,13 @@ export async function recordSupplierTracking(input: {
     });
   }
 
-  if (currentStatus === "TRACKING_PENDING" || currentStatus === "PURCHASE_PLACED") {
+  if (
+    currentStatus === ORDER_STATUS.TRACKING_PENDING ||
+    currentStatus === ORDER_STATUS.PURCHASE_PLACED
+  ) {
     await transitionOrderStatus({
       orderId: input.orderId,
-      nextStatus: "TRACKING_RECEIVED",
+      nextStatus: ORDER_STATUS.TRACKING_RECEIVED,
       actorId: input.actorId,
       reason: "Manual tracking recorded",
     });
