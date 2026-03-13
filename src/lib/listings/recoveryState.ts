@@ -2,6 +2,7 @@ import { LISTING_STATUSES } from "./statuses";
 
 export type RecoveryState =
   | "NONE"
+  | "PAUSED_REQUIRES_RESUME"
   | "BLOCKED_STALE_MARKETPLACE"
   | "BLOCKED_SUPPLIER_DRIFT"
   | "BLOCKED_STALE_SUPPLIER"
@@ -53,6 +54,17 @@ export function computeRecoveryState(input: {
   const listingStatus = String(input.listingStatus ?? "").toUpperCase();
   const reasonCodes = normalizeCodesFromBlockReason(input.listingBlockReason);
   const primaryCode = findPrimaryRecoveryCode(reasonCodes);
+
+  if (listingStatus === LISTING_STATUSES.PAUSED) {
+    return {
+      recoveryState: "PAUSED_REQUIRES_RESUME",
+      recoveryNextAction: "Operator must explicitly resume to PREVIEW before any promotion.",
+      recoveryBlockReasonCode: primaryCode,
+      recoveryReasonCodes: reasonCodes,
+      reEvaluationNeeded: false,
+      rePromotionReady: false,
+    };
+  }
 
   if (reasonCodes.includes("STALE_MARKETPLACE_SNAPSHOT")) {
     return {

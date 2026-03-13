@@ -17,6 +17,7 @@ export type ReevaluateListingRecoveryResult = {
   candidateId?: string;
   decision?: "READY_FOR_REPROMOTION" | "REMAIN_BLOCKED";
   recoveryState?:
+    | "PAUSED_REQUIRES_RESUME"
     | "BLOCKED_STALE_MARKETPLACE"
     | "BLOCKED_STALE_SUPPLIER"
     | "BLOCKED_SUPPLIER_DRIFT"
@@ -44,11 +45,13 @@ export async function reevaluateListingForRecovery(
     listingId: string;
     candidateId: string;
     marketplaceKey: string;
+    status: string;
   }>(sql`
     SELECT
       l.id AS "listingId",
       l.candidate_id AS "candidateId",
-      l.marketplace_key AS "marketplaceKey"
+      l.marketplace_key AS "marketplaceKey",
+      l.status
     FROM listings l
     WHERE l.id = ${listingId}
     LIMIT 1
@@ -58,12 +61,41 @@ export async function reevaluateListingForRecovery(
 
   const candidateId = String(row.candidateId ?? "");
   const marketplaceKey = String(row.marketplaceKey ?? "");
+  const listingStatus = String(row.status ?? "");
   if (marketplaceKey !== "ebay") {
     return {
       ok: false,
       listingId,
       candidateId,
       reason: "re-evaluation is eBay-only in v1",
+    };
+  }
+
+  if (listingStatus === "PAUSED") {
+    await writeAuditLog({
+      actorType,
+      actorId,
+      entityType: "LISTING",
+      entityId: listingId,
+      eventType: "LISTING_REEVALUATED_PAUSED_REQUIRES_RESUME",
+      details: {
+        listingId,
+        candidateId,
+        marketplaceKey,
+        listingStatus,
+        nextAction: "Operator must explicitly resume listing to PREVIEW before promotion.",
+      },
+    });
+
+    return {
+      ok: false,
+      listingId,
+      candidateId,
+      decision: "REMAIN_BLOCKED",
+      recoveryState: "PAUSED_REQUIRES_RESUME",
+      nextAction: "Operator must explicitly resume listing to PREVIEW before promotion.",
+      reasons: ["PAUSED_REQUIRES_RESUME"],
+      reason: "listing is paused; explicit operator resume is required",
     };
   }
 

@@ -70,6 +70,32 @@ export async function runListingExecution(opts?: {
       continue;
     }
 
+    const currentStatusResult = await db.execute<{ status: string }>(sql`
+      SELECT status
+      FROM listings
+      WHERE id = ${listingId}
+      LIMIT 1
+    `);
+    const currentStatus = String(currentStatusResult.rows?.[0]?.status ?? "").trim();
+    if (currentStatus === "PAUSED") {
+      await writeAuditLog({
+        actorType: "WORKER",
+        actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_PUBLISH_BLOCKED_PAUSED",
+        details: {
+          listingId,
+          candidateId,
+          marketplaceKey,
+          listingIdFilter: listingIdFilter || null,
+          reason: "paused listings require explicit operator resume",
+        },
+      });
+      skipped++;
+      continue;
+    }
+
     /**
      * DRY RUN PATH
      */

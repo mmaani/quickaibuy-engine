@@ -77,13 +77,17 @@ export async function markListingReadyToPublish(
   }
 
   if (previousStatus !== "PREVIEW") {
+    const reason =
+      previousStatus === "PAUSED"
+        ? "listing is PAUSED and requires explicit operator resume to PREVIEW before promotion"
+        : "listing must be in PREVIEW status";
     return {
       ok: false,
       listingId: input.listingId,
       candidateId,
       marketplaceKey,
       previousStatus,
-      reason: "listing must be in PREVIEW status",
+      reason,
     };
   }
 
