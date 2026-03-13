@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${ALLOW_MUTATION_SCRIPTS:-false}" != "true" ]]; then
+  echo "blocked: set ALLOW_MUTATION_SCRIPTS=true to run mutate_git_push_pipeline_to_main.sh" >&2
+  exit 1
+fi
+
+if [[ "${CONFIRM_PUSH_MAIN:-}" != "YES" ]]; then
+  echo "blocked: set CONFIRM_PUSH_MAIN=YES to acknowledge direct push-to-main risk" >&2
+  exit 1
+fi
+
 COMMIT_MSG="${1:-feat: harden ebay-only marketplace pipeline v1}"
 
 echo "Current branch:"
