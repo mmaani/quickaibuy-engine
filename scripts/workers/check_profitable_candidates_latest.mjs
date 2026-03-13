@@ -1,52 +1,15 @@
-import dotenv from "dotenv";
-import pg from "pg";
+import { spawnSync } from "node:child_process";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+console.warn(
+  "[DEPRECATED] scripts/workers/check_profitable_candidates_latest.mjs is deprecated. Use node scripts/check_profitable_candidates.mjs instead."
+);
 
-const { Client } = pg;
+const result = spawnSync("node", ["scripts/check_profitable_candidates.mjs", ...process.argv.slice(2)], {
+  stdio: "inherit",
+});
 
-async function main() {
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
-
-  await client.connect();
-
-  const { rows } = await client.query(`
-    WITH ranked AS (
-      SELECT
-        pc.*,
-        ROW_NUMBER() OVER (
-          PARTITION BY pc.supplier_key, pc.supplier_product_id, pc.marketplace_key
-          ORDER BY pc.calc_ts DESC, pc.id DESC
-        ) AS rn
-      FROM profitable_candidates pc
-    )
-    SELECT
-      id,
-      supplier_key,
-      supplier_product_id,
-      marketplace_key,
-      marketplace_listing_id,
-      estimated_profit,
-      margin_pct,
-      roi_pct,
-      decision_status,
-      reason,
-      calc_ts
-    FROM ranked
-    WHERE rn = 1
-    ORDER BY calc_ts DESC
-    LIMIT 50
-  `);
-
-  console.log(JSON.stringify(rows, null, 2));
-  await client.end();
+if (result.error) {
+  throw result.error;
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+process.exit(result.status ?? 0);

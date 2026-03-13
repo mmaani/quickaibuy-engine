@@ -57,3 +57,25 @@ These ambiguous scripts were renamed to explicit-risk names:
 - New scripts must use a governance prefix above.
 - Do not add `_v2`, `_v3`, `_latest` variants without explicit deprecation plan and canonical replacement entry in this README.
 - Prefer one canonical script per operational intent.
+
+
+## Phase 2 canonicalization (duplicate wrappers and versioned variants)
+
+The following scripts are kept for one transition phase as **deprecated warning wrappers** to avoid breaking existing operational flows.
+
+| Canonical command | Deprecated command | Replacement path |
+|---|---|---|
+| `node scripts/check_audit_log.mjs` | `bash scripts/run_check_audit_log.sh` | Run canonical command directly. |
+| `node scripts/check_marketplace_price_urls.mjs` | `bash scripts/run_check_marketplace_price_urls.sh` | Run canonical command directly. |
+| `node --import dotenv/config scripts/check_marketplace_prices.mjs` | `bash scripts/run_check_marketplace_prices.sh` | Run canonical command directly. |
+| `node scripts/check_match_duplicates.mjs` | `bash scripts/run_check_match_duplicates.sh` | Run canonical command directly. |
+| `node scripts/check_matches.mjs` | `bash scripts/run_check_matches.sh`, `node scripts/check_matches_latest.mjs` | Use `check_matches.mjs` for canonical match diagnostics. |
+| `node scripts/check_profit_duplicates.mjs` | `bash scripts/run_check_profit_duplicates.sh` | Run canonical command directly. |
+| `node scripts/check_profitable_candidates.mjs` | `bash scripts/run_check_profitable_candidates.sh`, `node scripts/workers/check_profitable_candidates_latest.mjs` | Use top-level profitable candidate diagnostic. |
+| `node scripts/check_trend_candidates.mjs` | `bash scripts/run_check_trend_candidates.sh` | Run canonical command directly. |
+| `node scripts/check_trend_candidates_for_signal.mjs <trendSignalId>` | `bash scripts/run_check_trend_candidates_for_signal.sh <trendSignalId>` | Run canonical command directly. |
+| `node scripts/check_trend_signals.mjs` | `bash scripts/run_check_trend_signals.sh` | Run canonical command directly. |
+| `bash scripts/run_controlled_listing_gate_migration.sh` | `bash scripts/run_controlled_listing_gate_migration_v2.sh`, `bash scripts/run_controlled_listing_gate_migration_v3.sh` | Use canonical migration wrapper; `v2` wrapper temporarily runs legacy normalization + canonical migration. |
+| `pnpm exec tsx scripts/run_marketplace_scan_monitoring.ts` | `pnpm exec tsx scripts/run_marketplace_scan_monitoring_latest.ts` | Use non-versioned monitoring command. |
+| `node scripts/check_listing_previews_ready_source.mjs` | `node scripts/workers/check_listing_previews_latest.mjs` | Use listing preview readiness source diagnostic. |
+
