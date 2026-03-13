@@ -1,17 +1,14 @@
 import type { SupplierProduct } from "./types";
 import { inferAvailabilityFromText } from "@/lib/products/supplierAvailability";
+import {
+  compactText,
+  extractPriceEvidence,
+  extractShippingEvidence,
+  inferListingValidity,
+  sliceEvidence,
+} from "./parserSignals";
 
 const MAX_RESULTS = 20;
-const MAX_EVIDENCE_TEXT_LENGTH = 220;
-
-function compactText(value: string): string {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function sliceEvidence(value: string, maxLength = MAX_EVIDENCE_TEXT_LENGTH): string {
-  const compact = compactText(value);
-  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1)}...`;
-}
 
 function looksLikeTemuChallengePage(text: string): boolean {
   const compact = compactText(text).toLowerCase();
@@ -127,26 +124,31 @@ function parseTemuText(text: string, keyword: string, snapshotTs: string): Suppl
     const supplierProductId = extractTemuProductId(sourceUrl) ?? sourceUrl;
     if (!supplierProductId || seen.has(supplierProductId)) continue;
 
-    const nearbyText = text.slice(Math.max(0, idx - 380), idx + 420);
+    const nearbyText = text.slice(Math.max(0, idx - 520), idx + 520);
     const inferredAvailability = inferAvailabilityFromText(nearbyText);
     const evidence = extractAvailabilityEvidence(nearbyText);
+    const shipping = extractShippingEvidence(nearbyText);
+    const priceEvidence = extractPriceEvidence(nearbyText);
+    const listingValidity = inferListingValidity(nearbyText);
     const evidenceQuality = inferredAvailability.signal === "UNKNOWN" ? "MEDIUM" : "HIGH";
+    const price = extractPriceNear(text, idx) ?? priceEvidence.price;
 
     seen.add(supplierProductId);
     out.push({
       title: extractTitleNear(text, idx),
-      price: extractPriceNear(text, idx),
+      price,
       currency: "USD",
       images: extractImageNear(text, idx),
       variants: [],
       sourceUrl,
       supplierProductId,
-      shippingEstimates: [],
+      shippingEstimates: shipping.shippingEstimates,
       platform: "Temu",
       keyword,
       snapshotTs,
       availabilitySignal: inferredAvailability.signal,
       availabilityConfidence: inferredAvailability.confidence,
+      telemetrySignals: ["parsed"],
       raw: {
         provider: "temu-search",
         parseMode: "text",
@@ -161,8 +163,16 @@ function parseTemuText(text: string, keyword: string, snapshotTs: string): Suppl
         inventoryBadge: evidence.inventoryBadge,
         stockCount: evidence.stockCount,
         sellerStatusHint: evidence.sellerStatusHint,
+        priceText: priceEvidence.priceText,
+        priceSignal: priceEvidence.signal,
+        shippingSignal: shipping.signal,
+        shippingEvidenceText: shipping.evidenceText,
+        shipsFromHint: shipping.shipsFromHint,
+        listingValidity: listingValidity.status,
+        listingValidityReason: listingValidity.reason,
         nearbyTextSample: sliceEvidence(nearbyText),
         crawlStatus: "PARSED",
+        telemetrySignals: ["parsed"],
       },
     });
 
@@ -229,6 +239,10 @@ export async function searchTemuByKeyword(
     availabilityConfidence: 0.12,
     availabilityEvidencePresent: false,
     availabilityEvidenceQuality: "LOW",
+    listingValidity: "POSSIBLE_STALE",
+    priceSignal: "FALLBACK",
+    shippingSignal: "MISSING",
+    telemetrySignals: ["fallback", "low_quality"],
   };
 
   try {
@@ -240,6 +254,9 @@ export async function searchTemuByKeyword(
     fallbackRaw.challengeHint = challengeHint;
     fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
     fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
+    fallbackRaw.telemetrySignals = challengePage
+      ? ["fallback", "challenge", "low_quality"]
+      : ["fallback", "low_quality"];
     const rows = parseTemuText(fetched.text, normalizedKeyword, snapshotTs)
       .slice(0, capped)
       .map((row) => ({
@@ -281,6 +298,10 @@ export async function searchTemuByKeyword(
       snapshotTs,
       availabilitySignal: "UNKNOWN",
       availabilityConfidence: 0.12,
+      snapshotQuality: "STUB",
+      telemetrySignals: Array.isArray(fallbackRaw.telemetrySignals)
+        ? (fallbackRaw.telemetrySignals as SupplierProduct["telemetrySignals"])
+        : ["fallback", "low_quality"],
       raw: {
         ...fallbackRaw,
       },

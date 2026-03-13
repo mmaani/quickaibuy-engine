@@ -9,6 +9,7 @@ import {
   normalizeAvailabilityConfidence,
   normalizeAvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
+import { buildSupplierSnapshotQualityPayload } from "@/lib/products/supplierQuality";
 
 export type SupplierDiscoverResult = {
   processedCandidates: number;
@@ -40,6 +41,17 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
     availabilityEvidenceQuality === "LOW" && availabilitySignal === "UNKNOWN"
       ? Math.min(rawConfidence ?? 0.2, 0.2)
       : rawConfidence;
+  const quality = buildSupplierSnapshotQualityPayload({
+    rawPayload: product.raw,
+    availabilitySignal,
+    availabilityConfidence,
+    price: product.price,
+    title: product.title,
+    sourceUrl: product.sourceUrl,
+    images: product.images,
+    shippingEstimates: product.shippingEstimates,
+    telemetrySignals: product.telemetrySignals,
+  });
 
   return {
     supplierKey: String(product.platform ?? "").trim().toLowerCase(),
@@ -71,6 +83,9 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
       availabilityConfidence,
       availabilityEvidencePresent,
       availabilityEvidenceQuality,
+      snapshotQuality: product.snapshotQuality ?? quality.snapshotQuality,
+      telemetrySignals: quality.telemetrySignals,
+      telemetry: quality.telemetry,
     },
     snapshotTs,
   };

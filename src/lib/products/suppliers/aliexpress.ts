@@ -1,7 +1,59 @@
 import type { SupplierProduct } from "./types";
 import { inferAvailabilityFromText } from "@/lib/products/supplierAvailability";
+import {
+  compactText,
+  extractPriceEvidence,
+  extractShippingEvidence,
+  inferListingValidity,
+  sliceEvidence,
+} from "./parserSignals";
 
 const MAX_RESULTS = 20;
+
+function looksLikeAliExpressChallengePage(text: string): boolean {
+  const compact = compactText(text).toLowerCase();
+  if (!compact) return false;
+  return (
+    compact.includes("_____tmd_____/punish") ||
+    compact.includes("captcha") ||
+    compact.includes("security verification") ||
+    compact.includes("punish-page")
+  );
+}
+
+function extractAliExpressChallengeHint(text: string): string | null {
+  const compact = compactText(text).toLowerCase();
+  if (!compact) return null;
+  const match = compact.match(/(security verification|captcha|unusual traffic|punish-page)/i);
+  return match?.[0] ? sliceEvidence(match[0]) : null;
+}
+
+function extractAvailabilityEvidence(rawText: string): {
+  evidenceText: string | null;
+  inventoryBadge: string | null;
+  stockCount: number | null;
+} {
+  const compact = compactText(rawText);
+  if (!compact) {
+    return { evidenceText: null, inventoryBadge: null, stockCount: null };
+  }
+
+  const stockMatch = compact.match(
+    /(?:only|just)\s+(\d{1,5})\s+(?:left|pieces?|items?)|(?:stock|inventory|available quantity)\s*[:=]?\s*(\d{1,5})/i
+  );
+  const inventoryBadgeMatch = compact.match(
+    /(in stock|out of stock|low stock|limited stock|few left|selling fast|ships within\s+\d+\s+days)/i
+  );
+  const evidenceMatch = compact.match(
+    /(out of stock|sold out|currently unavailable|in stock|low stock|limited stock|few left|selling fast|available quantity\s*[:=]?\s*\d+)/i
+  );
+
+  return {
+    evidenceText: evidenceMatch?.[0] ? sliceEvidence(evidenceMatch[0]) : null,
+    inventoryBadge: inventoryBadgeMatch?.[0] ? sliceEvidence(inventoryBadgeMatch[0]) : null,
+    stockCount: stockMatch ? Number(stockMatch[1] ?? stockMatch[2]) : null,
+  };
+}
 
 function buildAliExpressSearchUrl(keyword: string): string {
   return `https://www.aliexpress.com/w/wholesale-${encodeURIComponent(keyword).replace(
@@ -84,12 +136,16 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
 
     if (!itemId || seen.has(itemId)) continue;
 
+    const nearbyText = text.slice(Math.max(0, idx - 460), idx + 460);
     const title = extractTitleNear(text, idx);
-    const price = extractPriceFromItemUrl(rawUrl) ?? extractPriceNear(text, idx);
+    const priceEvidence = extractPriceEvidence(nearbyText);
+    const price = extractPriceFromItemUrl(rawUrl) ?? extractPriceNear(text, idx) ?? priceEvidence.price;
     const images = extractImageNear(text, idx);
     const sourceUrl = normalizeAliExpressItemUrl(rawUrl, itemId);
-    const nearbyText = text.slice(Math.max(0, idx - 320), idx + 320);
     const inferredAvailability = inferAvailabilityFromText(nearbyText);
+    const availabilityEvidence = extractAvailabilityEvidence(nearbyText);
+    const shipping = extractShippingEvidence(nearbyText);
+    const listingValidity = inferListingValidity(nearbyText);
 
     seen.add(itemId);
 
@@ -101,18 +157,38 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
       variants: [],
       sourceUrl,
       supplierProductId: itemId,
-      shippingEstimates: [],
+      shippingEstimates: shipping.shippingEstimates,
       platform: "AliExpress",
       keyword,
       snapshotTs,
       availabilitySignal: inferredAvailability.signal,
       availabilityConfidence: inferredAvailability.confidence,
+      telemetrySignals: ["parsed"],
       raw: {
         provider: "aliexpress-search",
         parseMode: "text",
         matchedItemUrl: rawUrl,
         availabilitySignal: inferredAvailability.signal,
         availabilityConfidence: inferredAvailability.confidence,
+        availabilityEvidencePresent: Boolean(
+          availabilityEvidence.evidenceText ||
+            availabilityEvidence.inventoryBadge ||
+            availabilityEvidence.stockCount != null
+        ),
+        availabilityEvidenceQuality: inferredAvailability.signal === "UNKNOWN" ? "MEDIUM" : "HIGH",
+        availabilityEvidenceText: availabilityEvidence.evidenceText,
+        inventoryBadge: availabilityEvidence.inventoryBadge,
+        stockCount: availabilityEvidence.stockCount,
+        priceText: priceEvidence.priceText,
+        priceSignal: priceEvidence.signal,
+        shippingSignal: shipping.signal,
+        shippingEvidenceText: shipping.evidenceText,
+        shipsFromHint: shipping.shipsFromHint,
+        listingValidity: listingValidity.status,
+        listingValidityReason: listingValidity.reason,
+        nearbyTextSample: sliceEvidence(nearbyText),
+        crawlStatus: "PARSED",
+        telemetrySignals: ["parsed"],
       },
     });
 
@@ -168,9 +244,36 @@ export async function searchAliExpressByKeyword(
   const normalizedKeyword = String(keyword ?? "").trim();
   if (!normalizedKeyword) return [];
   const searchUrl = buildAliExpressSearchUrl(normalizedKeyword);
+  const fallbackRaw: Record<string, unknown> = {
+    mode: "stub-fallback",
+    parseMode: "fallback",
+    provider: "aliexpress-search",
+    keyword: normalizedKeyword,
+    platform: "AliExpress",
+    searchUrl,
+    crawlStatus: "NO_PRODUCTS_PARSED",
+    availabilitySignal: "UNKNOWN",
+    availabilityConfidence: 0.12,
+    availabilityEvidencePresent: false,
+    availabilityEvidenceQuality: "LOW",
+    listingValidity: "POSSIBLE_STALE",
+    priceSignal: "FALLBACK",
+    shippingSignal: "MISSING",
+    telemetrySignals: ["fallback", "low_quality"],
+  };
 
   try {
     const fetched = await fetchAliExpressSearchText(searchUrl);
+    const challengePage = looksLikeAliExpressChallengePage(fetched.text);
+    const challengeHint = extractAliExpressChallengeHint(fetched.text);
+    fallbackRaw.fetchMode = fetched.mode;
+    fallbackRaw.pageChallengeDetected = challengePage;
+    fallbackRaw.challengeHint = challengeHint;
+    fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
+    fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
+    fallbackRaw.telemetrySignals = challengePage
+      ? ["fallback", "challenge", "low_quality"]
+      : ["fallback", "low_quality"];
     const rows = parseAliExpressText(fetched.text, normalizedKeyword, snapshotTs)
       .filter((row) => row.title || row.supplierProductId)
       .slice(0, capped)
@@ -180,19 +283,50 @@ export async function searchAliExpressByKeyword(
           ...row.raw,
           fetchMode: fetched.mode,
           searchUrl,
+          pageChallengeDetected: challengePage,
         },
       }));
 
-    console.log(
-      `[supplier][AliExpress] keyword="${normalizedKeyword}" fetchMode=${fetched.mode} results=${rows.length}`
-    );
+    if (rows.length) {
+      console.log(
+        `[supplier][AliExpress] keyword="${normalizedKeyword}" fetchMode=${fetched.mode} results=${rows.length}`
+      );
+      return rows;
+    }
 
-    return rows;
   } catch (error) {
+    fallbackRaw.crawlStatus = "FETCH_FAILED";
+    fallbackRaw.fetchError = error instanceof Error ? error.message : String(error);
     console.error(`[supplier][AliExpress] keyword="${normalizedKeyword}" failed`, {
       error: error instanceof Error ? error.message : String(error),
       searchUrl,
     });
-    return [];
   }
+
+  const fallbackRows: SupplierProduct[] = [
+    {
+      title: `${normalizedKeyword} sample from AliExpress`,
+      price: "9.95",
+      currency: "USD",
+      images: [],
+      variants: [],
+      sourceUrl: searchUrl,
+      supplierProductId: `aliexpress-${normalizedKeyword.toLowerCase().replace(/\s+/g, "-")}-1`,
+      shippingEstimates: [],
+      platform: "AliExpress",
+      keyword: normalizedKeyword,
+      snapshotTs,
+      availabilitySignal: "UNKNOWN",
+      availabilityConfidence: 0.12,
+      snapshotQuality: "STUB",
+      telemetrySignals: Array.isArray(fallbackRaw.telemetrySignals)
+        ? (fallbackRaw.telemetrySignals as SupplierProduct["telemetrySignals"])
+        : ["fallback", "low_quality"],
+      raw: {
+        ...fallbackRaw,
+      },
+    },
+  ];
+
+  return fallbackRows.slice(0, capped);
 }

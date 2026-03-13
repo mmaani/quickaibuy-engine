@@ -6,6 +6,12 @@ import {
   normalizeAvailabilitySignal,
   type AvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
+import {
+  classifySupplierSnapshotQuality,
+  normalizeSupplierTelemetry,
+  type SupplierSnapshotQuality,
+  type SupplierTelemetrySignal,
+} from "@/lib/products/supplierQuality";
 
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "MANUAL_REVIEW", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
@@ -138,6 +144,11 @@ type SupplierSnapshot = {
   currency: string | null;
   shippingEstimates: unknown;
   snapshotTs: string;
+  snapshotQuality: SupplierSnapshotQuality;
+  telemetrySignals: SupplierTelemetrySignal[];
+  listingValidity: string | null;
+  priceSignal: string | null;
+  shippingSignal: string | null;
 };
 
 type MarketplaceSnapshot = {
@@ -796,6 +807,9 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
 function mapSupplierSnapshot(row: QueryResultRow | undefined): SupplierSnapshot | null {
   if (!row) return null;
 
+  const payload = asObject(row.raw_payload);
+  const telemetry = normalizeSupplierTelemetry(payload);
+
   return {
     id: String(row.id),
     supplierKey: String(row.supplier_key),
@@ -809,6 +823,19 @@ function mapSupplierSnapshot(row: QueryResultRow | undefined): SupplierSnapshot 
     currency: row.currency == null ? null : String(row.currency),
     shippingEstimates: row.shipping_estimates,
     snapshotTs: toIsoString(row.snapshot_ts),
+    snapshotQuality: classifySupplierSnapshotQuality({
+      rawPayload: payload,
+      availabilitySignal: row.availability_status,
+      price: row.price_min ?? row.price_max,
+      title: row.title,
+      sourceUrl: row.source_url,
+      images: row.images,
+      shippingEstimates: row.shipping_estimates,
+    }),
+    telemetrySignals: telemetry.signals,
+    listingValidity: typeof payload?.listingValidity === "string" ? payload.listingValidity : null,
+    priceSignal: typeof payload?.priceSignal === "string" ? payload.priceSignal : null,
+    shippingSignal: typeof payload?.shippingSignal === "string" ? payload.shippingSignal : null,
   };
 }
 

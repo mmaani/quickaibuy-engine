@@ -8,12 +8,19 @@ export function normalizeAvailabilitySignal(value: unknown): AvailabilitySignal 
     raw.includes("OUT_OF_STOCK") ||
     raw.includes("SOLD_OUT") ||
     raw.includes("UNAVAILABLE") ||
-    raw.includes("NO_STOCK")
+    raw.includes("NO_STOCK") ||
+    raw.includes("REMOVED")
   ) {
     return "OUT_OF_STOCK";
   }
 
-  if (raw.includes("LOW_STOCK") || raw.includes("LIMITED_STOCK") || raw.includes("ONLY_")) {
+  if (
+    raw.includes("LOW_STOCK") ||
+    raw.includes("LIMITED_STOCK") ||
+    raw.includes("ONLY_") ||
+    raw.includes("FEW_LEFT") ||
+    raw.includes("SELLING_FAST")
+  ) {
     return "LOW_STOCK";
   }
 
@@ -167,6 +174,8 @@ export function extractAvailabilityFromRawPayload(input: {
         "inventory_badge",
         "sellerStatus",
         "seller_status",
+        "listingValidityReason",
+        "listing_validity_reason",
       ])
     : null;
 

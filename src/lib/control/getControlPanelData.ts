@@ -32,6 +32,9 @@ export type ControlPanelData = {
       fallback: number | null;
       challenge: number | null;
       lowQuality: number | null;
+      highQuality: number | null;
+      mediumQuality: number | null;
+      stubQuality: number | null;
     }>;
     telemetryWired: boolean;
   };
@@ -645,21 +648,35 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         select
           supplier_key as "supplierKey",
           count(*) filter (
-            where upper(coalesce(raw_payload->>'crawlStatus', '')) = 'PARSED'
+            where (coalesce(raw_payload->'telemetrySignals', '[]'::jsonb) ? 'parsed')
+              or upper(coalesce(raw_payload->>'crawlStatus', '')) = 'PARSED'
           )::int as parsed,
           count(*) filter (
-            where lower(coalesce(raw_payload->>'parseMode', '')) = 'fallback'
+            where (coalesce(raw_payload->'telemetrySignals', '[]'::jsonb) ? 'fallback')
+              or lower(coalesce(raw_payload->>'parseMode', '')) = 'fallback'
               or upper(coalesce(raw_payload->>'crawlStatus', '')) in ('NO_PRODUCTS_PARSED', 'FETCH_FAILED')
           )::int as fallback,
           count(*) filter (
-            where upper(coalesce(raw_payload->>'crawlStatus', '')) = 'CHALLENGE_PAGE'
+            where (coalesce(raw_payload->'telemetrySignals', '[]'::jsonb) ? 'challenge')
+              or upper(coalesce(raw_payload->>'crawlStatus', '')) = 'CHALLENGE_PAGE'
               or lower(coalesce(raw_payload->>'pageChallengeDetected', 'false')) = 'true'
           )::int as challenge,
           count(*) filter (
-            where lower(coalesce(raw_payload->>'parseMode', '')) = 'fallback'
+            where (coalesce(raw_payload->'telemetrySignals', '[]'::jsonb) ? 'low_quality')
+              or lower(coalesce(raw_payload->>'parseMode', '')) = 'fallback'
               or upper(coalesce(raw_payload->>'crawlStatus', '')) in ('NO_PRODUCTS_PARSED', 'FETCH_FAILED', 'CHALLENGE_PAGE')
               or lower(coalesce(raw_payload->>'pageChallengeDetected', 'false')) = 'true'
           )::int as "lowQuality"
+          ,
+          count(*) filter (
+            where upper(coalesce(raw_payload->>'snapshotQuality', '')) = 'HIGH'
+          )::int as "highQuality",
+          count(*) filter (
+            where upper(coalesce(raw_payload->>'snapshotQuality', '')) = 'MEDIUM'
+          )::int as "mediumQuality",
+          count(*) filter (
+            where upper(coalesce(raw_payload->>'snapshotQuality', '')) = 'STUB'
+          )::int as "stubQuality"
         from products_raw
         group by supplier_key
         order by supplier_key asc
@@ -1843,6 +1860,9 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         fallback: toNum(row.fallback),
         challenge: toNum(row.challenge),
         lowQuality: toNum(row.lowQuality),
+        highQuality: toNum(row.highQuality),
+        mediumQuality: toNum(row.mediumQuality),
+        stubQuality: toNum(row.stubQuality),
       })),
       telemetryWired: productsRawExists && productsRawHasRawPayload,
     },

@@ -2,6 +2,12 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getTrackingSyncReadiness } from "./trackingSync";
 import { getTrackingSyncAttemptState } from "./syncTrackingToEbay";
+import {
+  classifySupplierSnapshotQuality,
+  normalizeSupplierTelemetry,
+  type SupplierSnapshotQuality,
+  type SupplierTelemetrySignal,
+} from "@/lib/products/supplierQuality";
 
 export type AdminOrdersFilter =
   | "all"
@@ -43,6 +49,12 @@ export type AdminOrderItem = {
   itemPrice: string;
   estimatedSupplierCost: string | null;
   estimatedProfit: string | null;
+  latestSupplierAvailabilityStatus: string | null;
+  latestSupplierSnapshotTs: string | null;
+  latestSupplierRawPayload: unknown;
+  supplierSnapshotQuality: SupplierSnapshotQuality | null;
+  supplierTelemetrySignals: SupplierTelemetrySignal[];
+  supplierWarnings: string[];
 };
 
 export type AdminSupplierAttempt = {
@@ -83,6 +95,39 @@ export type AdminOrderDetail = {
   lastSyncState: Awaited<ReturnType<typeof getTrackingSyncAttemptState>> | null;
   events: AdminOrderEvent[];
 };
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function buildSupplierWarnings(item: Pick<AdminOrderItem, "supplierSnapshotQuality" | "supplierTelemetrySignals" | "latestSupplierAvailabilityStatus" | "latestSupplierSnapshotTs">): string[] {
+  const warnings: string[] = [];
+  if (item.supplierSnapshotQuality === "LOW") {
+    warnings.push("Latest supplier snapshot quality is LOW.");
+  }
+  if (item.supplierSnapshotQuality === "STUB") {
+    warnings.push("Latest supplier snapshot is STUB/fallback only.");
+  }
+  if (item.supplierTelemetrySignals.includes("challenge")) {
+    warnings.push("Supplier parser hit a challenge page.");
+  }
+  if (item.supplierTelemetrySignals.includes("fallback")) {
+    warnings.push("Supplier parser used fallback extraction.");
+  }
+  const availability = String(item.latestSupplierAvailabilityStatus ?? "").trim().toUpperCase();
+  if (availability === "UNKNOWN" || availability === "LOW_STOCK") {
+    warnings.push(`Supplier availability is ${availability || "UNKNOWN"} and requires manual review.`);
+  }
+  if (item.latestSupplierSnapshotTs) {
+    const ageHours = (Date.now() - new Date(item.latestSupplierSnapshotTs).getTime()) / (1000 * 60 * 60);
+    if (Number.isFinite(ageHours) && ageHours > 48) {
+      warnings.push(`Latest supplier snapshot is ${Math.round(ageHours)}h old.`);
+    }
+  }
+  return warnings;
+}
 
 export type AdminOrderEvent = {
   id: string;
@@ -256,10 +301,21 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
         oi.quantity AS quantity,
         oi.item_price::text AS "itemPrice",
         pc.estimated_cogs::text AS "estimatedSupplierCost",
-        pc.estimated_profit::text AS "estimatedProfit"
+        pc.estimated_profit::text AS "estimatedProfit",
+        latest_pr.availability_status AS "latestSupplierAvailabilityStatus",
+        latest_pr.snapshot_ts::text AS "latestSupplierSnapshotTs",
+        latest_pr.raw_payload AS "latestSupplierRawPayload"
       FROM order_items oi
       LEFT JOIN listings l ON l.id = oi.listing_id
       LEFT JOIN profitable_candidates pc ON pc.id = l.candidate_id
+      LEFT JOIN LATERAL (
+        SELECT pr.availability_status, pr.snapshot_ts, pr.raw_payload
+        FROM products_raw pr
+        WHERE pr.supplier_key = oi.supplier_key
+          AND pr.supplier_product_id = oi.supplier_product_id
+        ORDER BY pr.snapshot_ts DESC, pr.id DESC
+        LIMIT 1
+      ) latest_pr ON TRUE
       WHERE oi.order_id = ${orderId}
       ORDER BY oi.created_at ASC
     `),
@@ -307,7 +363,22 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
 
   return {
     order,
-    items: itemsRows.rows ?? [],
+    items: (itemsRows.rows ?? []).map((item) => {
+      const payload = asObject(item.latestSupplierRawPayload);
+      const telemetry = normalizeSupplierTelemetry(payload);
+      const supplierSnapshotQuality = classifySupplierSnapshotQuality({
+        rawPayload: payload,
+        availabilitySignal: item.latestSupplierAvailabilityStatus,
+      });
+      const enriched: AdminOrderItem = {
+        ...item,
+        supplierSnapshotQuality,
+        supplierTelemetrySignals: telemetry.signals,
+        supplierWarnings: [],
+      };
+      enriched.supplierWarnings = buildSupplierWarnings(enriched);
+      return enriched;
+    }),
     attempts,
     latestAttempt,
     readiness,

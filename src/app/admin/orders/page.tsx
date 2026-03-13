@@ -915,6 +915,19 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       {detail.items.map((item) => (
                         <div key={item.id} className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
                           Listing: {item.listingExternalId ?? item.listingId ?? "-"} | Supplier: {item.supplierKey ?? "-"} | Product: {item.supplierProductId ?? "-"} | Qty: {item.quantity} | Price: {item.itemPrice}
+                          {item.supplierSnapshotQuality ? (
+                            <div className="mt-2 text-xs text-white/65">
+                              Snapshot quality: {item.supplierSnapshotQuality}
+                              {item.supplierTelemetrySignals.length
+                                ? ` | telemetry: ${item.supplierTelemetrySignals.join(", ")}`
+                                : ""}
+                            </div>
+                          ) : null}
+                          {item.supplierWarnings.length ? (
+                            <div className="mt-2 rounded-lg border border-amber-300/25 bg-amber-500/10 p-2 text-xs text-amber-100">
+                              {item.supplierWarnings.join(" ")}
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                       {!detail.items.length ? <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">No line items found.</div> : null}
@@ -999,6 +1012,16 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     {purchaseSafety?.status === "VALIDATION_NEEDED" ? (
                       <div className="mt-2 text-xs text-amber-100">
                         Purchase safety not checked yet. Review supplier price and run a fresh check before approval.
+                      </div>
+                    ) : null}
+                    {detail.items.some((item) => item.supplierWarnings.length > 0) ? (
+                      <div className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-xs text-amber-100">
+                        {detail.items
+                          .flatMap((item) =>
+                            item.supplierWarnings.map((warning) => `${item.supplierKey ?? "supplier"}: ${warning}`)
+                          )
+                          .slice(0, 6)
+                          .join(" ")}
                       </div>
                     ) : null}
                   </div>

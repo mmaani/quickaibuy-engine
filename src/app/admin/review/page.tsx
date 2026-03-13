@@ -918,6 +918,18 @@ export default async function ReviewPage({
                         )
                       }
                     />
+                    <KeyValue label="Snapshot Quality" value={detail.supplierSnapshot?.snapshotQuality ?? "-"} />
+                    <KeyValue
+                      label="Telemetry Signals"
+                      value={
+                        detail.supplierSnapshot?.telemetrySignals?.length
+                          ? detail.supplierSnapshot.telemetrySignals.join(", ")
+                          : "-"
+                      }
+                    />
+                    <KeyValue label="Listing Validity" value={detail.supplierSnapshot?.listingValidity ?? "-"} />
+                    <KeyValue label="Price Signal" value={detail.supplierSnapshot?.priceSignal ?? "-"} />
+                    <KeyValue label="Shipping Signal" value={detail.supplierSnapshot?.shippingSignal ?? "-"} />
                     <KeyValue label="Fee Breakdown" value={<pre className="overflow-x-auto text-xs text-white/75">{serializeDetails(detail.candidate.estimatedFees)}</pre>} />
                     <KeyValue label="Risk Flags" value={<div className="flex flex-wrap gap-2">{detail.candidate.riskFlags.length ? detail.candidate.riskFlags.map((flag) => <RiskBadge key={flag} flag={flag} />) : "None"}</div>} />
                   </div>

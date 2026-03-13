@@ -306,9 +306,12 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
       acc.fallback += row.fallback ?? 0;
       acc.challenge += row.challenge ?? 0;
       acc.lowQuality += row.lowQuality ?? 0;
+      acc.highQuality += row.highQuality ?? 0;
+      acc.mediumQuality += row.mediumQuality ?? 0;
+      acc.stubQuality += row.stubQuality ?? 0;
       return acc;
     },
-    { parsed: 0, fallback: 0, challenge: 0, lowQuality: 0 }
+    { parsed: 0, fallback: 0, challenge: 0, lowQuality: 0, highQuality: 0, mediumQuality: 0, stubQuality: 0 }
   );
   const quickActionGuidance = [
     {
@@ -389,6 +392,24 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
               value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.lowQuality : "not wired yet"}
             />
           </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="High quality"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.highQuality : "not wired yet"}
+            />
+            <StatCard
+              label="Medium quality"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.mediumQuality : "not wired yet"}
+            />
+            <StatCard
+              label="Low quality"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.lowQuality : "not wired yet"}
+            />
+            <StatCard
+              label="Stub snapshots"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.stubQuality : "not wired yet"}
+            />
+          </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <DataTable rows={data.supplierDiscoveryHealth.bySupplier} empty="No supplier discovery rows yet." />
             <DataTable rows={data.supplierDiscoveryHealth.freshnessBySupplier} empty="No supplier freshness rows yet." />
@@ -401,6 +422,9 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 fallback: row.fallback ?? "-",
                 challenge: row.challenge ?? "-",
                 low_quality: row.lowQuality ?? "-",
+                high_quality: row.highQuality ?? "-",
+                medium_quality: row.mediumQuality ?? "-",
+                stub: row.stubQuality ?? "-",
               }))}
               empty="No supplier parser telemetry yet."
             />
