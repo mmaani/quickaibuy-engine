@@ -1,8 +1,12 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { listings, orderItems, orders, supplierOrders } from "@/lib/db/schema";
-
-type OrderStatus = typeof orders.$inferSelect["status"];
+import {
+  canPrepareTrackingSyncForOrderStatus,
+  isSupplierPurchaseRecordedStatus,
+  SUPPLIER_PURCHASE_RECORDED_STATUSES,
+  type OrderStatus,
+} from "./statuses";
 type SupplierOrderRow = typeof supplierOrders.$inferSelect;
 
 type TrackingSyncAttemptSelector = {
@@ -53,14 +57,6 @@ export type TrackingSyncPayload = {
   }>;
 };
 
-const READY_ORDER_STATUSES = new Set<OrderStatus>([
-  "PURCHASE_PLACED",
-  "TRACKING_PENDING",
-  "TRACKING_RECEIVED",
-]);
-
-const READY_PURCHASE_STATUSES = new Set(["SUBMITTED", "CONFIRMED"]);
-
 async function getOrderBase(orderId: string) {
   const rows = await db
     .select({
@@ -98,7 +94,7 @@ export async function getLatestTrackableSupplierAttempt(
 
   const predicates = [
     eq(supplierOrders.orderId, input.orderId),
-    inArray(supplierOrders.purchaseStatus, ["SUBMITTED", "CONFIRMED"]),
+    inArray(supplierOrders.purchaseStatus, [...SUPPLIER_PURCHASE_RECORDED_STATUSES]),
     sql`COALESCE(NULLIF(BTRIM(${supplierOrders.trackingNumber}), ''), NULL) IS NOT NULL`,
   ];
 
@@ -151,7 +147,7 @@ export async function getTrackingSyncReadiness(
     blockingReasons.push("Missing marketplace_order_id on order.");
   }
 
-  if (!READY_ORDER_STATUSES.has(order.status as OrderStatus)) {
+  if (!canPrepareTrackingSyncForOrderStatus(order.status as OrderStatus)) {
     blockingReasons.push(
       `Order status ${order.status} is not eligible for tracking sync preparation.`
     );
@@ -162,7 +158,7 @@ export async function getTrackingSyncReadiness(
     missingFields.push("supplier_order_attempt");
     blockingReasons.push("No eligible supplier purchase attempt with tracking found.");
   } else {
-    if (!READY_PURCHASE_STATUSES.has(attempt.purchaseStatus)) {
+    if (!isSupplierPurchaseRecordedStatus(attempt.purchaseStatus)) {
       blockingReasons.push(
         `Supplier purchase status ${attempt.purchaseStatus} is not eligible for tracking sync.`
       );

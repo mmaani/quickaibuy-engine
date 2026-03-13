@@ -1,11 +1,11 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
+import {
+  LISTING_DUPLICATE_BLOCKING_STATUSES,
+  LISTING_STATUSES,
+} from "./statuses";
 
-export type DuplicateListingStatus =
-  | "PREVIEW"
-  | "READY_TO_PUBLISH"
-  | "PUBLISH_IN_PROGRESS"
-  | "ACTIVE";
+export type DuplicateListingStatus = (typeof LISTING_DUPLICATE_BLOCKING_STATUSES)[number];
 
 export type ListingDuplicateMatch = {
   listingId: string;
@@ -37,18 +37,13 @@ type DuplicateQueryRow = {
   titleFingerprintMatch: boolean;
 };
 
-const DEFAULT_BLOCKING_STATUSES: DuplicateListingStatus[] = [
-  "PREVIEW",
-  "READY_TO_PUBLISH",
-  "PUBLISH_IN_PROGRESS",
-  "ACTIVE",
-];
+const DEFAULT_BLOCKING_STATUSES = [...LISTING_DUPLICATE_BLOCKING_STATUSES];
 
 const STATUS_PRIORITY: Record<DuplicateListingStatus, number> = {
-  ACTIVE: 4,
-  PUBLISH_IN_PROGRESS: 3,
-  READY_TO_PUBLISH: 2,
-  PREVIEW: 1,
+  [LISTING_STATUSES.ACTIVE]: 4,
+  [LISTING_STATUSES.PUBLISH_IN_PROGRESS]: 3,
+  [LISTING_STATUSES.READY_TO_PUBLISH]: 2,
+  [LISTING_STATUSES.PREVIEW]: 1,
 };
 
 export function normalizedTitleFingerprint(input: string | null | undefined): string {
@@ -118,10 +113,10 @@ export async function findListingDuplicatesForCandidate(input: {
       )
     ORDER BY
       CASE l.status
-        WHEN 'ACTIVE' THEN 4
-        WHEN 'PUBLISH_IN_PROGRESS' THEN 3
-        WHEN 'READY_TO_PUBLISH' THEN 2
-        WHEN 'PREVIEW' THEN 1
+        WHEN ${LISTING_STATUSES.ACTIVE} THEN 4
+        WHEN ${LISTING_STATUSES.PUBLISH_IN_PROGRESS} THEN 3
+        WHEN ${LISTING_STATUSES.READY_TO_PUBLISH} THEN 2
+        WHEN ${LISTING_STATUSES.PREVIEW} THEN 1
         ELSE 0
       END DESC,
       l.updated_at DESC NULLS LAST,
@@ -144,8 +139,8 @@ export function getDuplicateBlockDecision(matches: ListingDuplicateMatch[]): Dup
   }
 
   const sorted = [...matches].sort((a, b) => {
-    const pa = STATUS_PRIORITY[(a.status as DuplicateListingStatus) ?? "PREVIEW"] ?? 0;
-    const pb = STATUS_PRIORITY[(b.status as DuplicateListingStatus) ?? "PREVIEW"] ?? 0;
+    const pa = STATUS_PRIORITY[(a.status as DuplicateListingStatus) ?? LISTING_STATUSES.PREVIEW] ?? 0;
+    const pb = STATUS_PRIORITY[(b.status as DuplicateListingStatus) ?? LISTING_STATUSES.PREVIEW] ?? 0;
     return pb - pa;
   });
 

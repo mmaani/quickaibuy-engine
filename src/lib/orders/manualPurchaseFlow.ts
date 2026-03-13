@@ -3,6 +3,8 @@ import { db } from "@/lib/db";
 import { orders, supplierOrders } from "@/lib/db/schema";
 import { createOrderEvent } from "./orderEvents";
 import {
+  canRecordSupplierPurchaseForOrderStatus,
+  canRecordTrackingForOrderStatus,
   isOrderStatus,
   isSupplierPurchaseStatus,
   isTrackingStatus,
@@ -11,10 +13,6 @@ import {
   type SupplierPurchaseStatus,
   type TrackingStatus,
 } from "./statuses";
-import {
-  canRecordSupplierPurchaseForOrderStatus,
-  canRecordTrackingForOrderStatus,
-} from "./transitions";
 import { transitionOrderStatus } from "./updateOrderStatus";
 
 type SupplierOrderAttemptRow = typeof supplierOrders.$inferSelect;

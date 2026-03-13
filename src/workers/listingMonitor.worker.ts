@@ -1,8 +1,10 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import {
+  isLiveSuccessListingStatus,
+  isPublishFailedListingStatus,
+  isPublishInProgressListingStatus,
   LISTING_MONITOR_STATUSES,
-  LISTING_STATUSES,
   isPausedListingStatus,
 } from "@/lib/listings/statuses";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
@@ -56,13 +58,14 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
     const publishStartedTs = row.publishStartedTs ? new Date(String(row.publishStartedTs)) : null;
 
     const isStaleInProgress =
-      status === LISTING_STATUSES.PUBLISH_IN_PROGRESS &&
+      isPublishInProgressListingStatus(status) &&
       publishStartedTs instanceof Date &&
       !Number.isNaN(publishStartedTs.getTime()) &&
       Date.now() - publishStartedTs.getTime() > staleMinutes * 60 * 1000;
 
-    const isActiveMissingExternalId = status === LISTING_STATUSES.ACTIVE && !publishedExternalId;
-    const isRepeatedFailure = status === LISTING_STATUSES.PUBLISH_FAILED && publishAttemptCount >= failedAttemptsThreshold;
+    const isActiveMissingExternalId = isLiveSuccessListingStatus(status) && !publishedExternalId;
+    const isRepeatedFailure =
+      isPublishFailedListingStatus(status) && publishAttemptCount >= failedAttemptsThreshold;
     const isPausedStable = isPausedListingStatus(status);
 
     if (isStaleInProgress) {

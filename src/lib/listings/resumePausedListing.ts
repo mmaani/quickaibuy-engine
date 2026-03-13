@@ -1,6 +1,11 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
+import {
+  LISTING_PAUSED_STATUS,
+  LISTING_PREVIEW_STATUS,
+  canResumePausedListingStatus,
+} from "./statuses";
 
 export type ResumePausedListingInput = {
   listingId: string;
@@ -45,7 +50,7 @@ export async function resumePausedListing(
   const candidateId = String(row.candidateId ?? "");
   const marketplaceKey = String(row.marketplaceKey ?? "");
 
-  if (previousStatus !== "PAUSED") {
+  if (!canResumePausedListingStatus(previousStatus)) {
     return {
       ok: false,
       listingId: input.listingId,
@@ -67,17 +72,17 @@ export async function resumePausedListing(
       candidateId,
       marketplaceKey,
       previousStatus,
-      requestedStatus: "PREVIEW",
+      requestedStatus: LISTING_PREVIEW_STATUS,
     },
   });
 
   const updated = await db.execute(sql`
     UPDATE listings
     SET
-      status = 'PREVIEW',
+      status = ${LISTING_PREVIEW_STATUS},
       updated_at = NOW()
     WHERE id = ${input.listingId}
-      AND status = 'PAUSED'
+      AND status = ${LISTING_PAUSED_STATUS}
     RETURNING id
   `);
 
@@ -103,7 +108,7 @@ export async function resumePausedListing(
       candidateId,
       marketplaceKey,
       previousStatus,
-      newStatus: "PREVIEW",
+      newStatus: LISTING_PREVIEW_STATUS,
     },
   });
 
@@ -113,6 +118,6 @@ export async function resumePausedListing(
     candidateId,
     marketplaceKey,
     previousStatus,
-    newStatus: "PREVIEW",
+    newStatus: LISTING_PREVIEW_STATUS,
   };
 }

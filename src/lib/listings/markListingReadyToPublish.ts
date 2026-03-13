@@ -4,6 +4,13 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
+import {
+  LISTING_ACTIVE_PATH_STATUSES,
+  LISTING_PREVIEW_STATUS,
+  LISTING_PUBLISH_ENTRY_STATUS,
+  canPromotePreviewListingStatus,
+  isPausedListingStatus,
+} from "./statuses";
 
 export type MarkListingReadyInput = {
   listingId: string;
@@ -76,9 +83,9 @@ export async function markListingReadyToPublish(
     };
   }
 
-  if (previousStatus !== "PREVIEW") {
+  if (!canPromotePreviewListingStatus(previousStatus)) {
     const reason =
-      previousStatus === "PAUSED"
+      isPausedListingStatus(previousStatus)
         ? "listing is PAUSED and requires explicit operator resume to PREVIEW before promotion"
         : "listing must be in PREVIEW status";
     return {
@@ -292,7 +299,7 @@ export async function markListingReadyToPublish(
     FROM listings
     WHERE candidate_id = ${candidateId}
       AND marketplace_key = 'ebay'
-      AND status IN ('READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE')
+      AND status IN (${sql.join(LISTING_ACTIVE_PATH_STATUSES.map((status) => sql`${status}`), sql`, `)})
       AND id <> ${input.listingId}
     LIMIT 1
   `);
@@ -311,11 +318,11 @@ export async function markListingReadyToPublish(
   const updated = await db.execute(sql`
     UPDATE listings
     SET
-      status = 'READY_TO_PUBLISH',
+      status = ${LISTING_PUBLISH_ENTRY_STATUS},
       publish_marketplace = 'ebay',
       updated_at = NOW()
     WHERE id = ${input.listingId}
-      AND status = 'PREVIEW'
+      AND status = ${LISTING_PREVIEW_STATUS}
     RETURNING id
   `);
 
@@ -341,7 +348,7 @@ export async function markListingReadyToPublish(
       candidateId,
       marketplaceKey: "ebay",
       previousStatus,
-      newStatus: "READY_TO_PUBLISH",
+      newStatus: LISTING_PUBLISH_ENTRY_STATUS,
     },
   });
 
@@ -351,6 +358,6 @@ export async function markListingReadyToPublish(
     candidateId,
     marketplaceKey: "ebay",
     previousStatus,
-    newStatus: "READY_TO_PUBLISH",
+    newStatus: LISTING_PUBLISH_ENTRY_STATUS,
   };
 }

@@ -1,3 +1,13 @@
+import {
+  isNewEntryOrderStatus,
+  isOrderStatus,
+  isSupplierPurchaseRecordedStatus,
+  isTrackingStatusNotAvailable,
+  isTrackingSyncReadyOrderStatus,
+  isTrackingSyncedOrderStatus,
+  isWaitingTrackingOrderStatus,
+  ORDER_STATUS,
+} from "./statuses";
 import type { AdminOrderDetail, AdminOrderEvent } from "./getAdminOrdersPageData";
 
 export type PurchaseStatusIndicator =
@@ -178,7 +188,7 @@ export function getPurchaseStatusIndicator(detail: AdminOrderDetail): PurchaseSt
   const hasTrackingSynced =
     Boolean(detail.latestAttempt?.trackingSyncedAt) ||
     Boolean(detail.lastSyncState?.trackingSyncedAt) ||
-    String(detail.order.status || "").toUpperCase() === "TRACKING_SYNCED";
+    isTrackingSyncedOrderStatus(String(detail.order.status || "").toUpperCase());
   if (hasTrackingSynced) return "TRACKING_SYNCED";
 
   const hasTrackingNumber = Boolean(detail.latestAttempt?.trackingNumber?.trim());
@@ -188,8 +198,7 @@ export function getPurchaseStatusIndicator(detail: AdminOrderDetail): PurchaseSt
   const hasPurchaseRecorded =
     Boolean(detail.latestAttempt?.purchaseRecordedAt) ||
     Boolean(detail.latestAttempt?.supplierOrderRef?.trim()) ||
-    purchaseStatus === "SUBMITTED" ||
-    purchaseStatus === "CONFIRMED";
+    isSupplierPurchaseRecordedStatus(purchaseStatus);
   if (hasPurchaseRecorded) return "PURCHASE_RECORDED";
 
   return "NOT_PURCHASED";
@@ -198,18 +207,17 @@ export function getPurchaseStatusIndicator(detail: AdminOrderDetail): PurchaseSt
 export function getOperatorOrderStepFromSignals(input: OperatorOrderStageInput): OperatorOrderStepLabel {
   const orderStatus = String(input.orderStatus ?? "").toUpperCase();
   const purchaseStatus = String(input.purchaseStatus ?? "").toUpperCase();
-  const trackingStatus = String(input.trackingStatus ?? "").toUpperCase();
 
-  if (input.trackingSynced || orderStatus === "TRACKING_SYNCED") return "Synced";
-  if (input.trackingReady || trackingStatus === "TRACKING_RECEIVED") return "Ready to sync";
+  if (input.trackingSynced || isTrackingSyncedOrderStatus(orderStatus)) return "Synced";
+  if (input.trackingReady || isTrackingSyncReadyOrderStatus(orderStatus)) return "Ready to sync";
 
   const purchaseRecorded =
-    purchaseStatus === "SUBMITTED" || purchaseStatus === "CONFIRMED" || orderStatus === "PURCHASE_PLACED";
+    isSupplierPurchaseRecordedStatus(purchaseStatus) || orderStatus === ORDER_STATUS.PURCHASE_PLACED;
 
   if (purchaseRecorded && !input.trackingNumberPresent) return "Tracking needed";
   if (purchaseRecorded) return "Purchase recorded";
 
-  if (orderStatus === "NEW" || orderStatus === "NEW_ORDER") return "New order";
+  if (isNewEntryOrderStatus(orderStatus)) return "New order";
   return "Review for purchase";
 }
 
@@ -237,8 +245,8 @@ export function getOperatorOrderStepFromRow(row: {
     purchaseStatus: row.purchaseStatus,
     trackingStatus: row.trackingStatus,
     trackingReady: row.trackingReady,
-    trackingSynced: String(row.status || "").toUpperCase() === "TRACKING_SYNCED",
-    trackingNumberPresent: String(row.trackingStatus ?? "").toUpperCase() !== "NOT_AVAILABLE",
+    trackingSynced: isTrackingSyncedOrderStatus(String(row.status || "").toUpperCase()),
+    trackingNumberPresent: !isTrackingStatusNotAvailable(String(row.trackingStatus ?? "").toUpperCase()),
   });
 }
 
@@ -252,19 +260,17 @@ export function getOperatorRowNextAction(row: {
   const purchaseStatus = String(row.purchaseStatus || "").toUpperCase();
   const trackingStatus = String(row.trackingStatus || "").toUpperCase();
 
-  if (status === "TRACKING_SYNCED") return "Done";
-  if (row.trackingReady || status === "TRACKING_RECEIVED") return "Sync tracking";
+  if (isTrackingSyncedOrderStatus(status)) return "Done";
+  if (row.trackingReady || isTrackingSyncReadyOrderStatus(status)) return "Sync tracking";
   if (
-    purchaseStatus === "SUBMITTED" ||
-    purchaseStatus === "CONFIRMED" ||
-    status === "PURCHASE_PLACED" ||
-    status === "TRACKING_PENDING"
+    isSupplierPurchaseRecordedStatus(purchaseStatus) ||
+    isWaitingTrackingOrderStatus(status)
   ) {
-    if (trackingStatus === "NOT_AVAILABLE" || trackingStatus === "") return "Add tracking";
+    if (isTrackingStatusNotAvailable(trackingStatus) || trackingStatus === "") return "Add tracking";
     return "Sync tracking";
   }
-  if (status === "PURCHASE_APPROVED") return "Record supplier purchase";
-  if (status === "READY_FOR_PURCHASE_REVIEW") return "Approve purchase";
+  if (isOrderStatus(status) && status === ORDER_STATUS.PURCHASE_APPROVED) return "Record supplier purchase";
+  if (isOrderStatus(status) && status === ORDER_STATUS.READY_FOR_PURCHASE_REVIEW) return "Approve purchase";
   return "Review for purchase";
 }
 

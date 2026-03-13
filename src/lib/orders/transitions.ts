@@ -20,21 +20,6 @@ const ORDER_STATUS_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatu
   TRACKING_SYNCED: [ORDER_STATUS.DELIVERED, ORDER_STATUS.FAILED, ORDER_STATUS.CANCELED],
 };
 
-export const ORDER_PURCHASE_RECORDABLE_STATUSES = [
-  ORDER_STATUS.PURCHASE_APPROVED,
-  ORDER_STATUS.PURCHASE_PLACED,
-  ORDER_STATUS.TRACKING_PENDING,
-  ORDER_STATUS.TRACKING_RECEIVED,
-  ORDER_STATUS.TRACKING_SYNCED,
-] as const satisfies readonly OrderStatus[];
-
-export const ORDER_TRACKING_RECORDABLE_STATUSES = [
-  ORDER_STATUS.PURCHASE_PLACED,
-  ORDER_STATUS.TRACKING_PENDING,
-  ORDER_STATUS.TRACKING_RECEIVED,
-  ORDER_STATUS.TRACKING_SYNCED,
-] as const satisfies readonly OrderStatus[];
-
 export function getAllowedNextOrderStatuses(current: OrderStatus): readonly OrderStatus[] {
   return ORDER_STATUS_TRANSITIONS[current] ?? [];
 }
@@ -42,12 +27,4 @@ export function getAllowedNextOrderStatuses(current: OrderStatus): readonly Orde
 export function canTransitionOrderStatus(current: OrderStatus, next: OrderStatus): boolean {
   if (current === next) return true;
   return getAllowedNextOrderStatuses(current).includes(next);
-}
-
-export function canRecordSupplierPurchaseForOrderStatus(status: OrderStatus): boolean {
-  return (ORDER_PURCHASE_RECORDABLE_STATUSES as readonly OrderStatus[]).includes(status);
-}
-
-export function canRecordTrackingForOrderStatus(status: OrderStatus): boolean {
-  return (ORDER_TRACKING_RECORDABLE_STATUSES as readonly OrderStatus[]).includes(status);
 }

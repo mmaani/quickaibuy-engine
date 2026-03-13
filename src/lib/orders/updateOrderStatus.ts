@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createOrderEvent } from "./orderEvents";
 import { assertOrderPurchaseSafetyForApproval } from "./purchaseSafety";
 import { canTransitionOrderStatus } from "./transitions";
-import { isOrderStatus, type OrderStatus } from "./statuses";
+import { isOrderStatus, ORDER_STATUS, type OrderStatus } from "./statuses";
 
 export type TransitionOrderStatusResult = {
   changed: boolean;
@@ -90,7 +90,7 @@ export async function setOrderReadyForPurchaseReview(input: {
 }) {
   const result = await transitionOrderStatus({
     orderId: input.orderId,
-    nextStatus: "READY_FOR_PURCHASE_REVIEW",
+    nextStatus: ORDER_STATUS.READY_FOR_PURCHASE_REVIEW,
     actorId: input.actorId,
     reason: input.reason ?? "Marked ready for manual purchase review",
   });
@@ -121,7 +121,7 @@ export async function approveOrderForPurchase(input: {
 
   const result = await transitionOrderStatus({
     orderId: input.orderId,
-    nextStatus: "PURCHASE_APPROVED",
+    nextStatus: ORDER_STATUS.PURCHASE_APPROVED,
     actorId: input.actorId,
     reason: input.reason ?? "Purchase approved for manual placement",
     details: {
