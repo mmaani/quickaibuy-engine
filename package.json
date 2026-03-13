@@ -35,7 +35,8 @@
     "repo-tree:watch": "node scripts/watch_repo_tree.mjs",
     "check:migration-ledger": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_migration_ledger.ts",
     "diag:queue-namespace": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/queue_namespace_diagnostics.ts",
-    "check:inventory-risk-schedule": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_inventory_risk_schedule.ts"
+    "check:inventory-risk-schedule": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_inventory_risk_schedule.ts",
+    "check:schema-drift": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_schema_drift.ts"
   },
   "dependencies": {
     "bullmq": "^5.70.2",

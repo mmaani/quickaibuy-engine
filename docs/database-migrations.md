@@ -51,6 +51,13 @@ Alias:
 pnpm exec tsx scripts/check_migration_ledger.ts
 ```
 
+
+Additional runtime drift check (critical tables + indexes):
+
+```bash
+pnpm exec tsx scripts/check_schema_drift.ts
+```
+
 This verifies:
 - expected v1 hybrid baseline markers
 - required post-baseline runtime tables/columns
