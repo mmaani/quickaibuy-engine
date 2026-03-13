@@ -2,6 +2,70 @@ import type { SupplierProduct } from "./types";
 import { inferAvailabilityFromText } from "@/lib/products/supplierAvailability";
 
 const MAX_RESULTS = 20;
+const MAX_EVIDENCE_TEXT_LENGTH = 220;
+
+function compactText(value: string): string {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sliceEvidence(value: string, maxLength = MAX_EVIDENCE_TEXT_LENGTH): string {
+  const compact = compactText(value);
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1)}...`;
+}
+
+function looksLikeAlibabaChallengePage(text: string): boolean {
+  const compact = compactText(text).toLowerCase();
+  if (!compact) return false;
+  return (
+    compact.includes("security verification") ||
+    compact.includes("unusual traffic") ||
+    compact.includes("_____tmd_____/punish") ||
+    compact.includes("captcha-h5-tips") ||
+    compact.includes("slide to complete the puzzle") ||
+    compact.includes("punish-page")
+  );
+}
+
+function extractAlibabaChallengeHint(text: string): string | null {
+  const compact = compactText(text).toLowerCase();
+  if (!compact) return null;
+  const match = compact.match(
+    /(security verification|unusual traffic|slide to complete the puzzle|detected unusual traffic)/i
+  );
+  return match?.[0] ? sliceEvidence(match[0]) : null;
+}
+
+function extractAvailabilityEvidence(rawText: string): {
+  evidenceText: string | null;
+  inventoryBadge: string | null;
+  stockCount: number | null;
+  sellerStatusHint: string | null;
+} {
+  const compact = compactText(rawText);
+  if (!compact) {
+    return { evidenceText: null, inventoryBadge: null, stockCount: null, sellerStatusHint: null };
+  }
+
+  const stockMatch = compact.match(
+    /(?:stock|inventory|available quantity)\s*[:=]?\s*(\d{1,5})|(?:only|just)\s+(\d{1,5})\s+(?:left|units?|pieces?|items?)\b/i
+  );
+  const inventoryBadgeMatch = compact.match(
+    /(in stock|out of stock|low stock|limited stock|few left|ready to ship|ships within\s+\d+\s+days)/i
+  );
+  const sellerStatusMatch = compact.match(
+    /(store closed|seller unavailable|supplier unavailable|unusual traffic|security verification|captcha)/i
+  );
+  const evidenceMatch = compact.match(
+    /(out of stock|sold out|currently unavailable|in stock|low stock|limited stock|few left|ready to ship|ships within\s+\d+\s+days|available quantity\s*[:=]?\s*\d+)/i
+  );
+
+  return {
+    evidenceText: evidenceMatch?.[0] ? sliceEvidence(evidenceMatch[0]) : null,
+    inventoryBadge: inventoryBadgeMatch?.[0] ? sliceEvidence(inventoryBadgeMatch[0]) : null,
+    stockCount: stockMatch ? Number(stockMatch[1] ?? stockMatch[2]) : null,
+    sellerStatusHint: sellerStatusMatch?.[0] ? sliceEvidence(sellerStatusMatch[0]) : null,
+  };
+}
 
 function buildAlibabaSearchUrl(keyword: string): string {
   return `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(keyword)}`;
@@ -65,6 +129,8 @@ function parseAlibabaText(text: string, keyword: string, snapshotTs: string): Su
 
     const nearbyText = text.slice(Math.max(0, idx - 380), idx + 420);
     const inferredAvailability = inferAvailabilityFromText(nearbyText);
+    const evidence = extractAvailabilityEvidence(nearbyText);
+    const evidenceQuality = inferredAvailability.signal === "UNKNOWN" ? "MEDIUM" : "HIGH";
 
     seen.add(supplierProductId);
     out.push({
@@ -87,6 +153,16 @@ function parseAlibabaText(text: string, keyword: string, snapshotTs: string): Su
         matchedItemUrl: rawUrl,
         availabilitySignal: inferredAvailability.signal,
         availabilityConfidence: inferredAvailability.confidence,
+        availabilityEvidencePresent: Boolean(
+          evidence.evidenceText || evidence.inventoryBadge || evidence.stockCount != null || evidence.sellerStatusHint
+        ),
+        availabilityEvidenceQuality: evidenceQuality,
+        availabilityEvidenceText: evidence.evidenceText,
+        inventoryBadge: evidence.inventoryBadge,
+        stockCount: evidence.stockCount,
+        sellerStatusHint: evidence.sellerStatusHint,
+        nearbyTextSample: sliceEvidence(nearbyText),
+        crawlStatus: "PARSED",
       },
     });
 
@@ -141,9 +217,29 @@ export async function searchAlibabaByKeyword(
   const normalizedKeyword = String(keyword ?? "").trim();
   if (!normalizedKeyword) return [];
   const searchUrl = buildAlibabaSearchUrl(normalizedKeyword);
+  const fallbackRaw: Record<string, unknown> = {
+    mode: "stub-fallback",
+    parseMode: "fallback",
+    provider: "alibaba-search",
+    keyword: normalizedKeyword,
+    platform: "Alibaba",
+    searchUrl,
+    crawlStatus: "NO_PRODUCTS_PARSED",
+    availabilitySignal: "UNKNOWN",
+    availabilityConfidence: 0.12,
+    availabilityEvidencePresent: false,
+    availabilityEvidenceQuality: "LOW",
+  };
 
   try {
     const fetched = await fetchAlibabaSearchText(searchUrl);
+    const challengePage = looksLikeAlibabaChallengePage(fetched.text);
+    const challengeHint = extractAlibabaChallengeHint(fetched.text);
+    fallbackRaw.fetchMode = fetched.mode;
+    fallbackRaw.pageChallengeDetected = challengePage;
+    fallbackRaw.challengeHint = challengeHint;
+    fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
+    fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
     const rows = parseAlibabaText(fetched.text, normalizedKeyword, snapshotTs)
       .slice(0, capped)
       .map((row) => ({
@@ -152,6 +248,7 @@ export async function searchAlibabaByKeyword(
           ...row.raw,
           fetchMode: fetched.mode,
           searchUrl,
+          pageChallengeDetected: challengePage,
         },
       }));
 
@@ -160,6 +257,8 @@ export async function searchAlibabaByKeyword(
       return rows;
     }
   } catch (error) {
+    fallbackRaw.crawlStatus = "FETCH_FAILED";
+    fallbackRaw.fetchError = error instanceof Error ? error.message : String(error);
     console.error(`[supplier][Alibaba] keyword="${normalizedKeyword}" failed`, {
       error: error instanceof Error ? error.message : String(error),
       searchUrl,
@@ -181,13 +280,9 @@ export async function searchAlibabaByKeyword(
       keyword: normalizedKeyword,
       snapshotTs,
       availabilitySignal: "UNKNOWN",
-      availabilityConfidence: 0.35,
+      availabilityConfidence: 0.12,
       raw: {
-        mode: "stub-fallback",
-        keyword: normalizedKeyword,
-        platform: "Alibaba",
-        availabilitySignal: "UNKNOWN",
-        availabilityConfidence: 0.35,
+        ...fallbackRaw,
       },
     },
   ];

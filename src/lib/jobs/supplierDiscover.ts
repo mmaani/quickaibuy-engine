@@ -5,7 +5,10 @@ import { searchAliExpressByKeyword } from "@/lib/products/suppliers/aliexpress";
 import { searchAlibabaByKeyword } from "@/lib/products/suppliers/alibaba";
 import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
-import { normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
+import {
+  normalizeAvailabilityConfidence,
+  normalizeAvailabilitySignal,
+} from "@/lib/products/supplierAvailability";
 
 export type SupplierDiscoverResult = {
   processedCandidates: number;
@@ -16,6 +19,27 @@ export type SupplierDiscoverResult = {
 
 function toRawInsert(product: SupplierProduct): InsertRawProductInput {
   const snapshotTs = new Date(product.snapshotTs);
+  const availabilitySignal = normalizeAvailabilitySignal(
+    product.availabilitySignal ?? product.raw?.availabilitySignal ?? product.raw?.availability_status
+  );
+  const rawConfidence = normalizeAvailabilityConfidence(
+    typeof product.availabilityConfidence === "number"
+      ? product.availabilityConfidence
+      : product.raw?.availabilityConfidence ?? product.raw?.availability_confidence
+  );
+  const evidenceQualityRaw = String(product.raw?.availabilityEvidenceQuality ?? "").trim().toUpperCase();
+  const availabilityEvidenceQuality =
+    evidenceQualityRaw === "HIGH" || evidenceQualityRaw === "MEDIUM" || evidenceQualityRaw === "LOW"
+      ? evidenceQualityRaw
+      : "UNKNOWN";
+  const availabilityEvidencePresent =
+    typeof product.raw?.availabilityEvidencePresent === "boolean"
+      ? product.raw.availabilityEvidencePresent
+      : false;
+  const availabilityConfidence =
+    availabilityEvidenceQuality === "LOW" && availabilitySignal === "UNKNOWN"
+      ? Math.min(rawConfidence ?? 0.2, 0.2)
+      : rawConfidence;
 
   return {
     supplierKey: String(product.platform ?? "").trim().toLowerCase(),
@@ -27,11 +51,10 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
     currency: product.currency,
     priceMin: product.price,
     priceMax: product.price,
-    availabilityStatus: normalizeAvailabilitySignal(
-      product.availabilitySignal ?? product.raw?.availabilitySignal ?? product.raw?.availability_status
-    ),
+    availabilityStatus: availabilitySignal,
     shippingEstimates: product.shippingEstimates,
     rawPayload: {
+      ...product.raw,
       jobType: "supplier:discover",
       keyword: product.keyword,
       title: product.title,
@@ -44,12 +67,10 @@ function toRawInsert(product: SupplierProduct): InsertRawProductInput {
       supplierProductId: product.supplierProductId,
       snapshotTs: product.snapshotTs,
       platform: product.platform,
-      availabilitySignal: normalizeAvailabilitySignal(
-        product.availabilitySignal ?? product.raw?.availabilitySignal ?? product.raw?.availability_status
-      ),
-      availabilityConfidence:
-        typeof product.availabilityConfidence === "number" ? product.availabilityConfidence : null,
-      ...product.raw,
+      availabilitySignal,
+      availabilityConfidence,
+      availabilityEvidencePresent,
+      availabilityEvidenceQuality,
     },
     snapshotTs,
   };

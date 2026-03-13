@@ -2,6 +2,69 @@ import type { SupplierProduct } from "./types";
 import { inferAvailabilityFromText } from "@/lib/products/supplierAvailability";
 
 const MAX_RESULTS = 20;
+const MAX_EVIDENCE_TEXT_LENGTH = 220;
+
+function compactText(value: string): string {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sliceEvidence(value: string, maxLength = MAX_EVIDENCE_TEXT_LENGTH): string {
+  const compact = compactText(value);
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1)}...`;
+}
+
+function looksLikeTemuChallengePage(text: string): boolean {
+  const compact = compactText(text).toLowerCase();
+  if (!compact) return false;
+  return (
+    compact.includes("security verification") ||
+    compact.includes("challenge") ||
+    compact.includes("upload-static/assets/chl/js") ||
+    compact.includes("slide to complete the puzzle") ||
+    compact.includes("tc23efd25c84fedcab62d6a4f151de0fa4")
+  );
+}
+
+function extractTemuChallengeHint(text: string): string | null {
+  const compact = compactText(text).toLowerCase();
+  if (!compact) return null;
+  const match = compact.match(
+    /(security verification|challenge|slide to complete the puzzle|anti-bot|captcha)/i
+  );
+  return match?.[0] ? sliceEvidence(match[0]) : null;
+}
+
+function extractAvailabilityEvidence(rawText: string): {
+  evidenceText: string | null;
+  inventoryBadge: string | null;
+  stockCount: number | null;
+  sellerStatusHint: string | null;
+} {
+  const compact = compactText(rawText);
+  if (!compact) {
+    return { evidenceText: null, inventoryBadge: null, stockCount: null, sellerStatusHint: null };
+  }
+
+  const stockMatch = compact.match(
+    /(?:stock|inventory|available quantity)\s*[:=]?\s*(\d{1,5})|(?:only|just)\s+(\d{1,5})\s+(?:left|units?|pieces?|items?)\b/i
+  );
+  const inventoryBadgeMatch = compact.match(
+    /(in stock|out of stock|low stock|limited stock|few left|ready to ship|ships within\s+\d+\s+days)/i
+  );
+  const sellerStatusMatch = compact.match(
+    /(seller unavailable|store closed|security verification|challenge|captcha)/i
+  );
+  const evidenceMatch = compact.match(
+    /(out of stock|sold out|currently unavailable|in stock|low stock|limited stock|few left|ready to ship|ships within\s+\d+\s+days|available quantity\s*[:=]?\s*\d+)/i
+  );
+
+  return {
+    evidenceText: evidenceMatch?.[0] ? sliceEvidence(evidenceMatch[0]) : null,
+    inventoryBadge: inventoryBadgeMatch?.[0] ? sliceEvidence(inventoryBadgeMatch[0]) : null,
+    stockCount: stockMatch ? Number(stockMatch[1] ?? stockMatch[2]) : null,
+    sellerStatusHint: sellerStatusMatch?.[0] ? sliceEvidence(sellerStatusMatch[0]) : null,
+  };
+}
 
 function buildTemuSearchUrl(keyword: string): string {
   return `https://www.temu.com/search_result.html?search_key=${encodeURIComponent(keyword)}`;
@@ -66,6 +129,8 @@ function parseTemuText(text: string, keyword: string, snapshotTs: string): Suppl
 
     const nearbyText = text.slice(Math.max(0, idx - 380), idx + 420);
     const inferredAvailability = inferAvailabilityFromText(nearbyText);
+    const evidence = extractAvailabilityEvidence(nearbyText);
+    const evidenceQuality = inferredAvailability.signal === "UNKNOWN" ? "MEDIUM" : "HIGH";
 
     seen.add(supplierProductId);
     out.push({
@@ -88,6 +153,16 @@ function parseTemuText(text: string, keyword: string, snapshotTs: string): Suppl
         matchedItemUrl: rawUrl,
         availabilitySignal: inferredAvailability.signal,
         availabilityConfidence: inferredAvailability.confidence,
+        availabilityEvidencePresent: Boolean(
+          evidence.evidenceText || evidence.inventoryBadge || evidence.stockCount != null || evidence.sellerStatusHint
+        ),
+        availabilityEvidenceQuality: evidenceQuality,
+        availabilityEvidenceText: evidence.evidenceText,
+        inventoryBadge: evidence.inventoryBadge,
+        stockCount: evidence.stockCount,
+        sellerStatusHint: evidence.sellerStatusHint,
+        nearbyTextSample: sliceEvidence(nearbyText),
+        crawlStatus: "PARSED",
       },
     });
 
@@ -142,9 +217,29 @@ export async function searchTemuByKeyword(
   const normalizedKeyword = String(keyword ?? "").trim();
   if (!normalizedKeyword) return [];
   const searchUrl = buildTemuSearchUrl(normalizedKeyword);
+  const fallbackRaw: Record<string, unknown> = {
+    mode: "stub-fallback",
+    parseMode: "fallback",
+    provider: "temu-search",
+    keyword: normalizedKeyword,
+    platform: "Temu",
+    searchUrl,
+    crawlStatus: "NO_PRODUCTS_PARSED",
+    availabilitySignal: "UNKNOWN",
+    availabilityConfidence: 0.12,
+    availabilityEvidencePresent: false,
+    availabilityEvidenceQuality: "LOW",
+  };
 
   try {
     const fetched = await fetchTemuSearchText(searchUrl);
+    const challengePage = looksLikeTemuChallengePage(fetched.text);
+    const challengeHint = extractTemuChallengeHint(fetched.text);
+    fallbackRaw.fetchMode = fetched.mode;
+    fallbackRaw.pageChallengeDetected = challengePage;
+    fallbackRaw.challengeHint = challengeHint;
+    fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
+    fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
     const rows = parseTemuText(fetched.text, normalizedKeyword, snapshotTs)
       .slice(0, capped)
       .map((row) => ({
@@ -153,6 +248,7 @@ export async function searchTemuByKeyword(
           ...row.raw,
           fetchMode: fetched.mode,
           searchUrl,
+          pageChallengeDetected: challengePage,
         },
       }));
 
@@ -161,6 +257,8 @@ export async function searchTemuByKeyword(
       return rows;
     }
   } catch (error) {
+    fallbackRaw.crawlStatus = "FETCH_FAILED";
+    fallbackRaw.fetchError = error instanceof Error ? error.message : String(error);
     console.error(`[supplier][Temu] keyword="${normalizedKeyword}" failed`, {
       error: error instanceof Error ? error.message : String(error),
       searchUrl,
@@ -182,13 +280,9 @@ export async function searchTemuByKeyword(
       keyword: normalizedKeyword,
       snapshotTs,
       availabilitySignal: "UNKNOWN",
-      availabilityConfidence: 0.35,
+      availabilityConfidence: 0.12,
       raw: {
-        mode: "stub-fallback",
-        keyword: normalizedKeyword,
-        platform: "Temu",
-        availabilitySignal: "UNKNOWN",
-        availabilityConfidence: 0.35,
+        ...fallbackRaw,
       },
     },
   ];
