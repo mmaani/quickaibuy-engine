@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
+import { log } from "@/lib/logger";
 import { BLOCKING_RISK_FLAGS, REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import {
@@ -15,6 +16,7 @@ export const dynamic = "force-dynamic";
 
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 const BATCH_APPROVE_ALLOWED_STATUSES = new Set(["PENDING", "RECHECK", "APPROVED"]);
+const GENERIC_DECISION_ERROR = "Review decision failed. Try again, or contact support if it keeps happening.";
 
 type CandidateDecisionRow = {
   id: string;
@@ -102,6 +104,7 @@ async function applyCandidateDecision(input: {
 
   const approvalReason = input.reason ?? `decision:${input.requestedDecisionStatus}`;
   let effectiveDecisionStatus: string = input.requestedDecisionStatus;
+  let effectiveReason: string | null = approvalReason;
   let listingEligible =
     input.requestedDecisionStatus === "APPROVED" && existing.marketplace_key === "ebay";
   let listingBlockReason: string | null = listingEligible ? null : approvalReason;
@@ -146,6 +149,7 @@ async function applyCandidateDecision(input: {
       effectiveDecisionStatus = "MANUAL_REVIEW";
       listingEligible = false;
       listingBlockReason = `PRICE_GUARD_${priceGuard.decision}: ${reasons.join(", ")}`;
+      effectiveReason = listingBlockReason;
 
       if (input.enforceBatchSafeApprove) {
         return { ok: false, skipped: "price_guard_requires_manual_review" };
@@ -175,7 +179,7 @@ async function applyCandidateDecision(input: {
         listing_block_reason = $6
       WHERE id = $1
     `,
-    [input.candidateId, effectiveDecisionStatus, input.reason, input.actorId, listingEligible, listingBlockReason]
+    [input.candidateId, effectiveDecisionStatus, effectiveReason, input.actorId, listingEligible, listingBlockReason]
   );
 
   await writeAuditLog({
@@ -187,7 +191,7 @@ async function applyCandidateDecision(input: {
     details: {
       previousStatus: existing.decision_status,
       nextStatus: effectiveDecisionStatus,
-      reason: input.reason,
+      reason: effectiveReason,
       supplierKey: existing.supplier_key,
       supplierProductId: existing.supplier_product_id,
       marketplaceKey: existing.marketplace_key,
@@ -292,7 +296,10 @@ export async function POST(request: Request) {
     redirectUrl.searchParams.set("updated", "1");
     return NextResponse.redirect(redirectUrl, { status: 303 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Review decision failed.";
-    return redirectWithError(request, message);
+    log("error", "review.decision.failed", {
+      error: error instanceof Error ? error.message : String(error),
+      path: new URL(request.url).pathname,
+    });
+    return redirectWithError(request, GENERIC_DECISION_ERROR);
   }
 }
