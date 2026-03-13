@@ -4,19 +4,21 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { orderEvents, orderItems, orders } from "@/lib/db/schema";
 import { fetchEbayOrders, type NormalizedEbayOrder } from "./ebayFetchOrders";
 
-type ListingLinkage = {
+export type ListingLinkage = {
   listingId: string | null;
   supplierKey: string | null;
   supplierProductId: string | null;
 };
 
-type OrderItemComparable = {
+export type OrderItemComparable = {
   listingId: string | null;
   supplierKey: string | null;
   supplierProductId: string | null;
   quantity: number;
   itemPrice: string;
 };
+
+export type OrderSyncChange = "created" | "updated" | "unchanged";
 
 export type SyncEbayOrdersResult = {
   ok: boolean;
@@ -51,6 +53,24 @@ function hasMeaningfulChange(existing: {
 
 function normalizeItemPrice(value: string | number | null): string {
   return value == null ? "0" : String(value);
+}
+
+function getLegacyOrderQuantity(order: NormalizedEbayOrder): number {
+  return order.lineItems.reduce((sum, item) => sum + Math.max(1, Math.trunc(item.quantity || 0)), 0) || 1;
+}
+
+function getLegacyListingId(items: OrderItemComparable[]): string | null {
+  if (items.length !== 1) return null;
+  return items[0].listingId ?? null;
+}
+
+function buildLegacyRawPayload(order: NormalizedEbayOrder): Record<string, unknown> {
+  return {
+    marketplace: order.marketplace,
+    marketplaceOrderId: order.marketplaceOrderId,
+    sourceStatus: order.sourceStatus,
+    lineItems: order.lineItems,
+  };
 }
 
 function comparableItemKey(item: OrderItemComparable): string {
@@ -142,10 +162,10 @@ async function resolveListingLinkages(
   return map;
 }
 
-async function upsertOneOrder(
+export async function upsertNormalizedEbayOrder(
   order: NormalizedEbayOrder,
   listingLinkages: Map<string, ListingLinkage>
-): Promise<"created" | "updated" | "unchanged"> {
+): Promise<OrderSyncChange> {
   return db.transaction(async (tx) => {
     const existing = await tx
       .select({
@@ -170,7 +190,7 @@ async function upsertOneOrder(
     const nextStatus = "MANUAL_REVIEW";
     const now = new Date();
     let orderId: string;
-    let changeType: "created" | "updated" | "unchanged";
+    let changeType: OrderSyncChange;
     let createOrderSyncedEvent = false;
     const incomingComparableItems = toComparableIncomingItems(order, listingLinkages);
 
@@ -178,10 +198,16 @@ async function upsertOneOrder(
       const inserted = await tx
         .insert(orders)
         .values({
+          legacyListingId: getLegacyListingId(incomingComparableItems),
+          legacyMarketplaceKey: "ebay",
+          legacyOrderId: order.marketplaceOrderId,
           marketplace: "ebay",
           marketplaceOrderId: order.marketplaceOrderId,
           buyerName: order.buyerName,
           buyerCountry: order.buyerCountry,
+          legacyQuantity: getLegacyOrderQuantity(order),
+          legacyTotalAmount: order.totalPrice == null ? null : String(order.totalPrice),
+          legacyRawPayload: buildLegacyRawPayload(order),
           totalPrice: order.totalPrice == null ? null : String(order.totalPrice),
           currency: newCurrency,
           status: nextStatus,
@@ -194,6 +220,10 @@ async function upsertOneOrder(
       createOrderSyncedEvent = true;
     } else {
       orderId = existingRow.id;
+      const nextPersistedStatus =
+        existingRow.status === "NEW" || existingRow.status === "SYNCED"
+          ? nextStatus
+          : existingRow.status;
       const orderFieldsChanged = hasMeaningfulChange(
         {
           buyerName: existingRow.buyerName,
@@ -222,28 +252,35 @@ async function upsertOneOrder(
         })),
         incomingComparableItems
       );
+      const statusChanged = nextPersistedStatus !== existingRow.status;
 
-      await tx
-        .update(orders)
-        .set({
-          buyerName: order.buyerName ?? existingRow.buyerName,
-          buyerCountry: order.buyerCountry ?? existingRow.buyerCountry,
-          totalPrice:
-            order.totalPrice == null
-              ? existingRow.totalPrice
-              : String(order.totalPrice),
-          currency: newCurrency || existingRow.currency,
-          status:
-            existingRow.status === "NEW" ||
-            existingRow.status === "SYNCED" ||
-            existingRow.status === "MANUAL_REVIEW"
-              ? nextStatus
-              : existingRow.status,
-          updatedAt: now,
-        })
-        .where(eq(orders.id, orderId));
+      if (orderFieldsChanged || statusChanged) {
+        await tx
+          .update(orders)
+          .set({
+            legacyListingId: getLegacyListingId(incomingComparableItems),
+            legacyMarketplaceKey: "ebay",
+            legacyOrderId: order.marketplaceOrderId,
+            buyerName: order.buyerName ?? existingRow.buyerName,
+            buyerCountry: order.buyerCountry ?? existingRow.buyerCountry,
+            legacyQuantity: getLegacyOrderQuantity(order),
+            legacyTotalAmount:
+              order.totalPrice == null
+                ? existingRow.totalPrice
+                : String(order.totalPrice),
+            legacyRawPayload: buildLegacyRawPayload(order),
+            totalPrice:
+              order.totalPrice == null
+                ? existingRow.totalPrice
+                : String(order.totalPrice),
+            currency: newCurrency || existingRow.currency,
+            status: nextPersistedStatus,
+            updatedAt: now,
+          })
+          .where(eq(orders.id, orderId));
+      }
 
-      changeType = orderFieldsChanged || lineItemsChanged ? "updated" : "unchanged";
+      changeType = orderFieldsChanged || lineItemsChanged || statusChanged ? "updated" : "unchanged";
 
       if (lineItemsChanged) {
         await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
@@ -326,7 +363,7 @@ export async function syncEbayOrders(input?: {
 
   for (const order of fetched.orders) {
     try {
-      const change = await upsertOneOrder(order, linkages);
+      const change = await upsertNormalizedEbayOrder(order, linkages);
       if (change === "created") created++;
       else if (change === "updated") updated++;
       else unchanged++;
