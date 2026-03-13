@@ -10,7 +10,8 @@
 │   ├── order-automation-rollout.md
 │   ├── order-purchase-safety-scope.md
 │   ├── runtime-diagnostics.md
-│   └── system-architecture.md
+│   ├── system-architecture.md
+│   └── system-command-center-update.md
 ├── drizzle
 │   ├── 0000_even_iron_man.sql
 │   ├── 0001_concerned_skin.sql
@@ -115,6 +116,7 @@
 │   ├── check_ebay_inventory_location.ts
 │   ├── check_ebay_live_required_env.ts
 │   ├── check_ebay_publish_env.ts
+│   ├── check_inventory_risk_schedule.ts
 │   ├── check_listing_duplicates.mjs
 │   ├── check_listing_execution_gate_v1.mjs
 │   ├── check_listing_lifecycle_counts.mjs
@@ -127,6 +129,7 @@
 │   ├── check_matches.mjs
 │   ├── check_matches_latest.mjs
 │   ├── check_migration_baseline.ts
+│   ├── check_migration_ledger.ts
 │   ├── check_missing_cmds.sh
 │   ├── check_monitoring_dashboard_v1.sh
 │   ├── check_order_automation_runtime_ready.ts
@@ -159,6 +162,7 @@
 │   ├── db_inspect.mjs
 │   ├── debug_marketplace_scan.ts
 │   ├── debug_profit_join.mjs
+│   ├── enqueue_inventory_risk_scan.ts
 │   ├── enqueue_listing_prepare.ts
 │   ├── enqueue_listing_prepare_approved.ts
 │   ├── enqueue_marketplace_scan.ts
@@ -197,6 +201,7 @@
 │   ├── publish_one_ready_listing.ts
 │   ├── pull_vercel_env.sh
 │   ├── push_pipeline_to_main.sh
+│   ├── queue_namespace_diagnostics.ts
 │   ├── reclassify_legacy_dry_run_active_listings.ts
 │   ├── refresh_listing_price_guard_readiness.ts
 │   ├── reject_profitable_candidate.ts
@@ -254,12 +259,14 @@
 │   ├── test_ebay_search.sh
 │   ├── test_ebay_token.sh
 │   ├── test_ebay_tracking_sync.ts
+│   ├── test_paused_listing_lifecycle_guardrails.ts
 │   ├── test_product_discover.mjs
 │   ├── test_product_matcher.mjs
 │   ├── test_query_budget_allocator.mjs
 │   ├── test_supplier_discover.ts
 │   ├── test_trend_expand.mjs
 │   ├── update_repo_tree.mjs
+│   ├── validate_inventory_risk_scenarios.ts
 │   ├── validate_listing_schema_alignment.mjs
 │   ├── verify_profit_pipeline.ts
 │   ├── watch_repo_tree.mjs
@@ -306,7 +313,9 @@
 │   │   │   │   ├── listings
 │   │   │   │   │   ├── promote-ready
 │   │   │   │   │   │   └── route.ts
-│   │   │   │   │   └── re-evaluate
+│   │   │   │   │   ├── re-evaluate
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   └── resume
 │   │   │   │   │       └── route.ts
 │   │   │   │   ├── pipeline
 │   │   │   │   │   ├── run-marketplace-scan
@@ -381,6 +390,7 @@
 │   │   ├── db.ts
 │   │   ├── jobNames.ts
 │   │   ├── jobs
+│   │   │   ├── enqueueInventoryRiskScan.ts
 │   │   │   ├── enqueueMarketplacePriceScan.ts
 │   │   │   ├── enqueueProductMatch.ts
 │   │   │   ├── enqueueSupplierDiscover.ts
@@ -407,6 +417,7 @@
 │   │   │   ├── publishRateLimiter.ts
 │   │   │   ├── recovery.ts
 │   │   │   ├── recoveryState.ts
+│   │   │   ├── resumePausedListing.ts
 │   │   │   ├── statuses.ts
 │   │   │   ├── types.ts
 │   │   │   └── validate_listing_preview.ts
@@ -463,6 +474,9 @@
 │   │   ├── review
 │   │   │   ├── auth.ts
 │   │   │   └── console.ts
+│   │   ├── risk
+│   │   │   ├── inventoryRiskMonitor.ts
+│   │   │   └── riskSignals.ts
 │   │   ├── runtime
 │   │   ├── server
 │   │   │   └── controlPanelData.ts
@@ -475,6 +489,7 @@
 │   └── workers
 │       ├── engine.bootstrap.ts
 │       ├── engine.worker.ts
+│       ├── inventoryRisk.worker.ts
 │       ├── jobs.worker.ts
 │       ├── listingExecute.worker.ts
 │       ├── listingMonitor.worker.ts
@@ -482,4 +497,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-79 directories, 404 files
+81 directories, 417 files
