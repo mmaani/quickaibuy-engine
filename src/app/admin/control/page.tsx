@@ -210,13 +210,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   await requireAdmin();
   const resolvedSearchParams = await searchParams;
   let data: Awaited<ReturnType<typeof getControlPanelData>> | null = null;
-  let loadError: string | null = null;
 
   try {
     data = await getControlPanelData();
-  } catch (error) {
-    loadError = error instanceof Error ? error.message : String(error);
-  }
+  } catch {}
 
   if (!data) {
     return (
@@ -227,7 +224,9 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <p className="mt-2 text-sm text-rose-100/90">
               We couldn&apos;t load control panel data right now. Please retry in a minute.
             </p>
-            {loadError ? <p className="mt-2 text-xs text-rose-100/70">Error: {loadError}</p> : null}
+            <p className="mt-2 text-xs text-rose-100/70">
+              If the issue persists, check runtime diagnostics and server logs.
+            </p>
           </header>
         </div>
       </main>

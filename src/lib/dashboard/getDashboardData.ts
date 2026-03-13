@@ -35,6 +35,14 @@ type JobVisibility = {
   error?: string;
 };
 
+function safeResolveQueueName(): string {
+  try {
+    return resolveJobsQueueName();
+  } catch {
+    return "queue-unavailable";
+  }
+}
+
 export type DashboardData = {
   generatedAt: string;
   infrastructure: {
@@ -294,9 +302,8 @@ async function getRedisHealth(): Promise<{ status: HealthState; detail?: string 
 }
 
 async function getJobVisibility(): Promise<JobVisibility> {
-  const queueName = resolveJobsQueueName();
-
   try {
+    const queueName = resolveJobsQueueName();
     const bullPrefix = resolveBullPrefix();
     const bullmq = await import("bullmq");
     const { bullConnection } = await import("@/lib/bull");
@@ -348,7 +355,7 @@ async function getJobVisibility(): Promise<JobVisibility> {
     };
   } catch (error) {
     return {
-      queueName,
+      queueName: safeResolveQueueName(),
       counts: {},
       recentFailed: [],
       recentSucceeded: [],
@@ -395,7 +402,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         topProfitableOpportunities: [],
       })),
       getJobVisibility().catch((error) => ({
-        queueName: resolveJobsQueueName(),
+        queueName: safeResolveQueueName(),
         counts: {},
         recentFailed: [],
         recentSucceeded: [],

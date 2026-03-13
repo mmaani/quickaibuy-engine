@@ -15,12 +15,13 @@ function recurringJobIdForMarketplace(marketplaceKey: "ebay"): string {
   return `inventory-risk-scan-${marketplaceKey}-${INVENTORY_RISK_RECURRING_SUFFIX}`;
 }
 
-async function findInFlightInventoryRiskJob(marketplaceKey: "ebay") {
+async function findInFlightInventoryRiskJob(marketplaceKey: "ebay", jobId: string) {
   const jobs = await jobsQueue.getJobs(["active", "waiting", "prioritized"], 0, 200);
   return jobs.find(
     (job) =>
       job.name === JOB_NAMES.INVENTORY_RISK_SCAN &&
-      String(job.data?.marketplaceKey ?? "ebay") === marketplaceKey
+      String(job.data?.marketplaceKey ?? "ebay") === marketplaceKey &&
+      String(job.id ?? "") === jobId
   );
 }
 
@@ -34,7 +35,7 @@ export async function enqueueInventoryRiskScan(input?: {
   const idempotencySuffix = String(input?.idempotencySuffix ?? "latest").trim() || "latest";
   const payload = { limit, marketplaceKey };
   const jobId = `inventory-risk-scan-${marketplaceKey}-${idempotencySuffix}`;
-  const existing = await findInFlightInventoryRiskJob(marketplaceKey);
+  const existing = await findInFlightInventoryRiskJob(marketplaceKey, jobId);
   if (existing) {
     return existing;
   }
