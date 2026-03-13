@@ -31,7 +31,7 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
       updated_at AS "updatedAt"
     FROM listings
     WHERE marketplace_key = ${marketplaceKey}
-      AND status IN ('READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE', 'PUBLISH_FAILED')
+      AND status IN ('READY_TO_PUBLISH', 'PUBLISH_IN_PROGRESS', 'ACTIVE', 'PUBLISH_FAILED', 'PAUSED')
     ORDER BY updated_at DESC
     LIMIT ${limit}
   `);
@@ -40,6 +40,7 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
   let staleInProgress = 0;
   let activeMissingExternalId = 0;
   let repeatedFailures = 0;
+  let pausedStable = 0;
 
   for (const row of rows.rows as Array<Record<string, unknown>>) {
     checked++;
@@ -57,6 +58,7 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
 
     const isActiveMissingExternalId = status === "ACTIVE" && !publishedExternalId;
     const isRepeatedFailure = status === "PUBLISH_FAILED" && publishAttemptCount >= failedAttemptsThreshold;
+    const isPausedStable = status === "PAUSED";
 
     if (isStaleInProgress) {
       staleInProgress++;
@@ -114,6 +116,23 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
       });
     }
 
+    if (isPausedStable) {
+      pausedStable++;
+      await writeAuditLog({
+        actorType: "WORKER",
+        actorId,
+        entityType: "LISTING",
+        entityId: String(row.id),
+        eventType: "LISTING_MONITOR_PAUSED_STABLE",
+        details: {
+          listingId: row.id,
+          candidateId: row.candidateId,
+          marketplaceKey: row.marketplaceKey,
+          status,
+        },
+      });
+    }
+
     await writeAuditLog({
       actorType: "WORKER",
       actorId,
@@ -142,6 +161,7 @@ export async function runListingMonitor(input?: RunListingMonitorInput) {
     staleInProgress,
     activeMissingExternalId,
     repeatedFailures,
+    pausedStable,
   };
 
   console.log("[listing-monitor] completed", result);

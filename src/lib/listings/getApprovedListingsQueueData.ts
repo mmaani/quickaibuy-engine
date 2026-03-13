@@ -81,6 +81,8 @@ export type QueueListItem = {
   recoveryReasonCodes: string[];
   reEvaluationNeeded: boolean;
   rePromotionReady: boolean;
+  pausedByInventoryRisk: boolean;
+  pauseReason: string | null;
 };
 
 export type QueueOverview = {
@@ -188,6 +190,16 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     listingBlockReason: row.listing_block_reason,
   });
 
+  const listingResponse = asObject(row.listing_response);
+  const inventoryRisk = asObject(listingResponse?.inventoryRisk);
+  const riskAction = String(inventoryRisk?.action ?? "").toUpperCase();
+  const pauseReason = Array.isArray(inventoryRisk?.signals)
+    ? (inventoryRisk?.signals as Array<Record<string, unknown>>)
+        .map((signal) => String(signal.code ?? "").trim())
+        .filter(Boolean)
+        .join(", ") || null
+    : null;
+
   return {
     id: row.id,
     supplierKey: row.supplier_key,
@@ -222,6 +234,11 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     recoveryReasonCodes: recovery.recoveryReasonCodes,
     reEvaluationNeeded: recovery.reEvaluationNeeded,
     rePromotionReady: recovery.rePromotionReady,
+    pausedByInventoryRisk: row.listing_status === LISTING_STATUSES.PAUSED && riskAction === "AUTO_PAUSE",
+    pauseReason:
+      row.listing_status === LISTING_STATUSES.PAUSED
+        ? pauseReason
+        : null,
   };
 }
 
@@ -509,6 +526,9 @@ export async function getListingsQueueDetail(candidateId: string): Promise<Listi
             "LISTING_REFRESH_ENQUEUED_FOR_RECOVERY",
             "LISTING_REEVALUATED_AFTER_REFRESH",
             "LISTING_REPROMOTION_READY",
+            "LISTING_PAUSED_INVENTORY_RISK",
+            "LISTING_RESUME_REQUESTED",
+            "LISTING_RESUMED_TO_PREVIEW",
           ].includes(row.eventType)
         ) ?? null,
   };

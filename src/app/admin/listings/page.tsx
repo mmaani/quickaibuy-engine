@@ -77,6 +77,7 @@ function KeyValue({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function recoveryStateLabel(state: RecoveryState): string {
+  if (state === "PAUSED_REQUIRES_RESUME") return "PAUSED_REQUIRES_RESUME";
   if (state === "BLOCKED_STALE_MARKETPLACE") return "BLOCKED_STALE_MARKETPLACE";
   if (state === "BLOCKED_SUPPLIER_DRIFT") return "BLOCKED_SUPPLIER_DRIFT";
   if (state === "BLOCKED_STALE_SUPPLIER") return "BLOCKED_STALE_SUPPLIER";
@@ -87,6 +88,7 @@ function recoveryStateLabel(state: RecoveryState): string {
 }
 
 function recoveryTone(state: RecoveryState): string {
+  if (state === "PAUSED_REQUIRES_RESUME") return "text-amber-100";
   if (
     state === "BLOCKED_STALE_MARKETPLACE" ||
     state === "BLOCKED_SUPPLIER_DRIFT" ||
@@ -113,6 +115,8 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
   const reevaluateDecision = String(resolvedSearchParams?.reevaluateDecision ?? "").trim();
   const reevaluateState = String(resolvedSearchParams?.reevaluateState ?? "").trim();
   const reevaluateNextAction = String(resolvedSearchParams?.reevaluateNextAction ?? "").trim();
+  const resumeUpdated = String(resolvedSearchParams?.resumeUpdated ?? "").trim() === "1";
+  const resumeError = String(resolvedSearchParams?.resumeError ?? "").trim();
 
   const [overview, filterOptions, rows] = await Promise.all([
     getListingsQueueOverview(),
@@ -161,6 +165,8 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
           ) : null}
           {promoteUpdated ? <div className="mt-4 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">Preview promoted to READY_TO_PUBLISH.</div> : null}
           {promoteError ? <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{promoteError}</div> : null}
+          {resumeUpdated ? <div className="mt-4 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">Paused listing resumed to PREVIEW. Promotion remains explicit and operator-triggered.</div> : null}
+          {resumeError ? <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{resumeError}</div> : null}
         </header>
 
         <section className="mt-5 grid gap-4 md:grid-cols-5">
@@ -299,6 +305,8 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Preview readiness" value={detail.item.previewStatus} />
                     <KeyValue label="Missing fields" value={detail.item.previewMissingFields.length ? detail.item.previewMissingFields.join(", ") : "None"} />
                     <KeyValue label="Latest listing row" value={detail.item.listingId ? `${detail.item.listingId} (${detail.item.listingStatus ?? "-"})` : "None"} />
+                    <KeyValue label="Paused by inventory risk" value={detail.item.pausedByInventoryRisk ? "YES" : "NO"} />
+                    <KeyValue label="Pause reason" value={detail.item.pauseReason || "-"} />
                     <KeyValue label="Listing updated" value={formatDateTime(detail.item.listingUpdatedAt)} />
                     <KeyValue label="Latest recovery audit" value={detail.latestRecoveryAudit ? `${detail.latestRecoveryAudit.eventType} @ ${formatDateTime(detail.latestRecoveryAudit.eventTs)}` : "No recovery audit event found"} />
                   </div>
@@ -331,6 +339,22 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                         </button>
                       </form>
                       {!detail.item.listingId ? <div className="mt-2 text-xs text-amber-100">Disabled: listing row required.</div> : null}
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Resume paused listing</div>
+                      <form action="/api/admin/listings/resume" method="post">
+                        <input type="hidden" name="candidateId" value={detail.item.id} />
+                        <input type="hidden" name="listingId" value={detail.item.listingId ?? ""} />
+                        <button
+                          type="submit"
+                          disabled={detail.item.listingStatus !== LISTING_STATUSES.PAUSED}
+                          className="rounded-2xl border border-indigo-300/30 bg-indigo-400/12 px-4 py-2 text-sm font-semibold text-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Resume to PREVIEW
+                        </button>
+                      </form>
+                      {detail.item.listingStatus !== LISTING_STATUSES.PAUSED ? <div className="mt-2 text-xs text-amber-100">Disabled: listing must be PAUSED.</div> : <div className="mt-2 text-xs text-white/60">Required explicit approval step before any re-promotion.</div>}
                     </div>
 
                     <div>

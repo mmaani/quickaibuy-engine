@@ -448,6 +448,24 @@ export async function runInventoryRiskMonitor(input?: {
         risk: riskDetails,
       },
     });
+
+    if (resolution.action === "AUTO_PAUSE") {
+      await writeAuditLog({
+        actorType: "WORKER",
+        actorId,
+        entityType: "LISTING",
+        entityId: row.listingId,
+        eventType: "LISTING_PAUSED_INVENTORY_RISK",
+        details: {
+          listingId: row.listingId,
+          candidateId: row.candidateId,
+          marketplaceKey: row.marketplaceKey,
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+          risk: riskDetails,
+        },
+      });
+    }
   }
 
   return {
