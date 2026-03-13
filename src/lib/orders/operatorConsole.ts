@@ -27,6 +27,14 @@ export type OperatorRowNextAction =
   | "Sync tracking"
   | "Done";
 
+export type OperatorRowQuickAction =
+  | "mark-purchase"
+  | "supplier-ref"
+  | "tracking"
+  | "preview-sync"
+  | "sync-ebay"
+  | "view-safety";
+
 type OperatorOrderStageInput = {
   orderStatus: string | null | undefined;
   purchaseStatus: string | null | undefined;
@@ -350,4 +358,30 @@ export function buildOperatorHints(detail: AdminOrderDetail): string[] {
   }
 
   return Array.from(new Set(hints)).slice(0, 2);
+}
+
+export function getDisabledRowQuickActionHint(input: {
+  action: OperatorRowQuickAction;
+  enabled: boolean;
+  hasSupplier: boolean;
+}): string | null {
+  if (input.enabled) return null;
+
+  if ((input.action === "mark-purchase" || input.action === "supplier-ref") && !input.hasSupplier) {
+    return "Add supplier first";
+  }
+  if (input.action === "tracking") {
+    return "Record purchase first";
+  }
+  if (input.action === "preview-sync") {
+    return "Tracking required";
+  }
+  if (input.action === "sync-ebay") {
+    return "Order not ready";
+  }
+  if (input.action === "view-safety") {
+    return "Safety check required";
+  }
+
+  return "Order not ready";
 }

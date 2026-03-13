@@ -6,6 +6,7 @@ import RefreshButton from "@/app/_components/RefreshButton";
 import {
   approveOrderForPurchase,
   buildCompactOrderTimeline,
+  getDisabledRowQuickActionHint,
   buildOperatorOrderStepFlow,
   buildOperatorHints,
   buildProfitSnapshot,
@@ -431,6 +432,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     const href = orderDetailsHref({ filter, orderId: row.orderId });
                     const selected = row.orderId === selectedOrderId;
                     const status = String(row.status || "").toUpperCase();
+                    const rowHasSupplier = Boolean(row.supplierDisplay);
                     const rowCanMarkPurchase = ["PURCHASE_APPROVED", "PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
                     const rowCanTracking = ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
                     const rowCanPreview =
@@ -438,6 +440,38 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     const rowCanSync = row.trackingReady;
                     const rowCanViewSafety =
                       ["MANUAL_REVIEW", "NEW", "NEW_ORDER", "READY_FOR_PURCHASE_REVIEW", "PURCHASE_APPROVED"].includes(status);
+                    const rowCanSupplierRef = rowCanMarkPurchase && rowHasSupplier;
+                    const rowCanMarkPurchaseDirect = rowCanMarkPurchase && rowHasSupplier;
+                    const markPurchaseHint = getDisabledRowQuickActionHint({
+                      action: "mark-purchase",
+                      enabled: rowCanMarkPurchaseDirect,
+                      hasSupplier: rowHasSupplier,
+                    });
+                    const supplierRefHint = getDisabledRowQuickActionHint({
+                      action: "supplier-ref",
+                      enabled: rowCanSupplierRef,
+                      hasSupplier: rowHasSupplier,
+                    });
+                    const trackingHint = getDisabledRowQuickActionHint({
+                      action: "tracking",
+                      enabled: rowCanTracking,
+                      hasSupplier: rowHasSupplier,
+                    });
+                    const previewHint = getDisabledRowQuickActionHint({
+                      action: "preview-sync",
+                      enabled: rowCanPreview,
+                      hasSupplier: rowHasSupplier,
+                    });
+                    const syncHint = getDisabledRowQuickActionHint({
+                      action: "sync-ebay",
+                      enabled: rowCanSync,
+                      hasSupplier: rowHasSupplier,
+                    });
+                    const viewSafetyHint = getDisabledRowQuickActionHint({
+                      action: "view-safety",
+                      enabled: rowCanViewSafety,
+                      hasSupplier: rowHasSupplier,
+                    });
                     const rowSupplierRefLabel = row.purchaseStatus ? "Update supplier ref" : "Add supplier ref";
                     const rowTrackingLabel =
                       row.trackingStatus && String(row.trackingStatus).toUpperCase() !== "NOT_AVAILABLE"
@@ -474,83 +508,101 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         <td className="border-b border-white/5 px-3 py-3">{row.trackingStatus ?? "-"}</td>
                         <td className="border-b border-white/5 px-3 py-3">
                           <div className="flex flex-wrap gap-1 text-xs">
-                            <form action={runOrderAction}>
-                              <input type="hidden" name="actionType" value="record-purchase" />
-                              <input type="hidden" name="orderId" value={row.orderId} />
-                              <input type="hidden" name="filter" value={filter} />
-                              <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
-                              <input type="hidden" name="purchaseStatus" value={purchaseDefaultStatus} />
-                              <button
-                                disabled={!rowCanMarkPurchase || !row.supplierDisplay}
-                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanMarkPurchase && Boolean(row.supplierDisplay))}`}
+                            <div className="flex flex-col items-start gap-0.5">
+                              <form action={runOrderAction}>
+                                <input type="hidden" name="actionType" value="record-purchase" />
+                                <input type="hidden" name="orderId" value={row.orderId} />
+                                <input type="hidden" name="filter" value={filter} />
+                                <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
+                                <input type="hidden" name="purchaseStatus" value={purchaseDefaultStatus} />
+                                <button
+                                  disabled={!rowCanMarkPurchaseDirect}
+                                  className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanMarkPurchaseDirect)}`}
+                                >
+                                  Mark purchase recorded
+                                </button>
+                              </form>
+                              {markPurchaseHint ? <span className="text-[10px] text-white/50">{markPurchaseHint}</span> : null}
+                            </div>
+                            <div className="flex flex-col items-start gap-0.5">
+                              <Link
+                                href={orderDetailsHref({
+                                  filter,
+                                  orderId: row.orderId,
+                                  quickAction: "supplier-ref",
+                                  anchor: "supplier-ref-form",
+                                })}
+                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanSupplierRef)}`}
+                                aria-disabled={!rowCanSupplierRef}
+                                tabIndex={rowCanSupplierRef ? undefined : -1}
                               >
-                                Mark purchase recorded
-                              </button>
-                            </form>
-                            <Link
-                              href={orderDetailsHref({
-                                filter,
-                                orderId: row.orderId,
-                                quickAction: "supplier-ref",
-                                anchor: "supplier-ref-form",
-                              })}
-                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanMarkPurchase)}`}
-                              aria-disabled={!rowCanMarkPurchase}
-                              tabIndex={rowCanMarkPurchase ? undefined : -1}
-                            >
-                              {rowSupplierRefLabel}
-                            </Link>
-                            <Link
-                              href={orderDetailsHref({
-                                filter,
-                                orderId: row.orderId,
-                                quickAction: "tracking",
-                                anchor: "tracking-form",
-                              })}
-                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanTracking)}`}
-                              aria-disabled={!rowCanTracking}
-                              tabIndex={rowCanTracking ? undefined : -1}
-                            >
-                              {rowTrackingLabel}
-                            </Link>
-                            <Link
-                              href={orderDetailsHref({
-                                filter,
-                                orderId: row.orderId,
-                                quickAction: "preview-sync",
-                                anchor: "tracking-preview",
-                              })}
-                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanPreview)}`}
-                              aria-disabled={!rowCanPreview}
-                              tabIndex={rowCanPreview ? undefined : -1}
-                            >
-                              Preview sync
-                            </Link>
-                            <form action={runOrderAction}>
-                              <input type="hidden" name="actionType" value="sync-ebay" />
-                              <input type="hidden" name="orderId" value={row.orderId} />
-                              <input type="hidden" name="filter" value={filter} />
-                              <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
-                              <button
-                                disabled={!rowCanSync}
-                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanSync)}`}
+                                {rowSupplierRefLabel}
+                              </Link>
+                              {supplierRefHint ? <span className="text-[10px] text-white/50">{supplierRefHint}</span> : null}
+                            </div>
+                            <div className="flex flex-col items-start gap-0.5">
+                              <Link
+                                href={orderDetailsHref({
+                                  filter,
+                                  orderId: row.orderId,
+                                  quickAction: "tracking",
+                                  anchor: "tracking-form",
+                                })}
+                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanTracking)}`}
+                                aria-disabled={!rowCanTracking}
+                                tabIndex={rowCanTracking ? undefined : -1}
                               >
-                                Sync to eBay
-                              </button>
-                            </form>
-                            <Link
-                              href={orderDetailsHref({
-                                filter,
-                                orderId: row.orderId,
-                                quickAction: "view-safety",
-                                anchor: "purchase-safety",
-                              })}
-                              className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanViewSafety)}`}
-                              aria-disabled={!rowCanViewSafety}
-                              tabIndex={rowCanViewSafety ? undefined : -1}
-                            >
-                              View safety
-                            </Link>
+                                {rowTrackingLabel}
+                              </Link>
+                              {trackingHint ? <span className="text-[10px] text-white/50">{trackingHint}</span> : null}
+                            </div>
+                            <div className="flex flex-col items-start gap-0.5">
+                              <Link
+                                href={orderDetailsHref({
+                                  filter,
+                                  orderId: row.orderId,
+                                  quickAction: "preview-sync",
+                                  anchor: "tracking-preview",
+                                })}
+                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanPreview)}`}
+                                aria-disabled={!rowCanPreview}
+                                tabIndex={rowCanPreview ? undefined : -1}
+                              >
+                                Preview sync
+                              </Link>
+                              {previewHint ? <span className="text-[10px] text-white/50">{previewHint}</span> : null}
+                            </div>
+                            <div className="flex flex-col items-start gap-0.5">
+                              <form action={runOrderAction}>
+                                <input type="hidden" name="actionType" value="sync-ebay" />
+                                <input type="hidden" name="orderId" value={row.orderId} />
+                                <input type="hidden" name="filter" value={filter} />
+                                <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
+                                <button
+                                  disabled={!rowCanSync}
+                                  className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanSync)}`}
+                                >
+                                  Sync to eBay
+                                </button>
+                              </form>
+                              {syncHint ? <span className="text-[10px] text-white/50">{syncHint}</span> : null}
+                            </div>
+                            <div className="flex flex-col items-start gap-0.5">
+                              <Link
+                                href={orderDetailsHref({
+                                  filter,
+                                  orderId: row.orderId,
+                                  quickAction: "view-safety",
+                                  anchor: "purchase-safety",
+                                })}
+                                className={`rounded-md border px-2 py-1 ${quickActionButtonTone(rowCanViewSafety)}`}
+                                aria-disabled={!rowCanViewSafety}
+                                tabIndex={rowCanViewSafety ? undefined : -1}
+                              >
+                                View safety
+                              </Link>
+                              {viewSafetyHint ? <span className="text-[10px] text-white/50">{viewSafetyHint}</span> : null}
+                            </div>
                           </div>
                         </td>
                       </tr>
