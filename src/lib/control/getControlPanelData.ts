@@ -1,11 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Queue } from "bullmq";
 import { db } from "@/lib/db";
-import {
-  getInventoryRiskScheduleSnapshot,
-  INVENTORY_RISK_SCAN_EVERY_MS,
-} from "@/lib/jobs/enqueueInventoryRiskScan";
-import { JOB_NAMES } from "@/lib/jobs/jobNames";
 import { resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
@@ -13,6 +8,9 @@ import { getManualOverrideSnapshot } from "./manualOverrides";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
+
+const INVENTORY_RISK_SCAN_JOB_NAME = "INVENTORY_RISK_SCAN";
+const INVENTORY_RISK_SCAN_FALLBACK_EVERY_MS = 6 * 60 * 60 * 1000;
 
 export type ControlPanelData = {
   generatedAt: string;
@@ -459,29 +457,32 @@ async function getInventoryRiskScheduleStatus(): Promise<ControlPanelData["inven
   type QueueJobLike = { name?: string };
 
   try {
-    const [{ Queue }, { bullConnection }] = await Promise.all([
+    const [{ Queue }, { bullConnection }, inventoryRiskScheduleModule] = await Promise.all([
       import("bullmq"),
       import("@/lib/bull"),
+      import("@/lib/jobs/enqueueInventoryRiskScan"),
     ]);
     const queueName = resolveJobsQueueName();
     const bullPrefix = resolveBullPrefix();
+    const cadenceMs =
+      inventoryRiskScheduleModule.INVENTORY_RISK_SCAN_EVERY_MS ?? INVENTORY_RISK_SCAN_FALLBACK_EVERY_MS;
     queue = new Queue(queueName, { connection: bullConnection, prefix: bullPrefix });
 
     const [scheduleSnapshot, waitingJobs, activeJobs, prioritizedJobs] = await Promise.all([
-      getInventoryRiskScheduleSnapshot({ queue, marketplaceKey: "ebay" }),
+      inventoryRiskScheduleModule.getInventoryRiskScheduleSnapshot({ queue, marketplaceKey: "ebay" }),
       queue.getWaiting(0, 50),
       queue.getActive(0, 50),
       queue.getPrioritized(0, 50),
     ]);
 
     const waitingRuns = (waitingJobs as QueueJobLike[]).filter(
-      (job: QueueJobLike) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
+      (job: QueueJobLike) => job.name === INVENTORY_RISK_SCAN_JOB_NAME
     ).length;
     const activeRuns = (activeJobs as QueueJobLike[]).filter(
-      (job: QueueJobLike) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
+      (job: QueueJobLike) => job.name === INVENTORY_RISK_SCAN_JOB_NAME
     ).length;
     const prioritizedRuns = (prioritizedJobs as QueueJobLike[]).filter(
-      (job: QueueJobLike) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
+      (job: QueueJobLike) => job.name === INVENTORY_RISK_SCAN_JOB_NAME
     ).length;
 
     const queueSummaryParts = [
@@ -496,7 +497,7 @@ async function getInventoryRiskScheduleStatus(): Promise<ControlPanelData["inven
 
     return {
       cadenceLabel: "Runs every 6 hours",
-      cadenceHours: INVENTORY_RISK_SCAN_EVERY_MS / (60 * 60 * 1000),
+      cadenceHours: cadenceMs / (60 * 60 * 1000),
       nextRun: scheduleSnapshot.nextRun,
       scheduleActive: scheduleSnapshot.scheduleActive,
       queueSummary: queueSummaryParts.join(", "),
@@ -514,7 +515,7 @@ async function getInventoryRiskScheduleStatus(): Promise<ControlPanelData["inven
 
     return {
       cadenceLabel: "Runs every 6 hours",
-      cadenceHours: INVENTORY_RISK_SCAN_EVERY_MS / (60 * 60 * 1000),
+      cadenceHours: INVENTORY_RISK_SCAN_FALLBACK_EVERY_MS / (60 * 60 * 1000),
       nextRun: null,
       scheduleActive: null,
       queueSummary: `Queue status unavailable right now (${truncateText(detail, 80)})`,
