@@ -18,6 +18,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "enqueue:supplier-discover": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/enqueue_supplier_discover.ts",
+    "enqueue:inventory-risk-scan": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/enqueue_inventory_risk_scan.ts",
     "enqueue:profit-eval": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/enqueue_profit_eval.ts",
     "probe:runtime": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/probe_runtime.ts",
     "worker:jobs:run": "pnpm worker:jobs",
@@ -33,7 +34,8 @@
     "repo-tree:update": "node scripts/update_repo_tree.mjs",
     "repo-tree:watch": "node scripts/watch_repo_tree.mjs",
     "check:migration-ledger": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_migration_ledger.ts",
-    "diag:queue-namespace": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/queue_namespace_diagnostics.ts"
+    "diag:queue-namespace": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/queue_namespace_diagnostics.ts",
+    "check:inventory-risk-schedule": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_inventory_risk_schedule.ts"
   },
   "dependencies": {
     "bullmq": "^5.70.2",

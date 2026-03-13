@@ -89,6 +89,18 @@ Check resolved queue namespace contract:
 pnpm diag:queue-namespace
 ```
 
+Check inventory risk recurring schedule state:
+
+```bash
+pnpm check:inventory-risk-schedule
+```
+
+Manual on-demand inventory risk scan trigger:
+
+```bash
+pnpm enqueue:inventory-risk-scan
+```
+
 Find a real order for tracking-sync test:
 
 ```bash
@@ -124,3 +136,19 @@ vercel link
 4. order-specific checks
 
 If external dependencies fail, stop and resolve connectivity/auth first.
+
+## Inventory Risk Recurring Cadence (v1)
+
+- Recurring job: `INVENTORY_RISK_SCAN`
+- Cadence: every 6 hours
+- Registration point: `pnpm worker:jobs` boot path ensures schedule idempotently
+- Namespace safety: uses `JOBS_QUEUE_NAME` + `BULL_PREFIX` from queue namespace contract
+- Manual trigger remains available via:
+  - `pnpm enqueue:inventory-risk-scan`
+  - admin control quick-action API action key: `inventory-risk-scan`
+
+Operator verification steps:
+1. Start `pnpm worker:jobs`.
+2. Run `pnpm check:inventory-risk-schedule`.
+3. Confirm exactly one `INVENTORY_RISK_SCAN` repeatable entry exists with `every` = `21600000` ms.
+4. Optionally run `pnpm enqueue:inventory-risk-scan` and verify queue activity in the same check output.

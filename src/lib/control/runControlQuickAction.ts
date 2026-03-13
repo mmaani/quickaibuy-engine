@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { handleMarketplaceScanJob } from "@/lib/jobs/marketplaceScan";
 import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
 import { runSupplierDiscover } from "@/lib/jobs/supplierDiscover";
+import { enqueueInventoryRiskScan } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
 import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
@@ -77,6 +78,13 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
       details: { rows: statusCounts.rows ?? [] },
     });
     message = "Listing monitor snapshot recorded.";
+  } else if (action === "inventory-risk-scan") {
+    const job = await enqueueInventoryRiskScan({
+      marketplaceKey: "ebay",
+      limit: 200,
+      idempotencySuffix: `manual-${Date.now()}`,
+    });
+    message = `Inventory risk scan enqueued (${String(job.id)}).`;
   } else {
     throw new Error(`Unsupported control panel action: ${action}`);
   }

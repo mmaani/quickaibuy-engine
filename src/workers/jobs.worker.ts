@@ -13,9 +13,23 @@ import { markJobFailed, markJobQueued, markJobRunning, markJobSucceeded } from "
 import { pool } from "../lib/db";
 import { runOrderSyncWorker } from "./orderSync.worker";
 import { runInventoryRiskWorker } from "./inventoryRisk.worker";
+import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 console.log("[jobs.worker] booted and waiting for jobs");
+
+void ensureInventoryRiskScanSchedule({
+  limit: Number(process.env.INVENTORY_RISK_SCAN_LIMIT ?? 200),
+  marketplaceKey: "ebay",
+})
+  .then((result) => {
+    console.log("[jobs.worker] inventory risk recurring schedule ensured", result);
+  })
+  .catch((error) => {
+    console.error("[jobs.worker] failed to ensure inventory risk recurring schedule", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 
 
 async function logWorkerRun(args: {
@@ -422,9 +436,41 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.INVENTORY_RISK_SCAN: {
+        const marketplaceKey = (job.data?.marketplaceKey ?? "ebay") as "ebay";
+        const activeInventoryJobs = (
+          await jobsQueue.getActive(0, 50)
+        ).filter(
+          (activeJob) =>
+            String(activeJob.id) !== String(job.id) &&
+            activeJob.name === JOB_NAMES.INVENTORY_RISK_SCAN &&
+            String(activeJob.data?.marketplaceKey ?? "ebay") === marketplaceKey
+        );
+
+        if (activeInventoryJobs.length > 0) {
+          const output = {
+            ok: true,
+            skipped: true,
+            reason: "inventory risk scan already active",
+            marketplaceKey,
+          };
+          console.log("[jobs.worker] skipped overlapping inventory risk scan", {
+            id: job.id,
+            activeCount: activeInventoryJobs.length + 1,
+            marketplaceKey,
+          });
+          await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+          await logWorkerRun({
+            status: "SUCCEEDED",
+            jobName: job.name,
+            jobId: idempotencyKey,
+            durationMs: Date.now() - startedAtMs,
+          });
+          return output;
+        }
+
         const result = await runInventoryRiskWorker({
           limit: Number(job.data?.limit ?? 200),
-          marketplaceKey: (job.data?.marketplaceKey ?? "ebay") as "ebay",
+          marketplaceKey,
           actorId: JOB_NAMES.INVENTORY_RISK_SCAN,
         });
 
