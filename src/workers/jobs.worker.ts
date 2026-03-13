@@ -12,6 +12,7 @@ import { prepareListingPreviews } from "../lib/listings/prepareListingPreviews";
 import { markJobFailed, markJobQueued, markJobRunning, markJobSucceeded } from "../lib/jobs/jobLedger";
 import { pool } from "../lib/db";
 import { runOrderSyncWorker } from "./orderSync.worker";
+import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 console.log("[jobs.worker] booted and waiting for jobs");
@@ -398,6 +399,43 @@ export const jobsWorker = new Worker(
           eventType: "LISTING_PREVIEWS_PREPARED",
           details: {
             source: "listing-readiness",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return result;
+      }
+
+      case JOB_NAMES.INVENTORY_RISK_SCAN: {
+        const result = await runInventoryRiskWorker({
+          limit: Number(job.data?.limit ?? 200),
+          marketplaceKey: (job.data?.marketplaceKey ?? "ebay") as "ebay",
+          actorId: JOB_NAMES.INVENTORY_RISK_SCAN,
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.INVENTORY_RISK_SCAN,
+          entityType: "LISTING",
+          entityId: "batch",
+          eventType: "INVENTORY_RISK_SCAN_COMPLETED",
+          details: {
+            source: "inventory-risk-monitor",
             jobId: String(job.id ?? ""),
             ...result,
           },
