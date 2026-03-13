@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import type { Queue } from "bullmq";
 import { db } from "@/lib/db";
 import {
-  getInventoryRiskRecurringJobId,
+  getInventoryRiskScheduleSnapshot,
   INVENTORY_RISK_SCAN_EVERY_MS,
 } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { JOB_NAMES } from "@/lib/jobs/jobNames";
@@ -456,7 +456,6 @@ async function getQueueHealth() {
 
 async function getInventoryRiskScheduleStatus(): Promise<ControlPanelData["inventoryRisk"]["schedule"]> {
   let queue: Queue | null = null;
-  type RepeatableEntry = { name?: string; id?: string | null; every?: number | null; next?: number | null };
   type QueueJobLike = { name?: string };
 
   try {
@@ -468,19 +467,12 @@ async function getInventoryRiskScheduleStatus(): Promise<ControlPanelData["inven
     const bullPrefix = resolveBullPrefix();
     queue = new Queue(queueName, { connection: bullConnection, prefix: bullPrefix });
 
-    const [repeatableJobs, waitingJobs, activeJobs, prioritizedJobs] = await Promise.all([
-      queue.getRepeatableJobs(0, 200),
+    const [scheduleSnapshot, waitingJobs, activeJobs, prioritizedJobs] = await Promise.all([
+      getInventoryRiskScheduleSnapshot({ queue, marketplaceKey: "ebay" }),
       queue.getWaiting(0, 50),
       queue.getActive(0, 50),
       queue.getPrioritized(0, 50),
     ]);
-
-    const desiredSchedule = (repeatableJobs as RepeatableEntry[]).find(
-      (job: RepeatableEntry) =>
-        job.name === JOB_NAMES.INVENTORY_RISK_SCAN &&
-        job.id === getInventoryRiskRecurringJobId("ebay") &&
-        Number(job.every ?? 0) === INVENTORY_RISK_SCAN_EVERY_MS
-    );
 
     const waitingRuns = (waitingJobs as QueueJobLike[]).filter(
       (job: QueueJobLike) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
@@ -505,11 +497,8 @@ async function getInventoryRiskScheduleStatus(): Promise<ControlPanelData["inven
     return {
       cadenceLabel: "Runs every 6 hours",
       cadenceHours: INVENTORY_RISK_SCAN_EVERY_MS / (60 * 60 * 1000),
-      nextRun:
-        typeof desiredSchedule?.next === "number" && Number.isFinite(desiredSchedule.next)
-          ? new Date(desiredSchedule.next).toISOString()
-          : null,
-      scheduleActive: Boolean(desiredSchedule),
+      nextRun: scheduleSnapshot.nextRun,
+      scheduleActive: scheduleSnapshot.scheduleActive,
       queueSummary: queueSummaryParts.join(", "),
       waitingRuns,
       activeRuns,
