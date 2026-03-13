@@ -440,6 +440,7 @@ export default async function ReviewPage({
   const resolvedSearchParams = await searchParams;
   const previewUpdated = String(resolvedSearchParams?.previewUpdated ?? "").trim() === "1";
   const previewError = String(resolvedSearchParams?.previewError ?? "").trim();
+  const decisionError = String(resolvedSearchParams?.decisionError ?? "").trim();
   const batchUpdated = String(resolvedSearchParams?.batchUpdated ?? "").trim() === "1";
   const batchAction = String(resolvedSearchParams?.batchAction ?? "").trim().toUpperCase();
   const batchApplied = Number(String(resolvedSearchParams?.batchApplied ?? "0").trim() || "0");
@@ -490,6 +491,11 @@ export default async function ReviewPage({
           {previewError ? (
             <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
               {previewError}
+            </div>
+          ) : null}
+          {decisionError ? (
+            <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              {decisionError}
             </div>
           ) : null}
           {batchUpdated ? (

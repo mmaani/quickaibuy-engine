@@ -9,7 +9,6 @@ import {
   type ListingsQueueFilters,
 } from "@/lib/listings/getApprovedListingsQueueData";
 import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
-import { LISTING_STATUSES } from "@/lib/listings/statuses";
 import { runInventoryRiskMonitor } from "@/lib/risk/inventoryRiskMonitor";
 
 type Scenario = "LOW" | "MEDIUM" | "HIGH";
@@ -81,6 +80,7 @@ const EMPTY_FILTERS: ListingsQueueFilters = {
   listingEligible: "",
   previewPrepared: "",
   listingStatus: "",
+  riskFilter: "",
   minProfit: "",
   minMargin: "",
   minRoi: "",

@@ -51,6 +51,12 @@ function buildRedirectUrl(request: Request): URL {
   return new URL(REVIEW_ROUTE, request.url);
 }
 
+function redirectWithError(request: Request, message: string): NextResponse {
+  const redirectUrl = buildRedirectUrl(request);
+  redirectUrl.searchParams.set("decisionError", message);
+  return NextResponse.redirect(redirectUrl, { status: 303 });
+}
+
 async function getCandidateById(candidateId: string): Promise<CandidateDecisionRow | null> {
   const candidateResult = await pool.query<CandidateDecisionRow>(
     `
@@ -194,84 +200,89 @@ export async function POST(request: Request) {
     return unauthorizedResponse();
   }
 
-  const formData = await request.formData();
-  const decisionStatus = String(formData.get("decisionStatus") ?? "")
-    .trim()
-    .toUpperCase();
-  const reasonValue = String(formData.get("reason") ?? "").trim();
-  const reason = reasonValue ? reasonValue : null;
-  const actorId = getReviewActorIdFromAuthorizationHeader(authorization) ?? "review-console";
+  try {
+    const formData = await request.formData();
+    const decisionStatus = String(formData.get("decisionStatus") ?? "")
+      .trim()
+      .toUpperCase();
+    const reasonValue = String(formData.get("reason") ?? "").trim();
+    const reason = reasonValue ? reasonValue : null;
+    const actorId = getReviewActorIdFromAuthorizationHeader(authorization) ?? "review-console";
 
-  if (!REVIEW_ACTION_STATUSES.includes(decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number])) {
-    return NextResponse.json({ ok: false, error: "invalid decisionStatus" }, { status: 400 });
-  }
+    if (!REVIEW_ACTION_STATUSES.includes(decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number])) {
+      return redirectWithError(request, "Choose Approve, Reject, or Mark for Recheck before submitting.");
+    }
 
-  const redirectUrl = buildRedirectUrl(request);
-  const batchCandidateIds = formData
-    .getAll("candidateIds")
-    .map((value) => String(value).trim())
-    .filter(Boolean);
+    const redirectUrl = buildRedirectUrl(request);
+    const batchCandidateIds = formData
+      .getAll("candidateIds")
+      .map((value) => String(value).trim())
+      .filter(Boolean);
 
-  if (batchCandidateIds.length > 0) {
-    const uniqueCandidateIds = Array.from(new Set(batchCandidateIds));
+    if (batchCandidateIds.length > 0) {
+      const uniqueCandidateIds = Array.from(new Set(batchCandidateIds));
 
-    let appliedCount = 0;
-    let skippedCount = 0;
-    const skippedReasons: Record<string, number> = {};
+      let appliedCount = 0;
+      let skippedCount = 0;
+      const skippedReasons: Record<string, number> = {};
 
-    for (const candidateId of uniqueCandidateIds) {
-      const result = await applyCandidateDecision({
-        candidateId,
-        requestedDecisionStatus: decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number],
-        reason,
-        actorId,
-        source: "review-console-batch",
-        enforceBatchSafeApprove: decisionStatus === "APPROVED",
-      });
+      for (const candidateId of uniqueCandidateIds) {
+        const result = await applyCandidateDecision({
+          candidateId,
+          requestedDecisionStatus: decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number],
+          reason,
+          actorId,
+          source: "review-console-batch",
+          enforceBatchSafeApprove: decisionStatus === "APPROVED",
+        });
 
-      if (result.ok) {
-        appliedCount += 1;
-      } else {
-        skippedCount += 1;
-        const key = result.skipped ?? "unknown";
-        skippedReasons[key] = (skippedReasons[key] ?? 0) + 1;
+        if (result.ok) {
+          appliedCount += 1;
+        } else {
+          skippedCount += 1;
+          const key = result.skipped ?? "unknown";
+          skippedReasons[key] = (skippedReasons[key] ?? 0) + 1;
+        }
       }
+
+      redirectUrl.searchParams.set("batchUpdated", "1");
+      redirectUrl.searchParams.set("batchAction", decisionStatus);
+      redirectUrl.searchParams.set("batchApplied", String(appliedCount));
+      redirectUrl.searchParams.set("batchSkipped", String(skippedCount));
+      if (Object.keys(skippedReasons).length > 0) {
+        redirectUrl.searchParams.set("batchSkipSummary", JSON.stringify(skippedReasons));
+      } else {
+        redirectUrl.searchParams.delete("batchSkipSummary");
+      }
+
+      return NextResponse.redirect(redirectUrl, { status: 303 });
     }
 
-    redirectUrl.searchParams.set("batchUpdated", "1");
-    redirectUrl.searchParams.set("batchAction", decisionStatus);
-    redirectUrl.searchParams.set("batchApplied", String(appliedCount));
-    redirectUrl.searchParams.set("batchSkipped", String(skippedCount));
-    if (Object.keys(skippedReasons).length > 0) {
-      redirectUrl.searchParams.set("batchSkipSummary", JSON.stringify(skippedReasons));
-    } else {
-      redirectUrl.searchParams.delete("batchSkipSummary");
+    const candidateId = String(formData.get("candidateId") ?? "").trim();
+    if (!candidateId) {
+      return redirectWithError(request, "Candidate ID is required for a review decision.");
     }
 
+    const result = await applyCandidateDecision({
+      candidateId,
+      requestedDecisionStatus: decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number],
+      reason,
+      actorId,
+      source: "review-console",
+      enforceBatchSafeApprove: false,
+    });
+
+    if (!result.ok) {
+      return redirectWithError(request, result.skipped ?? "Review decision could not be applied.");
+    }
+
+    redirectUrl.searchParams.set("decisionStatus", result.effectiveDecisionStatus ?? decisionStatus);
+    redirectUrl.searchParams.delete("riskOnly");
+    redirectUrl.searchParams.set("candidateId", candidateId);
+    redirectUrl.searchParams.set("updated", "1");
     return NextResponse.redirect(redirectUrl, { status: 303 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Review decision failed.";
+    return redirectWithError(request, message);
   }
-
-  const candidateId = String(formData.get("candidateId") ?? "").trim();
-  if (!candidateId) {
-    return NextResponse.json({ ok: false, error: "candidateId required" }, { status: 400 });
-  }
-
-  const result = await applyCandidateDecision({
-    candidateId,
-    requestedDecisionStatus: decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number],
-    reason,
-    actorId,
-    source: "review-console",
-    enforceBatchSafeApprove: false,
-  });
-
-  if (!result.ok) {
-    return NextResponse.json({ ok: false, error: result.skipped ?? "decision_failed" }, { status: 400 });
-  }
-
-  redirectUrl.searchParams.set("decisionStatus", result.effectiveDecisionStatus ?? decisionStatus);
-  redirectUrl.searchParams.delete("riskOnly");
-  redirectUrl.searchParams.set("candidateId", candidateId);
-  redirectUrl.searchParams.set("updated", "1");
-  return NextResponse.redirect(redirectUrl, { status: 303 });
 }
