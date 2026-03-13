@@ -26,3 +26,9 @@ export type MatchProductJob = {
 export type ProfitEvalJob = {
   limit?: number;
 };
+
+
+export type InventoryRiskScanJob = {
+  limit?: number;
+  marketplaceKey?: "ebay";
+};
