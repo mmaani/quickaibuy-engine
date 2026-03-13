@@ -22,6 +22,7 @@ async function main() {
   );
 
   console.log("Enqueued supplier discover job:", job.id, job.name);
+  console.log("Consume with: pnpm worker:jobs");
   await queue.close();
 }
 

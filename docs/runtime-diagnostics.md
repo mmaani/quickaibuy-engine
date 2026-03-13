@@ -39,14 +39,25 @@ pnpm preflight:runtime-deps:dev
 pnpm preflight:runtime-deps:prod
 ```
 
-Run worker with explicit env selection:
+Run workers with explicit role and env selection:
 
 ```bash
+pnpm worker:jobs
 pnpm worker:engine:dev
 pnpm worker:engine:prod
 ```
 
+- `pnpm worker:jobs`: generic BullMQ jobs consumer; consumes queued jobs such as `supplier-discover`.
+- `pnpm worker:engine:dev`: engine/runtime worker boot path with `.env.local`; not the generic queue consumer.
+- `pnpm worker:engine:prod`: same engine/runtime worker boot path with `.env.vercel`; not the generic queue consumer.
+
 `pnpm worker:engine` is an alias for `pnpm worker:engine:dev`.
+
+## Which worker should I run?
+
+- For queue consumption (`supplier-discover`, other BullMQ jobs): run `pnpm worker:jobs`.
+- For engine/runtime boot-path diagnostics in local/dev context: run `pnpm worker:engine:dev`.
+- For engine/runtime boot-path diagnostics against prod-linked env: run `pnpm worker:engine:prod`.
 
 Check runtime probe quickly:
 
@@ -108,8 +119,8 @@ vercel link
 ## Safe rerun order
 
 1. `pnpm preflight:runtime-deps:dev` (or `:prod` if intentionally targeting production env file)
-2. `pnpm worker:jobs`
-3. `pnpm worker:engine:dev` (or `:prod`)
+2. `pnpm worker:jobs` (for queued job consumption)
+3. `pnpm worker:engine:dev` (or `:prod`) for engine/runtime boot-path validation
 4. order-specific checks
 
 If external dependencies fail, stop and resolve connectivity/auth first.

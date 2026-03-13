@@ -15,6 +15,15 @@ QuickAIBuy v1 operations are intentionally:
 
 The runbook assumes operators may have zero technical experience. Procedures must therefore be explicit, safe-by-default, and documented.
 
+## Worker Role Quick Reference
+
+When operators run workers from the terminal, use this command mapping:
+- `pnpm worker:jobs`: generic BullMQ queue consumer (including queued `supplier-discover` jobs).
+- `pnpm worker:engine:dev`: engine/runtime boot path using `.env.local`; not the generic queue consumer.
+- `pnpm worker:engine:prod`: same engine/runtime boot path using `.env.vercel`; not the generic queue consumer.
+
+If your goal is to consume queued jobs, run `pnpm worker:jobs`.
+
 ## Section 1 — Daily Operating Flow
 
 Operators use four primary admin surfaces.
