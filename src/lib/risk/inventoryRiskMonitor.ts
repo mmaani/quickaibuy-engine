@@ -264,13 +264,23 @@ export async function runInventoryRiskMonitor(input?: {
   actorId?: string;
   fetchFailureThreshold?: number;
   fetchFailureWindowSize?: number;
+  listingIds?: string[];
 }) {
   const limit = Number(input?.limit ?? 100);
   const marketplaceKey = (input?.marketplaceKey ?? "ebay") as "ebay";
   const actorId = input?.actorId ?? "inventoryRisk.worker";
   const fetchFailureThreshold = Number(input?.fetchFailureThreshold ?? 3);
   const fetchFailureWindowSize = Number(input?.fetchFailureWindowSize ?? 3);
+  const listingIds = (input?.listingIds ?? []).map((id) => id.trim()).filter(Boolean);
   const now = new Date();
+
+  const listingIdsFilter =
+    listingIds.length > 0
+      ? sql`AND l.id IN (${sql.join(
+          listingIds.map((listingId) => sql`${listingId}`),
+          sql`, `
+        )})`
+      : sql``;
 
   const rowsResult = await db.execute<MonitorRow>(sql`
     SELECT
@@ -322,6 +332,7 @@ export async function runInventoryRiskMonitor(input?: {
     ) latest_mp ON TRUE
     WHERE l.status = 'ACTIVE'
       AND l.marketplace_key = ${marketplaceKey}
+      ${listingIdsFilter}
     ORDER BY l.updated_at ASC, l.created_at ASC
     LIMIT ${limit}
   `);
