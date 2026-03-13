@@ -786,7 +786,8 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
                 upper(coalesce(l.response->'inventoryRisk'->>'action', '')) as risk_action
               from listings l
               where lower(coalesce(l.marketplace_key, '')) = 'ebay'
-                and l.response ? 'inventoryRisk'
+                and jsonb_typeof(coalesce(l.response, '{}'::jsonb)) = 'object'
+                and jsonb_typeof(coalesce(l.response->'inventoryRisk', '{}'::jsonb)) = 'object'
             )
             select
               count(*) filter (where risk_action = 'FLAG')::int as low_risk_flags,
@@ -809,10 +810,15 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
                 upper(coalesce(sig->>'code', '')) as risk_code
               from listings l
               left join lateral jsonb_array_elements(
-                coalesce(l.response->'inventoryRisk'->'signals', '[]'::jsonb)
+                case
+                  when jsonb_typeof(l.response->'inventoryRisk'->'signals') = 'array'
+                    then l.response->'inventoryRisk'->'signals'
+                  else '[]'::jsonb
+                end
               ) sig on true
               where lower(coalesce(l.marketplace_key, '')) = 'ebay'
-                and l.response ? 'inventoryRisk'
+                and jsonb_typeof(coalesce(l.response, '{}'::jsonb)) = 'object'
+                and jsonb_typeof(coalesce(l.response->'inventoryRisk', '{}'::jsonb)) = 'object'
             )
             select
               count(*) filter (where risk_code = 'PRICE_DRIFT_HIGH')::int as price_drift_high,
