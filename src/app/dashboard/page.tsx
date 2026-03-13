@@ -111,7 +111,33 @@ function DataTable({
 }
 
 export default async function DashboardPage() {
-  const data = await getDashboardData();
+  let data: Awaited<ReturnType<typeof getDashboardData>> | null = null;
+  let loadError: string | null = null;
+
+  try {
+    data = await getDashboardData();
+  } catch (error) {
+    loadError = error instanceof Error ? error.message : String(error);
+  }
+
+  if (!data) {
+    return (
+      <main className="relative min-h-screen bg-app text-white">
+        <div className="relative mx-auto grid max-w-[900px] gap-5 px-4 py-6 sm:px-6 lg:px-8">
+          <header className="glass-card rounded-3xl border border-rose-300/30 bg-rose-400/10 px-5 py-4 sm:px-6">
+            <h1 className="m-0 text-2xl font-bold text-rose-100">Dashboard temporarily unavailable</h1>
+            <p className="mt-2 text-sm text-rose-100/90">
+              We couldn&apos;t load dashboard data right now. Please retry in a minute.
+            </p>
+            {loadError ? <p className="mt-2 text-xs text-rose-100/70">Error: {loadError}</p> : null}
+            <div className="mt-4">
+              <RefreshButton />
+            </div>
+          </header>
+        </div>
+      </main>
+    );
+  }
 
   const totalPipelineRows = data.pipelineCounts.reduce((sum, item) => sum + (item.count ?? 0), 0) ?? 0;
   const profitableCount = data.pipelineCounts.find((x) => x.table === "profitable_candidates")?.count ?? 0;

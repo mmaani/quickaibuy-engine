@@ -209,7 +209,31 @@ async function runOverrideAction(formData: FormData) {
 export default async function ControlPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   await requireAdmin();
   const resolvedSearchParams = await searchParams;
-  const data = await getControlPanelData();
+  let data: Awaited<ReturnType<typeof getControlPanelData>> | null = null;
+  let loadError: string | null = null;
+
+  try {
+    data = await getControlPanelData();
+  } catch (error) {
+    loadError = error instanceof Error ? error.message : String(error);
+  }
+
+  if (!data) {
+    return (
+      <main className="relative min-h-screen bg-app text-white">
+        <div className="relative mx-auto grid max-w-[900px] gap-5 px-4 py-6 sm:px-6 lg:px-8">
+          <header className="glass-card rounded-3xl border border-rose-300/30 bg-rose-400/10 px-5 py-4 sm:px-6">
+            <h1 className="m-0 text-2xl font-bold text-rose-100">Control panel temporarily unavailable</h1>
+            <p className="mt-2 text-sm text-rose-100/90">
+              We couldn&apos;t load control panel data right now. Please retry in a minute.
+            </p>
+            {loadError ? <p className="mt-2 text-xs text-rose-100/70">Error: {loadError}</p> : null}
+          </header>
+        </div>
+      </main>
+    );
+  }
+
   const message = one(resolvedSearchParams?.actionMessage);
   const actionError = one(resolvedSearchParams?.actionError);
   const hasCriticalRecoveryBlock =

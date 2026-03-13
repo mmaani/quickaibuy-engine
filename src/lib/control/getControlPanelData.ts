@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobNames";
+import { resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { getManualOverrideSnapshot } from "./manualOverrides";
@@ -410,7 +410,9 @@ async function getQueueHealth() {
       import("bullmq"),
       import("@/lib/bull"),
     ]);
-    const queue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
+    const queueName = resolveJobsQueueName();
+    const bullPrefix = resolveBullPrefix();
+    const queue = new Queue(queueName, { connection: bullConnection, prefix: bullPrefix });
     const counts = await queue.getJobCounts(
       "waiting",
       "active",
@@ -421,7 +423,7 @@ async function getQueueHealth() {
       "prioritized",
       "waiting-children"
     );
-    return { status: "ok" as const, detail: `Queue '${JOBS_QUEUE_NAME}' reachable`, counts };
+    return { status: "ok" as const, detail: `Queue '${queueName}' reachable`, counts };
   } catch (error) {
     return {
       status: "error" as const,
