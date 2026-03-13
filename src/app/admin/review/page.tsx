@@ -12,6 +12,7 @@ import {
   type AuditEntry,
   type CandidateDetail,
   type ReviewFilters,
+  type ReviewListItem,
 } from "@/lib/review/console";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
 
@@ -205,6 +206,16 @@ function buildReviewHref(filters: ReviewFilters, candidateId: string): string {
 
   const query = params.toString();
   return query ? `${REVIEW_ROUTE}?${query}` : REVIEW_ROUTE;
+}
+
+function isSafePresetCandidate(candidate: ReviewListItem): boolean {
+  const hasPriceGuardBlock = (candidate.listingBlockReason ?? "").toUpperCase().startsWith("PRICE_GUARD_");
+  return (
+    candidate.marketplaceKey === "ebay" &&
+    candidate.decisionStatus !== "MANUAL_REVIEW" &&
+    candidate.blockingRiskFlags.length === 0 &&
+    !hasPriceGuardBlock
+  );
 }
 
 function RiskBadge({ flag }: { flag: string }) {
@@ -555,6 +566,20 @@ export default async function ReviewPage({
                 <div className="flex items-center gap-2">
                   <div className="text-xs text-white/45">{candidates.length} row(s)</div>
                   <button
+                    type="button"
+                    className="rounded-2xl border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white/85"
+                    data-review-select-all-visible
+                  >
+                    Select All Visible
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-2xl border border-cyan-300/30 bg-cyan-400/12 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100"
+                    data-review-select-safe
+                  >
+                    Select Safe Candidates
+                  </button>
+                  <button
                     type="submit"
                     name="decisionStatus"
                     value="APPROVED"
@@ -600,7 +625,14 @@ export default async function ReviewPage({
                             className={selected ? "bg-cyan-300/[0.08]" : "odd:bg-transparent even:bg-white/[0.02]"}
                           >
                             <td className="border-b border-white/5 px-3 py-3 align-top">
-                              <input type="checkbox" name="candidateIds" value={candidate.id} aria-label={`Select ${candidate.id}`} />
+                              <input
+                                type="checkbox"
+                                name="candidateIds"
+                                value={candidate.id}
+                                aria-label={`Select ${candidate.id}`}
+                                data-review-candidate-checkbox
+                                data-safe-preset-eligible={isSafePresetCandidate(candidate) ? "1" : "0"}
+                              />
                               {candidate.decisionStatus === "MANUAL_REVIEW" || candidate.blockingRiskFlags.length ? (
                                 <div className="mt-2 text-[10px] uppercase tracking-[0.12em] text-amber-200">Manual required</div>
                               ) : null}
@@ -659,6 +691,44 @@ export default async function ReviewPage({
               </div>
               <input type="hidden" name="reason" value="batch-triage" />
             </form>
+            <script
+              dangerouslySetInnerHTML={{
+                __html: `(() => {
+  const root = document.currentScript?.previousElementSibling;
+  if (!root || !(root instanceof HTMLFormElement)) return;
+
+  const getVisibleCheckboxes = () => {
+    const nodes = root.querySelectorAll('input[data-review-candidate-checkbox]');
+    return Array.from(nodes).filter((node) => {
+      if (!(node instanceof HTMLInputElement)) return false;
+      const row = node.closest('tr');
+      if (!row) return true;
+      const styles = window.getComputedStyle(row);
+      return styles.display !== 'none' && styles.visibility !== 'hidden';
+    });
+  };
+
+  const selectAllVisibleButton = root.querySelector('[data-review-select-all-visible]');
+  const selectSafeButton = root.querySelector('[data-review-select-safe]');
+
+  if (selectAllVisibleButton instanceof HTMLButtonElement) {
+    selectAllVisibleButton.addEventListener('click', () => {
+      for (const checkbox of getVisibleCheckboxes()) {
+        checkbox.checked = true;
+      }
+    });
+  }
+
+  if (selectSafeButton instanceof HTMLButtonElement) {
+    selectSafeButton.addEventListener('click', () => {
+      for (const checkbox of getVisibleCheckboxes()) {
+        checkbox.checked = checkbox.dataset.safePresetEligible === '1';
+      }
+    });
+  }
+})();`,
+              }}
+            />
           </section>
 
           <div className="grid gap-5">
