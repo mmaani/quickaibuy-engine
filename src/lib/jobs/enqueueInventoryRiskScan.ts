@@ -16,7 +16,7 @@ function recurringJobIdForMarketplace(marketplaceKey: "ebay"): string {
 }
 
 async function findInFlightInventoryRiskJob(marketplaceKey: "ebay") {
-  const jobs = await jobsQueue.getJobs(["active", "waiting", "delayed", "prioritized"], 0, 200);
+  const jobs = await jobsQueue.getJobs(["active", "waiting", "prioritized"], 0, 200);
   return jobs.find(
     (job) =>
       job.name === JOB_NAMES.INVENTORY_RISK_SCAN &&
