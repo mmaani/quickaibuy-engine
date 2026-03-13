@@ -359,12 +359,47 @@ async function getJobVisibility(): Promise<JobVisibility> {
 export async function getDashboardData(): Promise<DashboardData> {
   const [dbHealth, redisHealth, pipelineCounts, latestActivity, quality, jobs] =
     await Promise.all([
-      getDbHealth(),
-      getRedisHealth(),
-      Promise.all(PIPELINE_TABLES.map((t) => getCount(t))),
-      Promise.all(PIPELINE_TABLES.map((t) => getLatestRows(t, 8))),
-      getQualityMetrics(),
-      getJobVisibility(),
+      getDbHealth().catch((error) => ({
+        status: "error" as const,
+        detail: error instanceof Error ? error.message : "Database health check failed",
+      })),
+      getRedisHealth().catch((error) => ({
+        status: "error" as const,
+        detail: error instanceof Error ? error.message : "Redis health check failed",
+      })),
+      Promise.all(
+        PIPELINE_TABLES.map((t) =>
+          getCount(t).catch(() => ({
+            table: t,
+            count: null,
+            exists: false,
+          }))
+        )
+      ),
+      Promise.all(
+        PIPELINE_TABLES.map((t) =>
+          getLatestRows(t, 8).catch((error) => ({
+            table: t,
+            exists: false,
+            orderBy: null,
+            rows: [],
+            error: error instanceof Error ? error.message : "Latest rows query failed",
+          }))
+        )
+      ),
+      getQualityMetrics().catch(() => ({
+        averageMatchConfidence: null,
+        candidatesByMarketplace: [],
+        candidatesBySupplier: [],
+        topProfitableOpportunities: [],
+      })),
+      getJobVisibility().catch((error) => ({
+        queueName: JOBS_QUEUE_NAME,
+        counts: {},
+        recentFailed: [],
+        recentSucceeded: [],
+        error: error instanceof Error ? error.message : "Could not load BullMQ queue visibility",
+      })),
     ]);
 
   return {
