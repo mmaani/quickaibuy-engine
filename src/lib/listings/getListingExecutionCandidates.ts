@@ -27,6 +27,7 @@ export async function getListingExecutionCandidates(
   const limit = Number(input?.limit ?? 10);
   const marketplace = (input?.marketplace ?? "ebay") as "ebay";
   const listingId = String(input?.listingId ?? "").trim();
+  const targetedListingLookup = listingId !== "";
 
   const result = await db.execute(sql`
     SELECT
@@ -44,11 +45,27 @@ export async function getListingExecutionCandidates(
     INNER JOIN profitable_candidates pc
       ON pc.id = l.candidate_id
     WHERE l.marketplace_key = ${marketplace}
-      AND l.status = 'READY_TO_PUBLISH'
-      AND pc.marketplace_key = ${marketplace}
-      AND pc.decision_status = 'APPROVED'
-      AND pc.listing_eligible = TRUE
       AND (${listingId} = '' OR l.id::text = ${listingId})
+      AND (
+        (
+          ${targetedListingLookup} = FALSE
+          AND l.status = 'READY_TO_PUBLISH'
+          AND pc.marketplace_key = ${marketplace}
+          AND pc.decision_status = 'APPROVED'
+          AND pc.listing_eligible = TRUE
+        )
+        OR (
+          ${targetedListingLookup} = TRUE
+          AND l.status = 'PAUSED'
+        )
+        OR (
+          ${targetedListingLookup} = TRUE
+          AND l.status = 'READY_TO_PUBLISH'
+          AND pc.marketplace_key = ${marketplace}
+          AND pc.decision_status = 'APPROVED'
+          AND pc.listing_eligible = TRUE
+        )
+      )
     ORDER BY l.updated_at ASC, l.created_at ASC
     LIMIT ${limit}
   `);
