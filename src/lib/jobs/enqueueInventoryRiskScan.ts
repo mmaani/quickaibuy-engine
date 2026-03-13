@@ -8,10 +8,10 @@ const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   prefix: BULL_PREFIX,
 });
 
-const INVENTORY_RISK_SCAN_EVERY_MS = 6 * 60 * 60 * 1000;
+export const INVENTORY_RISK_SCAN_EVERY_MS = 6 * 60 * 60 * 1000;
 const INVENTORY_RISK_RECURRING_SUFFIX = "recurring-v1-6h";
 
-function recurringJobIdForMarketplace(marketplaceKey: "ebay"): string {
+export function getInventoryRiskRecurringJobId(marketplaceKey: "ebay"): string {
   return `inventory-risk-scan-${marketplaceKey}-${INVENTORY_RISK_RECURRING_SUFFIX}`;
 }
 
@@ -69,7 +69,7 @@ export async function ensureInventoryRiskScanSchedule(input?: {
   const limit = Number(input?.limit ?? 200);
   const marketplaceKey = (input?.marketplaceKey ?? "ebay") as "ebay";
   const payload = { limit, marketplaceKey };
-  const recurringJobId = recurringJobIdForMarketplace(marketplaceKey);
+  const recurringJobId = getInventoryRiskRecurringJobId(marketplaceKey);
   const repeatableJobs = await jobsQueue.getRepeatableJobs(0, 200);
   const inventoryRepeatables = repeatableJobs.filter(
     (job) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN

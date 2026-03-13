@@ -1,5 +1,11 @@
 import { sql } from "drizzle-orm";
+import type { Queue } from "bullmq";
 import { db } from "@/lib/db";
+import {
+  getInventoryRiskRecurringJobId,
+  INVENTORY_RISK_SCAN_EVERY_MS,
+} from "@/lib/jobs/enqueueInventoryRiskScan";
+import { JOB_NAMES } from "@/lib/jobs/jobNames";
 import { resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
@@ -91,6 +97,21 @@ export type ControlPanelData = {
     lowRiskFlags: number | null;
     manualReviewRisks: number | null;
     autoPausedListings: number | null;
+    schedule: {
+      cadenceLabel: string;
+      cadenceHours: number | null;
+      nextRun: string | null;
+      scheduleActive: boolean | null;
+      queueSummary: string;
+      waitingRuns: number | null;
+      activeRuns: number | null;
+      prioritizedRuns: number | null;
+      sourceWired: {
+        cadence: boolean;
+        schedule: boolean;
+        queue: boolean;
+      };
+    };
     riskTypeBreakdown: {
       priceDriftHigh: number | null;
       supplierOutOfStock: number | null;
@@ -430,6 +451,99 @@ async function getQueueHealth() {
       detail: error instanceof Error ? error.message : "Queue health failed",
       counts: {},
     };
+  }
+}
+
+async function getInventoryRiskScheduleStatus(): Promise<ControlPanelData["inventoryRisk"]["schedule"]> {
+  let queue: Queue | null = null;
+  type RepeatableEntry = { name?: string; id?: string | null; every?: number | null; next?: number | null };
+  type QueueJobLike = { name?: string };
+
+  try {
+    const [{ Queue }, { bullConnection }] = await Promise.all([
+      import("bullmq"),
+      import("@/lib/bull"),
+    ]);
+    const queueName = resolveJobsQueueName();
+    const bullPrefix = resolveBullPrefix();
+    queue = new Queue(queueName, { connection: bullConnection, prefix: bullPrefix });
+
+    const [repeatableJobs, waitingJobs, activeJobs, prioritizedJobs] = await Promise.all([
+      queue.getRepeatableJobs(0, 200),
+      queue.getWaiting(0, 50),
+      queue.getActive(0, 50),
+      queue.getPrioritized(0, 50),
+    ]);
+
+    const desiredSchedule = (repeatableJobs as RepeatableEntry[]).find(
+      (job: RepeatableEntry) =>
+        job.name === JOB_NAMES.INVENTORY_RISK_SCAN &&
+        job.id === getInventoryRiskRecurringJobId("ebay") &&
+        Number(job.every ?? 0) === INVENTORY_RISK_SCAN_EVERY_MS
+    );
+
+    const waitingRuns = (waitingJobs as QueueJobLike[]).filter(
+      (job: QueueJobLike) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
+    ).length;
+    const activeRuns = (activeJobs as QueueJobLike[]).filter(
+      (job: QueueJobLike) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
+    ).length;
+    const prioritizedRuns = (prioritizedJobs as QueueJobLike[]).filter(
+      (job: QueueJobLike) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
+    ).length;
+
+    const queueSummaryParts = [
+      waitingRuns === 1 ? "1 run waiting" : `${waitingRuns} runs waiting`,
+      activeRuns === 1 ? "1 run in progress" : `${activeRuns} runs in progress`,
+    ];
+    if (prioritizedRuns > 0) {
+      queueSummaryParts.push(
+        prioritizedRuns === 1 ? "1 run queued next" : `${prioritizedRuns} runs queued next`
+      );
+    }
+
+    return {
+      cadenceLabel: "Runs every 6 hours",
+      cadenceHours: INVENTORY_RISK_SCAN_EVERY_MS / (60 * 60 * 1000),
+      nextRun:
+        typeof desiredSchedule?.next === "number" && Number.isFinite(desiredSchedule.next)
+          ? new Date(desiredSchedule.next).toISOString()
+          : null,
+      scheduleActive: Boolean(desiredSchedule),
+      queueSummary: queueSummaryParts.join(", "),
+      waitingRuns,
+      activeRuns,
+      prioritizedRuns,
+      sourceWired: {
+        cadence: true,
+        schedule: true,
+        queue: true,
+      },
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+
+    return {
+      cadenceLabel: "Runs every 6 hours",
+      cadenceHours: INVENTORY_RISK_SCAN_EVERY_MS / (60 * 60 * 1000),
+      nextRun: null,
+      scheduleActive: null,
+      queueSummary: `Queue status unavailable right now (${truncateText(detail, 80)})`,
+      waitingRuns: null,
+      activeRuns: null,
+      prioritizedRuns: null,
+      sourceWired: {
+        cadence: true,
+        schedule: false,
+        queue: false,
+      },
+    };
+  } finally {
+    if (queue) {
+      try {
+        await queue.close();
+      } catch {}
+    }
   }
 }
 
@@ -997,6 +1111,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const capUsed = toNum(dailyCapRow?.cap_used);
   const capRemaining = capLimit == null || capUsed == null ? null : Math.max(0, capLimit - capUsed);
   const publishRateLimit = await getPublishRateLimitState("ebay");
+  const inventoryRiskSchedule = await getInventoryRiskScheduleStatus();
   const profitableCandidatesHasListingEligible = profitableCandidatesExists
     ? await columnExists("profitable_candidates", "listing_eligible")
     : false;
@@ -1751,6 +1866,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       lowRiskFlags: toNum(inventoryRiskSummary.low_risk_flags),
       manualReviewRisks: toNum(inventoryRiskSummary.manual_review_risks),
       autoPausedListings: toNum(inventoryRiskSummary.auto_paused_listings),
+      schedule: inventoryRiskSchedule,
       riskTypeBreakdown: {
         priceDriftHigh: toNum(inventoryRiskByType.price_drift_high),
         supplierOutOfStock: toNum(inventoryRiskByType.supplier_out_of_stock),
