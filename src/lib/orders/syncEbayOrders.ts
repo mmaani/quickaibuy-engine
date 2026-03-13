@@ -10,6 +10,14 @@ type ListingLinkage = {
   supplierProductId: string | null;
 };
 
+type OrderItemComparable = {
+  listingId: string | null;
+  supplierKey: string | null;
+  supplierProductId: string | null;
+  quantity: number;
+  itemPrice: string;
+};
+
 export type SyncEbayOrdersResult = {
   ok: boolean;
   fetched: number;
@@ -39,6 +47,61 @@ function hasMeaningfulChange(existing: {
     (incomingTotal != null && incomingTotal !== existing.totalPrice) ||
     (incoming.currency != null && incoming.currency !== existing.currency)
   );
+}
+
+function normalizeItemPrice(value: string | number | null): string {
+  return value == null ? "0" : String(value);
+}
+
+function comparableItemKey(item: OrderItemComparable): string {
+  return [
+    item.listingId ?? "",
+    item.supplierKey ?? "",
+    item.supplierProductId ?? "",
+    String(item.quantity),
+    item.itemPrice,
+  ].join("|");
+}
+
+function toComparableIncomingItems(
+  order: NormalizedEbayOrder,
+  listingLinkages: Map<string, ListingLinkage>
+): OrderItemComparable[] {
+  return order.lineItems.map((item) => {
+    const linkage = item.listingExternalId
+      ? (listingLinkages.get(item.listingExternalId) ?? null)
+      : null;
+    return {
+      listingId: linkage?.listingId ?? null,
+      supplierKey: linkage?.supplierKey ?? null,
+      supplierProductId: linkage?.supplierProductId ?? null,
+      quantity: item.quantity,
+      itemPrice: normalizeItemPrice(item.itemPrice),
+    };
+  });
+}
+
+function hasLineItemChange(
+  existingItems: OrderItemComparable[],
+  incomingItems: OrderItemComparable[]
+): boolean {
+  if (existingItems.length !== incomingItems.length) return true;
+
+  const counts = new Map<string, number>();
+  for (const item of existingItems) {
+    const key = comparableItemKey(item);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  for (const item of incomingItems) {
+    const key = comparableItemKey(item);
+    const current = counts.get(key);
+    if (!current) return true;
+    if (current === 1) counts.delete(key);
+    else counts.set(key, current - 1);
+  }
+
+  return counts.size > 0;
 }
 
 async function resolveListingLinkages(
@@ -109,6 +172,7 @@ async function upsertOneOrder(
     let orderId: string;
     let changeType: "created" | "updated" | "unchanged";
     let createOrderSyncedEvent = false;
+    const incomingComparableItems = toComparableIncomingItems(order, listingLinkages);
 
     if (!existingRow) {
       const inserted = await tx
@@ -130,7 +194,7 @@ async function upsertOneOrder(
       createOrderSyncedEvent = true;
     } else {
       orderId = existingRow.id;
-      const changed = hasMeaningfulChange(
+      const orderFieldsChanged = hasMeaningfulChange(
         {
           buyerName: existingRow.buyerName,
           buyerCountry: existingRow.buyerCountry,
@@ -138,6 +202,25 @@ async function upsertOneOrder(
           currency: existingRow.currency,
         },
         order
+      );
+
+      const existingItems = await tx
+        .select({
+          listingId: orderItems.listingId,
+          supplierKey: orderItems.supplierKey,
+          supplierProductId: orderItems.supplierProductId,
+          quantity: orderItems.quantity,
+          itemPrice: orderItems.itemPrice,
+        })
+        .from(orderItems)
+        .where(eq(orderItems.orderId, orderId));
+
+      const lineItemsChanged = hasLineItemChange(
+        existingItems.map((item) => ({
+          ...item,
+          itemPrice: normalizeItemPrice(item.itemPrice),
+        })),
+        incomingComparableItems
       );
 
       await tx
@@ -160,26 +243,36 @@ async function upsertOneOrder(
         })
         .where(eq(orders.id, orderId));
 
-      changeType = changed ? "updated" : "unchanged";
+      changeType = orderFieldsChanged || lineItemsChanged ? "updated" : "unchanged";
+
+      if (lineItemsChanged) {
+        await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
+
+        if (incomingComparableItems.length > 0) {
+          await tx.insert(orderItems).values(
+            incomingComparableItems.map((item) => ({
+              orderId,
+              listingId: item.listingId,
+              supplierKey: item.supplierKey,
+              supplierProductId: item.supplierProductId,
+              quantity: item.quantity,
+              itemPrice: item.itemPrice,
+            }))
+          );
+        }
+      }
     }
 
-    await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
-
-    if (order.lineItems.length > 0) {
+    if (!existingRow && incomingComparableItems.length > 0) {
       await tx.insert(orderItems).values(
-        order.lineItems.map((item) => {
-          const linkage = item.listingExternalId
-            ? (listingLinkages.get(item.listingExternalId) ?? null)
-            : null;
-          return {
-            orderId,
-            listingId: linkage?.listingId ?? null,
-            supplierKey: linkage?.supplierKey ?? null,
-            supplierProductId: linkage?.supplierProductId ?? null,
-            quantity: item.quantity,
-            itemPrice: item.itemPrice == null ? "0" : String(item.itemPrice),
-          };
-        })
+        incomingComparableItems.map((item) => ({
+          orderId,
+          listingId: item.listingId,
+          supplierKey: item.supplierKey,
+          supplierProductId: item.supplierProductId,
+          quantity: item.quantity,
+          itemPrice: item.itemPrice,
+        }))
       );
     }
 
@@ -201,7 +294,7 @@ async function upsertOneOrder(
         details: {
           marketplace: "ebay",
           marketplaceOrderId: order.marketplaceOrderId,
-          note: "Order fields updated during sync",
+          note: "Order or line items updated during sync",
         },
       });
     }
