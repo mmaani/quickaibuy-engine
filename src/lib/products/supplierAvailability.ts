@@ -52,33 +52,75 @@ export function inferAvailabilityFromText(text: string): {
   const normalized = String(text ?? "").toLowerCase();
   if (!normalized) return { signal: "UNKNOWN", confidence: 0.3 };
 
+  const compact = normalized.replace(/\s+/g, " ").trim();
+  const stockCountMatch = compact.match(
+    /(?:only|just|about|around)?\s*(\d{1,5})\s*(?:left|units?|pieces?|items?)\s*(?:in stock|available|remaining)?|(?:stock|inventory|available quantity)\s*[:=]?\s*(\d{1,5})/
+  );
+  const stockCount = stockCountMatch ? Number(stockCountMatch[1] ?? stockCountMatch[2]) : null;
+
   if (
-    normalized.includes("out of stock") ||
-    normalized.includes("sold out") ||
-    normalized.includes("unavailable") ||
-    normalized.includes("currently unavailable")
+    compact.includes("out of stock") ||
+    compact.includes("sold out") ||
+    compact.includes("unavailable") ||
+    compact.includes("currently unavailable") ||
+    compact.includes("no stock") ||
+    compact.includes("temporarily out") ||
+    compact.includes("item removed") ||
+    compact.includes("store closed") ||
+    compact.includes("seller unavailable")
   ) {
     return { signal: "OUT_OF_STOCK", confidence: 0.95 };
   }
 
+  if (stockCount != null) {
+    if (stockCount <= 0) return { signal: "OUT_OF_STOCK", confidence: 0.95 };
+    if (stockCount <= 5) return { signal: "LOW_STOCK", confidence: 0.9 };
+    if (stockCount <= 20) return { signal: "LOW_STOCK", confidence: 0.82 };
+    return { signal: "IN_STOCK", confidence: 0.78 };
+  }
+
   if (
-    normalized.includes("low stock") ||
-    normalized.includes("limited stock") ||
-    normalized.includes("only ") ||
-    normalized.includes("few left")
+    compact.includes("low stock") ||
+    compact.includes("limited stock") ||
+    compact.includes("few left") ||
+    compact.includes("almost sold out") ||
+    compact.includes("selling fast") ||
+    compact.includes("limited quantity")
   ) {
     return { signal: "LOW_STOCK", confidence: 0.8 };
   }
 
   if (
-    normalized.includes("in stock") ||
-    normalized.includes("available now") ||
-    normalized.includes("ships from")
+    compact.includes("in stock") ||
+    compact.includes("available now") ||
+    compact.includes("ready to ship") ||
+    compact.includes("ships within") ||
+    compact.includes("inventory available") ||
+    compact.includes("stock available") ||
+    compact.includes("ships from")
   ) {
-    return { signal: "IN_STOCK", confidence: 0.65 };
+    return { signal: "IN_STOCK", confidence: 0.7 };
   }
 
   return { signal: "UNKNOWN", confidence: 0.35 };
+}
+
+function readStringField(payload: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function readNumericField(payload: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const parsed = Number(String(value ?? "").trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }
 
 export function extractAvailabilityFromRawPayload(input: {
@@ -101,9 +143,53 @@ export function extractAvailabilityFromRawPayload(input: {
   const confidenceFromPayload =
     payload?.availabilityConfidence ??
     payload?.availability_confidence ??
-    payload?.stockConfidence;
+    payload?.stockConfidence ??
+    payload?.inventoryConfidence;
+  const stockFromPayload = payload
+    ? readNumericField(payload, [
+        "stockCount",
+        "stock_count",
+        "inventoryCount",
+        "inventory_count",
+        "availableQuantity",
+        "available_quantity",
+        "quantityAvailable",
+        "quantity_available",
+      ])
+    : null;
+  const statusTextFromPayload = payload
+    ? readStringField(payload, [
+        "availabilityText",
+        "availability_text",
+        "stockText",
+        "stock_text",
+        "inventoryBadge",
+        "inventory_badge",
+        "sellerStatus",
+        "seller_status",
+      ])
+    : null;
 
   const signal = normalizeAvailabilitySignal(statusFromPayload ?? input.availabilityStatus);
   const confidence = normalizeAvailabilityConfidence(confidenceFromPayload);
+  if (signal !== "UNKNOWN") {
+    return { signal, confidence: confidence ?? 0.75 };
+  }
+
+  if (stockFromPayload != null) {
+    if (stockFromPayload <= 0) return { signal: "OUT_OF_STOCK", confidence: 0.95 };
+    if (stockFromPayload <= 5) return { signal: "LOW_STOCK", confidence: 0.9 };
+    if (stockFromPayload <= 20) return { signal: "LOW_STOCK", confidence: 0.82 };
+    return { signal: "IN_STOCK", confidence: 0.78 };
+  }
+
+  if (statusTextFromPayload) {
+    const inferred = inferAvailabilityFromText(statusTextFromPayload);
+    return {
+      signal: inferred.signal,
+      confidence: confidence ?? inferred.confidence,
+    };
+  }
+
   return { signal, confidence };
 }
