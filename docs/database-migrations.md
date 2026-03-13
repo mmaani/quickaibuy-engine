@@ -21,7 +21,7 @@ Starting now, QuickAIBuy uses **one authoritative forward path**:
 - Apply with:
 
 ```bash
-node scripts/run_sql_file.mjs migrations/<timestamp>_<name>.sql
+node scripts/mutate_execute_sql_file.mjs migrations/<timestamp>_<name>.sql
 ```
 
 - Drizzle ledger is retained for historical/bootstrap provenance only; it is **not** the authority for new v1 migrations.
@@ -64,7 +64,7 @@ pnpm exec tsx scripts/check_migration_baseline.ts
 ```
 2. Apply additive migration SQL in-order:
 ```bash
-node scripts/run_sql_file.mjs migrations/<file>.sql
+node scripts/mutate_execute_sql_file.mjs migrations/<file>.sql
 ```
 3. Re-run verification:
 ```bash

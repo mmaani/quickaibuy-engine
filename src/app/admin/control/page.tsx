@@ -280,8 +280,8 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
     { key: "inventory-risk-scan", label: "Run inventory risk scan" },
     { key: "prepare", label: "Prepare listing previews" },
     { key: "promote", label: "Promote listing previews ready" },
-    { key: "dry-run", label: "Run listing execution dry-run" },
-    { key: "monitor", label: "Run listing monitor" },
+    { key: "dry-run", label: "Capture listing execution diagnostic snapshot" },
+    { key: "monitor", label: "Capture listing monitor diagnostic snapshot" },
   ];
 
   const nextSteps: string[] = [];

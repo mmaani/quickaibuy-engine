@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { engineQueue, jobNameFromUnknown } from "@/src/lib/bull";
+import { jobsQueue, jobNameFromUnknown } from "@/src/lib/bull";
 import { pool } from "@/lib/db";
+import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobNames";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,11 +46,11 @@ export async function POST(req: Request) {
       "job",
       idempotencyKey ?? null,
       "ENQUEUE",
-      JSON.stringify({ name, payload }),
+      JSON.stringify({ name, payload, queue: JOBS_QUEUE_NAME, prefix: BULL_PREFIX }),
     ]
   );
 
-  const job = await engineQueue.add(name, payload, {
+  const job = await jobsQueue.add(name, payload, {
     jobId: idempotencyKey,
     attempts: 3,
     backoff: {
@@ -65,7 +66,8 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     ok: true,
-    queue: "engine",
+    queue: JOBS_QUEUE_NAME,
+    prefix: BULL_PREFIX,
     name,
     jobId: job.id,
   });

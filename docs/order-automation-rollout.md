@@ -4,7 +4,7 @@
 The project currently has two migration tracks:
 
 1. `pnpm db:migrate` applies Drizzle migrations from `drizzle/`.
-2. Most operational schema updates (including order automation B1-B5/C2) are in `migrations/*.sql` and are typically applied with `node scripts/run_sql_file.mjs ...`.
+2. Most operational schema updates (including order automation B1-B5/C2) are in `migrations/*.sql` and are typically applied with `node scripts/mutate_execute_sql_file.mjs ...`.
 
 Because the order-automation chain is SQL-file based, environments can drift if:
 - SQL files were applied manually in one environment but not another.
@@ -53,11 +53,11 @@ pnpm db:migrate
 ```
 - Apply order automation SQL chain if schema checks show missing order objects:
 ```bash
-node scripts/run_sql_file.mjs migrations/20260311_order_automation_foundation.sql
-node scripts/run_sql_file.mjs migrations/20260311b_order_items_supplier_linkage_nullable.sql
-node scripts/run_sql_file.mjs migrations/20260311c_supplier_orders_manual_workflow_fields.sql
-node scripts/run_sql_file.mjs migrations/20260311d_supplier_orders_add_tracking_carrier.sql
-node scripts/run_sql_file.mjs migrations/20260311e_supplier_orders_tracking_sync_fields.sql
+node scripts/mutate_execute_sql_file.mjs migrations/20260311_order_automation_foundation.sql
+node scripts/mutate_execute_sql_file.mjs migrations/20260311b_order_items_supplier_linkage_nullable.sql
+node scripts/mutate_execute_sql_file.mjs migrations/20260311c_supplier_orders_manual_workflow_fields.sql
+node scripts/mutate_execute_sql_file.mjs migrations/20260311d_supplier_orders_add_tracking_carrier.sql
+node scripts/mutate_execute_sql_file.mjs migrations/20260311e_supplier_orders_tracking_sync_fields.sql
 ```
 
 3. **Post-check deterministic readiness**
