@@ -57,3 +57,21 @@ Production requires explicit `BULL_PREFIX=qaib-prod`; startup assertions fail fa
 ```bash
 pnpm exec tsx scripts/queue_namespace_diagnostics.ts
 ```
+
+## Worker startup (explicit env selection)
+
+- `pnpm worker:engine:dev`
+  - Uses `DOTENV_CONFIG_PATH=.env.local`
+  - Intended for local/dev branch infrastructure
+- `pnpm worker:engine:prod`
+  - Uses `DOTENV_CONFIG_PATH=.env.vercel`
+  - Intended only when you explicitly need production-linked runtime checks
+- `pnpm worker:engine`
+  - Alias to `pnpm worker:engine:dev`
+
+Both worker commands run dependency preflight before boot and fail fast with classified errors:
+- `CONFIG_MISSING` for missing `DATABASE_URL` or `REDIS_URL`
+- `DNS_FAILURE` for host resolution issues (for example `EAI_AGAIN`)
+- `NETWORK_UNREACHABLE` when host resolves but endpoint is not reachable
+
+When `DNS_FAILURE` or `NETWORK_UNREACHABLE` appears in restricted environments, the fix is external networking access (allow outbound DNS/TCP), not queue/runtime code changes.

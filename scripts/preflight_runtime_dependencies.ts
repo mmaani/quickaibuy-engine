@@ -13,7 +13,8 @@ import {
   withRetries,
 } from "./lib/runtimeDiagnostics";
 
-dotenv.config({ path: ".env.local" });
+const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
+dotenv.config({ path: dotenvPath, override: true });
 dotenv.config();
 
 async function runHostChecks(
@@ -92,7 +93,7 @@ async function main() {
   checks.push(checkVercelCli());
   checks.push(checkVercelLinkState());
 
-  printStructuredResults("runtime dependency preflight", checks);
+  printStructuredResults(`runtime dependency preflight (${dotenvPath})`, checks);
 
   const hasFailures = checks.some((c) => c.status !== "OK");
   process.exit(hasFailures ? 1 : 0);

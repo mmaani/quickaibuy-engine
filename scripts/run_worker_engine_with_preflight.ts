@@ -9,7 +9,8 @@ import {
   withRetries,
 } from "./lib/runtimeDiagnostics";
 
-dotenv.config({ path: ".env.local" });
+const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
+dotenv.config({ path: dotenvPath, override: true });
 dotenv.config();
 
 type PreflightIssue = {
@@ -58,11 +59,15 @@ async function checkRequiredEndpoint(name: string, value: string, fallbackPort: 
 }
 
 async function main() {
+  console.log(`[worker:engine] env_path=${dotenvPath}`);
+
   const db = checkEnvVar("DATABASE_URL");
   if (db.status !== "OK") {
     console.error(`[worker:engine] DEPENDENCY_CLASS=${db.status}`);
     console.error(`[worker:engine] reason=${db.reason}`);
-    console.error(`[worker:engine] next_step=${db.nextStep ?? "Set DATABASE_URL"}`);
+    console.error(
+      `[worker:engine] next_step=${db.nextStep ?? "Set DATABASE_URL in selected env file"}`
+    );
     process.exit(1);
   }
 
@@ -76,17 +81,25 @@ async function main() {
 
   const dbIssue = await checkRequiredEndpoint("DATABASE_URL", String(process.env.DATABASE_URL), 5432);
   if (dbIssue) {
+    const nextStep =
+      dbIssue.class === "DNS_FAILURE" || dbIssue.class === "NETWORK_UNREACHABLE"
+        ? `${dbIssue.nextStep} If running in a restricted environment, allow outbound DNS/TCP and retry.`
+        : dbIssue.nextStep;
     console.error(`[worker:engine] DEPENDENCY_CLASS=${dbIssue.class}`);
     console.error(`[worker:engine] reason=${dbIssue.reason}`);
-    console.error(`[worker:engine] next_step=${dbIssue.nextStep}`);
+    console.error(`[worker:engine] next_step=${nextStep}`);
     process.exit(1);
   }
 
   const redisIssue = await checkRequiredEndpoint("REDIS_URL", String(process.env.REDIS_URL), 6379);
   if (redisIssue) {
+    const nextStep =
+      redisIssue.class === "DNS_FAILURE" || redisIssue.class === "NETWORK_UNREACHABLE"
+        ? `${redisIssue.nextStep} If running in a restricted environment, allow outbound DNS/TCP and retry.`
+        : redisIssue.nextStep;
     console.error(`[worker:engine] DEPENDENCY_CLASS=${redisIssue.class}`);
     console.error(`[worker:engine] reason=${redisIssue.reason}`);
-    console.error(`[worker:engine] next_step=${redisIssue.nextStep}`);
+    console.error(`[worker:engine] next_step=${nextStep}`);
     process.exit(1);
   }
 

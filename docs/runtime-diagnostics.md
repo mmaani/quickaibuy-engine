@@ -32,6 +32,22 @@ Run full dependency preflight:
 pnpm preflight:runtime-deps
 ```
 
+Run explicit env preflight:
+
+```bash
+pnpm preflight:runtime-deps:dev
+pnpm preflight:runtime-deps:prod
+```
+
+Run worker with explicit env selection:
+
+```bash
+pnpm worker:engine:dev
+pnpm worker:engine:prod
+```
+
+`pnpm worker:engine` is an alias for `pnpm worker:engine:dev`.
+
 Check runtime probe quickly:
 
 ```bash
@@ -91,9 +107,9 @@ vercel link
 
 ## Safe rerun order
 
-1. `pnpm preflight:runtime-deps`
+1. `pnpm preflight:runtime-deps:dev` (or `:prod` if intentionally targeting production env file)
 2. `pnpm worker:jobs`
-3. `pnpm worker:engine`
+3. `pnpm worker:engine:dev` (or `:prod`)
 4. order-specific checks
 
 If external dependencies fail, stop and resolve connectivity/auth first.
