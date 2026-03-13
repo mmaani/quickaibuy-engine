@@ -1,43 +1,15 @@
-import dotenv from "dotenv";
-import pg from "pg";
+import { spawnSync } from "node:child_process";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+console.warn(
+  "[DEPRECATED] scripts/workers/check_listing_previews_latest.mjs is deprecated. Use node scripts/check_listing_previews_ready_source.mjs instead."
+);
 
-const { Client } = pg;
+const result = spawnSync("node", ["scripts/check_listing_previews_ready_source.mjs", ...process.argv.slice(2)], {
+  stdio: "inherit",
+});
 
-async function main() {
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
-
-  await client.connect();
-
-  const { rows } = await client.query(`
-    SELECT
-      id,
-      candidate_id,
-      marketplace_key,
-      title,
-      price,
-      quantity,
-      status,
-      idempotency_key,
-      payload,
-      response,
-      created_at,
-      updated_at
-    FROM listings
-    ORDER BY updated_at DESC, created_at DESC
-    LIMIT 20
-  `);
-
-  console.log(JSON.stringify(rows, null, 2));
-  await client.end();
+if (result.error) {
+  throw result.error;
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+process.exit(result.status ?? 0);
