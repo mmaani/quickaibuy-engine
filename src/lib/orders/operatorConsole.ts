@@ -45,6 +45,35 @@ export type OperatorRowQuickAction =
   | "sync-ebay"
   | "view-safety";
 
+export type CompactBatchReviewMode = "detailed" | "compact";
+export type CompactBatchReviewBucket =
+  | "needs-review"
+  | "waiting-purchase"
+  | "waiting-tracking"
+  | "ready-sync"
+  | "blocked-review"
+  | "missing-linkage"
+  | "synced"
+  | "all";
+
+export type CompactBatchReviewSignals = {
+  status: string;
+  purchaseStatus: string | null;
+  trackingStatus: string | null;
+  trackingReady: boolean;
+  hasSupplierLinkage: boolean;
+  trackingSyncError: string | null;
+};
+
+export type CompactBatchReviewSummary = {
+  bucket: CompactBatchReviewBucket;
+  operatorStage: OperatorOrderStepLabel;
+  purchaseSafetyState: string;
+  readinessState: string;
+  nextAction: OperatorRowNextAction;
+  blockedReason: string | null;
+};
+
 type OperatorOrderStageInput = {
   orderStatus: string | null | undefined;
   purchaseStatus: string | null | undefined;
@@ -272,6 +301,100 @@ export function getOperatorRowNextAction(row: {
   if (isOrderStatus(status) && status === ORDER_STATUS.PURCHASE_APPROVED) return "Record supplier purchase";
   if (isOrderStatus(status) && status === ORDER_STATUS.READY_FOR_PURCHASE_REVIEW) return "Approve purchase";
   return "Review for purchase";
+}
+
+export function getCompactBatchReviewSummary(
+  row: CompactBatchReviewSignals
+): CompactBatchReviewSummary {
+  const status = String(row.status || "").toUpperCase();
+  const purchaseStatus = String(row.purchaseStatus || "").toUpperCase();
+  const blockedReason =
+    !row.hasSupplierLinkage
+      ? "Supplier linkage missing"
+      : status === ORDER_STATUS.MANUAL_REVIEW
+        ? "Safety review required"
+        : purchaseStatus === "FAILED"
+          ? "Supplier purchase failed"
+          : status === "FAILED" || status === "CANCELED"
+            ? "Order needs attention"
+            : row.trackingSyncError
+              ? "Sync issue needs review"
+              : null;
+
+  const operatorStage = getOperatorOrderStepFromRow({
+    status: row.status,
+    purchaseStatus: row.purchaseStatus,
+    trackingStatus: row.trackingStatus,
+    trackingReady: row.trackingReady,
+  });
+  const nextAction = getOperatorRowNextAction({
+    status: row.status,
+    purchaseStatus: row.purchaseStatus,
+    trackingStatus: row.trackingStatus,
+    trackingReady: row.trackingReady,
+  });
+
+  let purchaseSafetyState = "Checked in workflow";
+  if (!row.hasSupplierLinkage) purchaseSafetyState = "Missing linkage";
+  else if (blockedReason) purchaseSafetyState = "Manual review";
+  else if (
+    status === ORDER_STATUS.NEW ||
+    status === ORDER_STATUS.NEW_ORDER ||
+    status === ORDER_STATUS.READY_FOR_PURCHASE_REVIEW ||
+    status === ORDER_STATUS.PURCHASE_APPROVED
+  ) {
+    purchaseSafetyState = "Safety review required";
+  } else if (isTrackingSyncedOrderStatus(status)) {
+    purchaseSafetyState = "Completed";
+  }
+
+  let readinessState = "Not ready";
+  if (isTrackingSyncedOrderStatus(status)) readinessState = "Synced";
+  else if (row.trackingReady || isTrackingSyncReadyOrderStatus(status)) readinessState = "Ready to sync";
+  else if (
+    isSupplierPurchaseRecordedStatus(purchaseStatus) ||
+    isWaitingTrackingOrderStatus(status)
+  ) {
+    readinessState = "Tracking needed";
+  } else if (status === ORDER_STATUS.PURCHASE_APPROVED) {
+    readinessState = "Waiting for purchase";
+  } else if (
+    status === ORDER_STATUS.NEW ||
+    status === ORDER_STATUS.NEW_ORDER ||
+    status === ORDER_STATUS.READY_FOR_PURCHASE_REVIEW
+  ) {
+    readinessState = "Needs review";
+  }
+
+  let bucket: CompactBatchReviewBucket = "all";
+  if (!row.hasSupplierLinkage) bucket = "missing-linkage";
+  else if (blockedReason) bucket = "blocked-review";
+  else if (row.trackingReady || isTrackingSyncReadyOrderStatus(status)) bucket = "ready-sync";
+  else if (
+    isSupplierPurchaseRecordedStatus(purchaseStatus) ||
+    isWaitingTrackingOrderStatus(status)
+  ) {
+    bucket = "waiting-tracking";
+  } else if (status === ORDER_STATUS.PURCHASE_APPROVED || status === ORDER_STATUS.PURCHASE_PENDING) {
+    bucket = "waiting-purchase";
+  } else if (
+    status === ORDER_STATUS.NEW ||
+    status === ORDER_STATUS.NEW_ORDER ||
+    status === ORDER_STATUS.READY_FOR_PURCHASE_REVIEW
+  ) {
+    bucket = "needs-review";
+  } else if (isTrackingSyncedOrderStatus(status)) {
+    bucket = "synced";
+  }
+
+  return {
+    bucket,
+    operatorStage,
+    purchaseSafetyState,
+    readinessState,
+    nextAction,
+    blockedReason,
+  };
 }
 
 export function buildOperatorOrderStepFlow(detail: AdminOrderDetail): OperatorOrderStepFlowRow[] {

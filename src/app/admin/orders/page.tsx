@@ -6,13 +6,12 @@ import RefreshButton from "@/app/_components/RefreshButton";
 import {
   approveOrderForPurchase,
   buildCompactOrderTimeline,
+  getCompactBatchReviewSummary,
   getDisabledRowQuickActionHint,
   buildOperatorOrderStepFlow,
   buildOperatorHints,
   buildProfitSnapshot,
   getOperatorOrderStep,
-  getOperatorOrderStepFromRow,
-  getOperatorRowNextAction,
   getTimelineEventTitle,
   getOrderPurchaseSafetyStatus,
   getAdminOrderDetail,
@@ -25,6 +24,7 @@ import {
   setOrderReadyForPurchaseReview,
   syncTrackingToEbay,
   type AdminOrdersFilter,
+  type CompactBatchReviewMode,
 } from "@/lib/orders";
 import { isAuthorizedReviewAuthorizationHeader, isReviewConsoleConfigured } from "@/lib/review/auth";
 
@@ -136,22 +136,42 @@ const filters: Array<{ key: AdminOrdersFilter; label: string }> = [
   { key: "waiting-purchase", label: "Waiting for purchase" },
   { key: "waiting-tracking", label: "Waiting for tracking" },
   { key: "ready-sync", label: "Ready to sync" },
+  { key: "blocked-review", label: "Blocked / manual review" },
+  { key: "missing-linkage", label: "Missing supplier linkage" },
   { key: "synced", label: "Synced" },
   { key: "needs-attention", label: "Failed / needs attention" },
 ];
 
 function orderDetailsHref(input: {
   filter: AdminOrdersFilter;
+  mode: CompactBatchReviewMode;
   orderId: string;
   quickAction?: QuickActionKey;
   anchor?: string;
 }): string {
   const q = new URLSearchParams();
   q.set("filter", input.filter);
+  q.set("mode", input.mode);
   q.set("orderId", input.orderId);
   if (input.quickAction) q.set("quickAction", input.quickAction);
   const anchor = input.anchor ? `#${input.anchor}` : "";
   return `/admin/orders?${q.toString()}${anchor}`;
+}
+
+function buildOrdersPageHref(input: {
+  filter: AdminOrdersFilter;
+  mode: CompactBatchReviewMode;
+  orderId?: string | null;
+}): string {
+  const q = new URLSearchParams();
+  q.set("filter", input.filter);
+  q.set("mode", input.mode);
+  if (input.orderId) q.set("orderId", input.orderId);
+  return `/admin/orders?${q.toString()}`;
+}
+
+function normalizeBatchReviewMode(value: string | null | undefined): CompactBatchReviewMode {
+  return value === "compact" ? "compact" : "detailed";
 }
 
 function normalizePurchaseStatus(value: string | null | undefined): string {
@@ -172,15 +192,19 @@ async function runOrderAction(formData: FormData) {
   const orderId = String(formData.get("orderId") ?? "").trim();
   const actionType = String(formData.get("actionType") ?? "").trim();
   const filter = normalizeAdminOrdersFilter(String(formData.get("filter") ?? ""));
+  const mode = normalizeBatchReviewMode(String(formData.get("mode") ?? ""));
   const actorId = authHeader ? "admin/orders" : "admin/orders";
 
   if (!orderId) {
-    redirect(`/admin/orders?filter=${encodeURIComponent(filter)}&error=${encodeURIComponent("Please select an order first.")}`);
+    redirect(
+      `/admin/orders?filter=${encodeURIComponent(filter)}&mode=${encodeURIComponent(mode)}&error=${encodeURIComponent("Please select an order first.")}`
+    );
   }
 
   const redirectWith = (params: { message?: string; error?: string }) => {
     const q = new URLSearchParams();
     q.set("filter", filter);
+    q.set("mode", mode);
     q.set("orderId", orderId);
     if (params.message) q.set("message", params.message);
     if (params.error) q.set("error", params.error);
@@ -268,14 +292,88 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
 
   const resolved = await searchParams;
   const filter = normalizeAdminOrdersFilter(one(resolved?.filter));
+  const mode = normalizeBatchReviewMode(one(resolved?.mode));
   const message = one(resolved?.message);
   const error = one(resolved?.error);
   const requestedOrderId = one(resolved?.orderId);
   const requestedQuickAction = one(resolved?.quickAction);
 
-  const rows = await getAdminOrdersRows({ filter, limit: 200 });
+  const allRows = await getAdminOrdersRows({ filter: "all", limit: 200 });
+  const rows = filter === "all" ? allRows : await getAdminOrdersRows({ filter, limit: 200 });
   const selectedOrderId = requestedOrderId || rows[0]?.orderId || null;
   const detail = selectedOrderId ? await getAdminOrderDetail(selectedOrderId) : null;
+  const compactRows = rows.map((row) => ({
+    row,
+    summary: getCompactBatchReviewSummary(row),
+  }));
+  const batchCounts = allRows.reduce<Record<AdminOrdersFilter | "synced", number>>(
+    (acc, row) => {
+      const summary = getCompactBatchReviewSummary(row);
+      const bucket = summary.bucket;
+      if (bucket === "all") {
+        acc.all += 1;
+      } else {
+        acc[bucket] += 1;
+        acc.all += 1;
+      }
+      if (summary.blockedReason && bucket !== "blocked-review") {
+        acc["blocked-review"] += 1;
+      }
+      return acc;
+    },
+    {
+      all: 0,
+      "needs-review": 0,
+      "waiting-purchase": 0,
+      "waiting-tracking": 0,
+      "ready-sync": 0,
+      "blocked-review": 0,
+      "missing-linkage": 0,
+      synced: 0,
+      "needs-attention": 0,
+    }
+  );
+  batchCounts["needs-attention"] = allRows.filter((row) => {
+    const status = String(row.status || "").toUpperCase();
+    return (
+      status === "FAILED" ||
+      status === "CANCELED" ||
+      String(row.purchaseStatus || "").toUpperCase() === "FAILED" ||
+      Boolean(row.trackingSyncError)
+    );
+  }).length;
+  const compactCards = [
+    {
+      filterKey: "needs-review" as const,
+      label: "Needs review",
+      description: "Open these first when you need a fresh purchase decision.",
+    },
+    {
+      filterKey: "waiting-purchase" as const,
+      label: "Waiting for purchase",
+      description: "Approved orders that still need supplier purchase recording.",
+    },
+    {
+      filterKey: "waiting-tracking" as const,
+      label: "Waiting for tracking",
+      description: "Purchase is recorded, but tracking still needs to be added.",
+    },
+    {
+      filterKey: "ready-sync" as const,
+      label: "Ready to sync",
+      description: "Tracking is ready and can be synced per order.",
+    },
+    {
+      filterKey: "blocked-review" as const,
+      label: "Blocked / manual review",
+      description: "Orders with safety, sync, or workflow blockers.",
+    },
+    {
+      filterKey: "missing-linkage" as const,
+      label: "Missing supplier linkage",
+      description: "Line items need supplier linkage before purchase work.",
+    },
+  ];
 
   const defaultSupplierKey =
     detail?.latestAttempt?.supplierKey ?? detail?.items.find((item) => item.supplierKey)?.supplierKey ?? "";
@@ -374,10 +472,53 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
         </header>
 
         <section className="glass-panel mt-5 rounded-3xl border border-white/10 p-4">
-          <div className="text-xs uppercase tracking-[0.16em] text-white/45">Status filters</div>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.16em] text-white/45">Review mode</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {[
+                  {
+                    key: "detailed" as const,
+                    label: "Detailed workflow",
+                    description: "Show the full table and keep the detailed panel workflow front and center.",
+                  },
+                  {
+                    key: "compact" as const,
+                    label: "Compact batch review",
+                    description: "Scan multiple orders quickly, then open each one for action.",
+                  },
+                ].map((option) => {
+                  const href = buildOrdersPageHref({
+                    filter,
+                    mode: option.key,
+                    orderId: selectedOrderId,
+                  });
+                  const active = option.key === mode;
+                  return (
+                    <Link
+                      key={option.key}
+                      href={href}
+                      className={`rounded-2xl border px-3 py-2 text-sm ${active ? "border-cyan-300/35 bg-cyan-500/15 text-cyan-100" : "border-white/15 bg-white/[0.03] text-white/80"}`}
+                    >
+                      <div className="font-medium">{option.label}</div>
+                      <div className="mt-1 text-xs text-white/55">{option.description}</div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="max-w-md rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
+              Compact batch review keeps all execution per order. Use it to find the next safe order to open, then use the detail panel to perform the actual step.
+            </div>
+          </div>
+          <div className="mt-4 text-xs uppercase tracking-[0.16em] text-white/45">Review filters</div>
           <div className="mt-2 flex flex-wrap gap-2">
             {filters.map((f) => {
-              const href = `/admin/orders?filter=${encodeURIComponent(f.key)}`;
+              const href = buildOrdersPageHref({
+                filter: f.key,
+                mode,
+                orderId: selectedOrderId,
+              });
               const active = f.key === filter;
               return (
                 <Link
@@ -392,28 +533,76 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
           </div>
         </section>
 
+        {mode === "compact" ? (
+          <section className="mt-5 grid gap-3 lg:grid-cols-3 xl:grid-cols-6">
+            {compactCards.map((card) => {
+              const active = filter === card.filterKey;
+              const count = batchCounts[card.filterKey];
+              return (
+                <Link
+                  key={card.filterKey}
+                  href={buildOrdersPageHref({
+                    filter: card.filterKey,
+                    mode: "compact",
+                    orderId: selectedOrderId,
+                  })}
+                  className={`glass-panel rounded-3xl border p-4 ${active ? "border-cyan-300/35 bg-cyan-500/10" : "border-white/10 bg-transparent"}`}
+                >
+                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">{card.label}</div>
+                  <div className="mt-2 text-3xl font-semibold text-white">{count}</div>
+                  <div className="mt-2 text-sm text-white/65">{card.description}</div>
+                </Link>
+              );
+            })}
+          </section>
+        ) : null}
+
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,900px)_minmax(0,1fr)]">
           <section className="glass-panel rounded-3xl border border-white/10 p-4">
-            <div className="mb-3 text-sm text-white/65">Orders table ({rows.length} rows)</div>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-white/65">
+                {mode === "compact"
+                  ? `Compact review (${rows.length} rows shown)`
+                  : `Orders table (${rows.length} rows)`}
+              </div>
+              {mode === "compact" ? (
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/65">
+                  Review focus: stage, safety, purchase, tracking, next step, and blockers.
+                </div>
+              ) : null}
+            </div>
             <div className="max-h-[76vh] overflow-auto rounded-2xl border border-white/10">
               <table className="min-w-full border-collapse text-sm">
                 <thead className="sticky top-0 bg-[#111827]">
                   <tr>
-                    {[
-                      "Order ID",
-                      "eBay order ID",
-                      "Current stage",
-                      "Next action",
-                      "Buyer country",
-                      "Total",
-                      "Order status",
-                      "Listing",
-                      "Supplier",
-                      "Supplier product ID",
-                      "Purchase status",
-                      "Tracking status",
-                      "Quick actions",
-                    ].map((h) => (
+                    {(mode === "compact"
+                      ? [
+                          "Order ID",
+                          "eBay order ID",
+                          "Current stage",
+                          "Purchase safety",
+                          "Purchase status",
+                          "Tracking status",
+                          "Readiness",
+                          "Next action",
+                          "Blocked reason",
+                          "Quick actions",
+                        ]
+                      : [
+                          "Order ID",
+                          "eBay order ID",
+                          "Current stage",
+                          "Next action",
+                          "Buyer country",
+                          "Total",
+                          "Order status",
+                          "Listing",
+                          "Supplier",
+                          "Supplier product ID",
+                          "Purchase status",
+                          "Tracking status",
+                          "Quick actions",
+                        ]).map((h) => (
                       <th key={h} className="border-b border-white/10 px-3 py-2 text-left text-[11px] uppercase tracking-[0.16em] text-white/55">
                         {h}
                       </th>
@@ -423,16 +612,16 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                 <tbody>
                   {!rows.length ? (
                     <tr>
-                      <td colSpan={13} className="px-3 py-8 text-center text-sm text-white/65">
+                      <td colSpan={mode === "compact" ? 10 : 13} className="px-3 py-8 text-center text-sm text-white/65">
                         No orders found for this filter. Sync orders, then refresh this page.
                       </td>
                     </tr>
                   ) : null}
-                  {rows.map((row) => {
-                    const href = orderDetailsHref({ filter, orderId: row.orderId });
+                  {compactRows.map(({ row, summary }) => {
+                    const href = orderDetailsHref({ filter, mode, orderId: row.orderId });
                     const selected = row.orderId === selectedOrderId;
                     const status = String(row.status || "").toUpperCase();
-                    const rowHasSupplier = Boolean(row.supplierDisplay);
+                    const rowHasSupplier = row.hasSupplierLinkage;
                     const rowCanMarkPurchase = ["PURCHASE_APPROVED", "PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
                     const rowCanTracking = ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
                     const rowCanPreview =
@@ -488,24 +677,51 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         <td className="border-b border-white/5 px-3 py-3">{row.ebayOrderId}</td>
                         <td className="border-b border-white/5 px-3 py-3">
                           <span className="rounded-full border border-white/15 bg-white/[0.05] px-2 py-1 text-xs text-white/90">
-                            {getOperatorOrderStepFromRow(row)}
+                            {summary.operatorStage}
                           </span>
                         </td>
-                        <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
-                          {getOperatorRowNextAction(row)}
-                        </td>
-                        <td className="border-b border-white/5 px-3 py-3">{row.buyerCountry ?? "-"}</td>
-                        <td className="border-b border-white/5 px-3 py-3">{row.totalDisplay ?? "-"}</td>
-                        <td className="border-b border-white/5 px-3 py-3">
-                          <span className={`rounded-full border px-2 py-1 text-xs ${statusTone(row.status)}`}>
-                            {statusLabel(row.status)}
-                          </span>
-                        </td>
-                        <td className="border-b border-white/5 px-3 py-3">{row.listingDisplay ?? "-"}</td>
-                        <td className="border-b border-white/5 px-3 py-3">{row.supplierDisplay ?? "-"}</td>
-                        <td className="border-b border-white/5 px-3 py-3">{row.supplierProductId ?? "-"}</td>
-                        <td className="border-b border-white/5 px-3 py-3">{row.purchaseStatus ?? "-"}</td>
-                        <td className="border-b border-white/5 px-3 py-3">{row.trackingStatus ?? "-"}</td>
+                        {mode === "compact" ? (
+                          <>
+                            <td className="border-b border-white/5 px-3 py-3">
+                              <span className="rounded-full border border-white/15 bg-white/[0.05] px-2 py-1 text-xs text-white/90">
+                                {summary.purchaseSafetyState}
+                              </span>
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
+                              {row.purchaseStatus ?? "Not recorded"}
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
+                              {row.trackingStatus ?? "Not added"}
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
+                              {summary.readinessState}
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
+                              {summary.nextAction}
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
+                              {summary.blockedReason ?? "Ready for next guided step"}
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="border-b border-white/5 px-3 py-3 text-xs text-white/80">
+                              {summary.nextAction}
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3">{row.buyerCountry ?? "-"}</td>
+                            <td className="border-b border-white/5 px-3 py-3">{row.totalDisplay ?? "-"}</td>
+                            <td className="border-b border-white/5 px-3 py-3">
+                              <span className={`rounded-full border px-2 py-1 text-xs ${statusTone(row.status)}`}>
+                                {statusLabel(row.status)}
+                              </span>
+                            </td>
+                            <td className="border-b border-white/5 px-3 py-3">{row.listingDisplay ?? "-"}</td>
+                            <td className="border-b border-white/5 px-3 py-3">{row.supplierDisplay ?? "-"}</td>
+                            <td className="border-b border-white/5 px-3 py-3">{row.supplierProductId ?? "-"}</td>
+                            <td className="border-b border-white/5 px-3 py-3">{row.purchaseStatus ?? "-"}</td>
+                            <td className="border-b border-white/5 px-3 py-3">{row.trackingStatus ?? "-"}</td>
+                          </>
+                        )}
                         <td className="border-b border-white/5 px-3 py-3">
                           <div className="flex flex-wrap gap-1 text-xs">
                             <div className="flex flex-col items-start gap-0.5">
@@ -513,6 +729,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                                 <input type="hidden" name="actionType" value="record-purchase" />
                                 <input type="hidden" name="orderId" value={row.orderId} />
                                 <input type="hidden" name="filter" value={filter} />
+                                <input type="hidden" name="mode" value={mode} />
                                 <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
                                 <input type="hidden" name="purchaseStatus" value={purchaseDefaultStatus} />
                                 <button
@@ -528,6 +745,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                               <Link
                                 href={orderDetailsHref({
                                   filter,
+                                  mode,
                                   orderId: row.orderId,
                                   quickAction: "supplier-ref",
                                   anchor: "supplier-ref-form",
@@ -544,6 +762,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                               <Link
                                 href={orderDetailsHref({
                                   filter,
+                                  mode,
                                   orderId: row.orderId,
                                   quickAction: "tracking",
                                   anchor: "tracking-form",
@@ -560,6 +779,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                               <Link
                                 href={orderDetailsHref({
                                   filter,
+                                  mode,
                                   orderId: row.orderId,
                                   quickAction: "preview-sync",
                                   anchor: "tracking-preview",
@@ -577,6 +797,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                                 <input type="hidden" name="actionType" value="sync-ebay" />
                                 <input type="hidden" name="orderId" value={row.orderId} />
                                 <input type="hidden" name="filter" value={filter} />
+                                <input type="hidden" name="mode" value={mode} />
                                 <input type="hidden" name="supplierKey" value={row.supplierDisplay ?? ""} />
                                 <button
                                   disabled={!rowCanSync}
@@ -591,6 +812,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                               <Link
                                 href={orderDetailsHref({
                                   filter,
+                                  mode,
                                   orderId: row.orderId,
                                   quickAction: "view-safety",
                                   anchor: "purchase-safety",
@@ -816,6 +1038,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <input type="hidden" name="actionType" value="record-purchase" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
                       <input type="hidden" name="supplierKey" value={defaultSupplierKey} />
                       <input type="hidden" name="purchaseStatus" value={normalizePurchaseStatus(detail.latestAttempt?.purchaseStatus)} />
                       <button
@@ -838,6 +1061,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <input type="hidden" name="actionType" value="sync-ebay" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
                       <input type="hidden" name="supplierOrderId" value={detail.latestAttempt?.id ?? ""} />
                       <input type="hidden" name="supplierKey" value={defaultSupplierKey} />
                       <button
@@ -881,6 +1105,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <input type="hidden" name="actionType" value="ready-review" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
                       <button disabled={!canReadyReview} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                         Mark as ready for purchase review
                       </button>
@@ -890,6 +1115,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <input type="hidden" name="actionType" value="approve-purchase" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
                       <button disabled={!canApprove} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                         Approve purchase
                       </button>
@@ -904,6 +1130,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <input type="hidden" name="actionType" value="record-purchase" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
                       <div className="mb-2 text-xs text-white/55">Mark purchase recorded and add supplier ref</div>
                       <div className="grid gap-2 md:grid-cols-2">
                         <input name="supplierKey" defaultValue={defaultSupplierKey} className="contact-input" placeholder="Supplier" required />
@@ -926,6 +1153,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <input type="hidden" name="actionType" value="record-tracking" />
                       <input type="hidden" name="orderId" value={detail.order.id} />
                       <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
                       <input type="hidden" name="supplierOrderId" value={detail.latestAttempt?.id ?? ""} />
                       <div className="mb-2 text-xs text-white/55">Add or update tracking</div>
                       <div className="grid gap-2 md:grid-cols-2">

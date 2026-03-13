@@ -9,6 +9,8 @@ export type AdminOrdersFilter =
   | "waiting-purchase"
   | "waiting-tracking"
   | "ready-sync"
+  | "blocked-review"
+  | "missing-linkage"
   | "synced"
   | "needs-attention";
 
@@ -21,8 +23,10 @@ export type AdminOrderRow = {
   listingDisplay: string | null;
   supplierDisplay: string | null;
   supplierProductId: string | null;
+  hasSupplierLinkage: boolean;
   purchaseStatus: string | null;
   trackingStatus: string | null;
+  trackingSyncError: string | null;
   trackingReady: boolean;
   createdAt: string | null;
   updatedAt: string | null;
@@ -94,6 +98,8 @@ function isFilter(value: string | null | undefined): value is AdminOrdersFilter 
     value === "waiting-purchase" ||
     value === "waiting-tracking" ||
     value === "ready-sync" ||
+    value === "blocked-review" ||
+    value === "missing-linkage" ||
     value === "synced" ||
     value === "needs-attention"
   );
@@ -120,6 +126,17 @@ function whereClauseForFilter(filter: AdminOrdersFilter): string {
     case "ready-sync":
       return `
         upper(coalesce(o.status, '')) = 'TRACKING_RECEIVED'
+      `;
+    case "blocked-review":
+      return `
+        upper(coalesce(o.status, '')) in ('MANUAL_REVIEW', 'FAILED', 'CANCELED')
+        or upper(coalesce(so.purchase_status, '')) = 'FAILED'
+        or coalesce(so.tracking_sync_error, '') <> ''
+      `;
+    case "missing-linkage":
+      return `
+        coalesce(nullif(btrim(item.supplier_key), ''), '') = ''
+        or coalesce(nullif(btrim(item.supplier_product_id), ''), '') = ''
       `;
     case "synced":
       return `
@@ -158,8 +175,13 @@ export async function getAdminOrdersRows(input?: {
       COALESCE(item.listing_external_id, item.listing_id) AS "listingDisplay",
       item.supplier_key AS "supplierDisplay",
       item.supplier_product_id AS "supplierProductId",
+      (
+        coalesce(nullif(btrim(item.supplier_key), ''), '') <> ''
+        and coalesce(nullif(btrim(item.supplier_product_id), ''), '') <> ''
+      ) AS "hasSupplierLinkage",
       so.purchase_status AS "purchaseStatus",
       so.tracking_status AS "trackingStatus",
+      so.tracking_sync_error AS "trackingSyncError",
       (
         upper(coalesce(o.status, '')) = 'TRACKING_RECEIVED'
         AND upper(coalesce(so.purchase_status, '')) IN ('SUBMITTED', 'CONFIRMED')
