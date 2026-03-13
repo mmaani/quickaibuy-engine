@@ -56,11 +56,11 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
       actorType: "ADMIN",
       actorId,
       entityType: "PIPELINE",
-      entityId: "listing-execution-dry-run",
-      eventType: "LISTING_EXECUTION_DRY_RUN_OK",
+      entityId: "listing-execution-diagnostic-snapshot",
+      eventType: "LISTING_EXECUTION_DIAGNOSTIC_SNAPSHOT",
       details: { count: candidates.length },
     });
-    message = `Listing execution dry-run found ${candidates.length} READY_TO_PUBLISH candidates.`;
+    message = `Listing execution diagnostic snapshot found ${candidates.length} READY_TO_PUBLISH candidates (no worker execution performed).`;
   } else if (action === "monitor") {
     const statusCounts = await db.execute(sql`
       select status, count(*)::int as count
@@ -73,11 +73,11 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
       actorType: "ADMIN",
       actorId,
       entityType: "PIPELINE",
-      entityId: "listing-monitor",
-      eventType: "LISTING_MONITOR_RUN",
+      entityId: "listing-monitor-diagnostic-snapshot",
+      eventType: "LISTING_MONITOR_DIAGNOSTIC_SNAPSHOT",
       details: { rows: statusCounts.rows ?? [] },
     });
-    message = "Listing monitor snapshot recorded.";
+    message = "Listing monitor diagnostic snapshot recorded (no listing-monitor worker run triggered).";
   } else if (action === "inventory-risk-scan") {
     const job = await enqueueInventoryRiskScan({
       marketplaceKey: "ebay",

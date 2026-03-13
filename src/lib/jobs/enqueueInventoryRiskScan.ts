@@ -11,8 +11,72 @@ const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
 export const INVENTORY_RISK_SCAN_EVERY_MS = 6 * 60 * 60 * 1000;
 const INVENTORY_RISK_RECURRING_SUFFIX = "recurring-v1-6h";
 
+type RepeatableEntry = {
+  key?: string;
+  name?: string;
+  id?: string | null;
+  every?: number | null;
+  next?: number | null;
+};
+
+export type InventoryRiskScheduleSnapshot = {
+  recurringJobId: string;
+  cadenceMs: number;
+  scheduleActive: boolean;
+  nextRun: string | null;
+  matchedEntries: number;
+};
+
 export function getInventoryRiskRecurringJobId(marketplaceKey: "ebay"): string {
   return `inventory-risk-scan-${marketplaceKey}-${INVENTORY_RISK_RECURRING_SUFFIX}`;
+}
+
+function containsRecurringId(entry: RepeatableEntry, recurringJobId: string): boolean {
+  const key = String(entry.key ?? "");
+  const id = String(entry.id ?? "");
+  return key.includes(recurringJobId) || id === recurringJobId;
+}
+
+function isInventoryRiskRepeatable(entry: RepeatableEntry, recurringJobId: string): boolean {
+  if (entry.name !== JOB_NAMES.INVENTORY_RISK_SCAN) return false;
+  if (Number(entry.every ?? 0) !== INVENTORY_RISK_SCAN_EVERY_MS) return false;
+  return containsRecurringId(entry, recurringJobId);
+}
+
+export function getInventoryRiskScheduleSnapshotFromEntries(input: {
+  repeatableJobs: RepeatableEntry[];
+  marketplaceKey?: "ebay";
+}): InventoryRiskScheduleSnapshot {
+  const marketplaceKey = (input.marketplaceKey ?? "ebay") as "ebay";
+  const recurringJobId = getInventoryRiskRecurringJobId(marketplaceKey);
+
+  const matching = input.repeatableJobs.filter((entry) =>
+    isInventoryRiskRepeatable(entry, recurringJobId)
+  );
+
+  const next = matching
+    .map((entry) => Number(entry.next ?? NaN))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b)[0];
+
+  return {
+    recurringJobId,
+    cadenceMs: INVENTORY_RISK_SCAN_EVERY_MS,
+    scheduleActive: matching.length > 0,
+    nextRun: typeof next === "number" ? new Date(next).toISOString() : null,
+    matchedEntries: matching.length,
+  };
+}
+
+export async function getInventoryRiskScheduleSnapshot(input?: {
+  queue?: Queue;
+  marketplaceKey?: "ebay";
+}): Promise<InventoryRiskScheduleSnapshot> {
+  const repeatableJobs = await (input?.queue ?? jobsQueue).getRepeatableJobs(0, 500);
+  return getInventoryRiskScheduleSnapshotFromEntries({
+    repeatableJobs: repeatableJobs as RepeatableEntry[],
+    marketplaceKey: input?.marketplaceKey,
+  });
 }
 
 async function findInFlightInventoryRiskJob(marketplaceKey: "ebay", jobId: string) {
@@ -70,26 +134,27 @@ export async function ensureInventoryRiskScanSchedule(input?: {
   const marketplaceKey = (input?.marketplaceKey ?? "ebay") as "ebay";
   const payload = { limit, marketplaceKey };
   const recurringJobId = getInventoryRiskRecurringJobId(marketplaceKey);
-  const repeatableJobs = await jobsQueue.getRepeatableJobs(0, 200);
-  const inventoryRepeatables = repeatableJobs.filter(
-    (job) => job.name === JOB_NAMES.INVENTORY_RISK_SCAN
-  );
+  const repeatableJobs = (await jobsQueue.getRepeatableJobs(0, 500)) as RepeatableEntry[];
 
   let desiredEntrySeen = false;
   let removedCount = 0;
 
-  for (const entry of inventoryRepeatables) {
-    const sameMarketplace = String(entry.id ?? "").includes(`inventory-risk-scan-${marketplaceKey}-`);
-    const matchesCadence =
-      entry.id === recurringJobId && Number(entry.every ?? 0) === INVENTORY_RISK_SCAN_EVERY_MS;
+  for (const entry of repeatableJobs) {
+    if (entry.name !== JOB_NAMES.INVENTORY_RISK_SCAN) continue;
 
-    if (matchesCadence && !desiredEntrySeen) {
+    const entryTargetsMarketplace =
+      String(entry.key ?? "").includes(`inventory-risk-scan-${marketplaceKey}-`) ||
+      String(entry.id ?? "").includes(`inventory-risk-scan-${marketplaceKey}-`);
+
+    const entryIsDesired = isInventoryRiskRepeatable(entry, recurringJobId);
+
+    if (entryIsDesired && !desiredEntrySeen) {
       desiredEntrySeen = true;
       continue;
     }
 
-    if (sameMarketplace || matchesCadence) {
-      await jobsQueue.removeRepeatableByKey(entry.key);
+    if (entryTargetsMarketplace) {
+      await jobsQueue.removeRepeatableByKey(String(entry.key));
       removedCount += 1;
     }
   }
@@ -110,10 +175,17 @@ export async function ensureInventoryRiskScanSchedule(input?: {
     });
   }
 
+  const snapshot = await getInventoryRiskScheduleSnapshot({
+    queue: jobsQueue,
+    marketplaceKey,
+  });
+
   return {
     scheduleEveryMs: INVENTORY_RISK_SCAN_EVERY_MS,
     recurringJobId,
     removedCount,
-    scheduleActive: true,
+    scheduleActive: snapshot.scheduleActive,
+    nextRun: snapshot.nextRun,
+    matchedEntries: snapshot.matchedEntries,
   };
 }

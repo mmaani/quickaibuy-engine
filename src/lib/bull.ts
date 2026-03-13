@@ -1,6 +1,6 @@
 import { Queue, type ConnectionOptions, QueueEvents } from "bullmq";
-import { JOBS, type JobName } from "@/src/lib/jobNames";
-import { BULL_PREFIX, ENGINE_QUEUE_NAME } from "@/src/lib/queue";
+import { JOBS, type JobName, JOBS_QUEUE_NAME, BULL_PREFIX } from "@/src/lib/jobNames";
+import { LEGACY_ENGINE_QUEUE_NAME } from "@/src/lib/queue";
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {
@@ -14,16 +14,29 @@ export const bullConnection: ConnectionOptions = {
 };
 
 export const queues = {
-  engine: new Queue(ENGINE_QUEUE_NAME, {
+  jobs: new Queue(JOBS_QUEUE_NAME, {
+    connection: bullConnection,
+    prefix: BULL_PREFIX,
+  }),
+  legacyEngine: new Queue(LEGACY_ENGINE_QUEUE_NAME, {
     connection: bullConnection,
     prefix: BULL_PREFIX,
   }),
 };
 
-export const engineQueue = queues.engine;
+export const jobsQueue = queues.jobs;
+
+/**
+ * @deprecated Use jobsQueue for operational APIs; kept for legacy engine-worker isolation.
+ */
+export const engineQueue = queues.legacyEngine;
 
 export const queueEvents = {
-  engine: new QueueEvents(ENGINE_QUEUE_NAME, {
+  jobs: new QueueEvents(JOBS_QUEUE_NAME, {
+    connection: bullConnection,
+    prefix: BULL_PREFIX,
+  }),
+  legacyEngine: new QueueEvents(LEGACY_ENGINE_QUEUE_NAME, {
     connection: bullConnection,
     prefix: BULL_PREFIX,
   }),

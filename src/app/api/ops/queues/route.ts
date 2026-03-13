@@ -1,24 +1,29 @@
 import { NextResponse } from "next/server";
-import { engineQueue } from "@/src/lib/bull";
+import { jobsQueue } from "@/src/lib/bull";
+import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/src/lib/jobNames";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const counts = await engineQueue.getJobCounts(
+    const counts = await jobsQueue.getJobCounts(
       "waiting",
       "active",
       "completed",
       "failed",
       "delayed",
-      "paused"
+      "paused",
+      "prioritized",
+      "waiting-children"
     );
 
     return NextResponse.json({
       ok: true,
-      queue: "engine",
+      queue: JOBS_QUEUE_NAME,
+      prefix: BULL_PREFIX,
       counts,
+      workerPath: "jobs.worker",
       timestamp: new Date().toISOString(),
     });
   } catch (e) {
