@@ -238,6 +238,9 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   ];
 
   const nextSteps: string[] = [];
+  if ((data.inventoryRisk.autoPausedListings ?? 0) > 0) {
+    nextSteps.push("High-risk listings were auto-paused. Review them in Listings.");
+  }
   if ((data.publishPerformance.blockedListings ?? 0) > 0) {
     nextSteps.push(`${data.publishPerformance.blockedListings} listings are blocked. Review in /admin/listings.`);
   }
@@ -364,6 +367,65 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <StatCard
               label="limits 15m / 1h / 1d"
               value={`${data.publishingSafety.publishRateLimit.limits.limit15m} / ${data.publishingSafety.publishRateLimit.limits.limit1h} / ${data.publishingSafety.publishRateLimit.limits.limit1d}`}
+            />
+          </div>
+        </Section>
+
+        <Section title="Inventory Risk Summary">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            Inventory risk monitor status for live listings.
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="Listings scanned for risk"
+              value={metricOrUnknown(data.inventoryRisk.listingsScanned, data.inventoryRisk.sourceWired.listings)}
+            />
+            <StatCard
+              label="Low risk flags"
+              value={metricOrUnknown(data.inventoryRisk.lowRiskFlags, data.inventoryRisk.sourceWired.response)}
+            />
+            <StatCard
+              label="Needs manual review"
+              value={metricOrUnknown(data.inventoryRisk.manualReviewRisks, data.inventoryRisk.sourceWired.response)}
+            />
+            <div className="rounded-2xl border border-rose-300/35 bg-rose-500/10 p-4">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-rose-100">Auto-paused listings</div>
+              <div className="mt-2 text-2xl font-bold text-rose-100">
+                {metricOrUnknown(data.inventoryRisk.autoPausedListings, data.inventoryRisk.sourceWired.response)}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-sm text-amber-100">
+            Review paused or risky listings to confirm supplier availability and pricing before resuming publishing.
+          </div>
+          <div className="mt-3">
+            <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">
+              Open /admin/listings for risk review
+            </Link>
+          </div>
+        </Section>
+
+        <Section title="Risk Type Breakdown">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <StatCard
+              label="Price drift too high"
+              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.priceDriftHigh, data.inventoryRisk.sourceWired.response)}
+            />
+            <StatCard
+              label="Supplier out of stock"
+              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.supplierOutOfStock, data.inventoryRisk.sourceWired.response)}
+            />
+            <StatCard
+              label="Supplier data too old"
+              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.snapshotTooOld, data.inventoryRisk.sourceWired.response)}
+            />
+            <StatCard
+              label="Supplier shipping changed"
+              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.supplierShippingChanged, data.inventoryRisk.sourceWired.response)}
+            />
+            <StatCard
+              label="Supplier listing removed"
+              value={metricOrUnknown(data.inventoryRisk.riskTypeBreakdown.listingRemoved, data.inventoryRisk.sourceWired.response)}
             />
           </div>
         </Section>

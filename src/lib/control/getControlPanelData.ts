@@ -86,6 +86,24 @@ export type ControlPanelData = {
     blockedCount: number | null;
     manualReviewCount: number | null;
   };
+  inventoryRisk: {
+    listingsScanned: number | null;
+    lowRiskFlags: number | null;
+    manualReviewRisks: number | null;
+    autoPausedListings: number | null;
+    riskTypeBreakdown: {
+      priceDriftHigh: number | null;
+      supplierOutOfStock: number | null;
+      snapshotTooOld: number | null;
+      supplierShippingChanged: number | null;
+      listingRemoved: number | null;
+    };
+    sourceWired: {
+      listings: boolean;
+      response: boolean;
+      audit: boolean;
+    };
+  };
   publishPerformance: {
     activeListings: number | null;
     publishedToday: number | null;
@@ -756,6 +774,76 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         )
       : null,
   };
+
+  const listingsHasResponse = listingsExists ? await columnExists("listings", "response") : false;
+  const inventoryRiskSummary =
+    listingsExists && listingsHasResponse
+      ? (
+          await runQuery(`
+            with risk_rows as (
+              select
+                upper(coalesce(l.status, '')) as listing_status,
+                upper(coalesce(l.response->'inventoryRisk'->>'action', '')) as risk_action
+              from listings l
+              where lower(coalesce(l.marketplace_key, '')) = 'ebay'
+                and l.response ? 'inventoryRisk'
+            )
+            select
+              count(*) filter (where risk_action = 'FLAG')::int as low_risk_flags,
+              count(*) filter (where risk_action = 'MANUAL_REVIEW')::int as manual_review_risks,
+              count(*) filter (
+                where risk_action = 'AUTO_PAUSE'
+                  and listing_status = 'PAUSED'
+              )::int as auto_paused_listings
+            from risk_rows
+          `)
+        )[0] ?? {}
+      : {};
+
+  const inventoryRiskByType =
+    listingsExists && listingsHasResponse
+      ? (
+          await runQuery(`
+            with risk_signals as (
+              select
+                upper(coalesce(sig->>'code', '')) as risk_code
+              from listings l
+              left join lateral jsonb_array_elements(
+                coalesce(l.response->'inventoryRisk'->'signals', '[]'::jsonb)
+              ) sig on true
+              where lower(coalesce(l.marketplace_key, '')) = 'ebay'
+                and l.response ? 'inventoryRisk'
+            )
+            select
+              count(*) filter (where risk_code = 'PRICE_DRIFT_HIGH')::int as price_drift_high,
+              count(*) filter (where risk_code = 'SUPPLIER_OUT_OF_STOCK')::int as supplier_out_of_stock,
+              count(*) filter (where risk_code = 'SNAPSHOT_TOO_OLD')::int as snapshot_too_old,
+              count(*) filter (where risk_code = 'SUPPLIER_SHIPPING_CHANGED')::int as supplier_shipping_changed,
+              count(*) filter (where risk_code = 'LISTING_REMOVED')::int as listing_removed
+            from risk_signals
+          `)
+        )[0] ?? {}
+      : {};
+
+  const latestInventoryRiskScan = auditExists
+    ? (
+        await runQuery(`
+          select
+            case
+              when coalesce(details->>'activeListingsScanned', '') ~ '^[0-9]+$'
+                then (details->>'activeListingsScanned')::int
+              else null
+            end as active_listings_scanned
+          from audit_log
+          where event_type = 'INVENTORY_RISK_SCAN_COMPLETED'
+          order by event_ts desc
+          limit 1
+        `)
+      )[0] ?? {}
+    : {};
+
+  const inventoryListingsScanned =
+    toNum(latestInventoryRiskScan.active_listings_scanned) ?? listingThroughput.active;
 
   const publishSuccesses = listingThroughput.active;
   const publishFailuresTotal = listingThroughput.publishFailed;
@@ -1649,6 +1737,24 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       staleCandidateCount: toNum(priceGuardSummary.stale_candidate_count),
       blockedCount: toNum(priceGuardSummary.blocked_count),
       manualReviewCount: toNum(priceGuardSummary.manual_review_count),
+    },
+    inventoryRisk: {
+      listingsScanned: inventoryListingsScanned,
+      lowRiskFlags: toNum(inventoryRiskSummary.low_risk_flags),
+      manualReviewRisks: toNum(inventoryRiskSummary.manual_review_risks),
+      autoPausedListings: toNum(inventoryRiskSummary.auto_paused_listings),
+      riskTypeBreakdown: {
+        priceDriftHigh: toNum(inventoryRiskByType.price_drift_high),
+        supplierOutOfStock: toNum(inventoryRiskByType.supplier_out_of_stock),
+        snapshotTooOld: toNum(inventoryRiskByType.snapshot_too_old),
+        supplierShippingChanged: toNum(inventoryRiskByType.supplier_shipping_changed),
+        listingRemoved: toNum(inventoryRiskByType.listing_removed),
+      },
+      sourceWired: {
+        listings: listingsExists,
+        response: listingsExists && listingsHasResponse,
+        audit: auditExists,
+      },
     },
     recoveryStates: {
       staleMarketplaceBlocks,
