@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
-import { bullConnection } from "@/lib/bull";
+import { resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 
 type Row = Record<string, unknown>;
 
@@ -295,13 +294,15 @@ async function getRedisHealth(): Promise<{ status: HealthState; detail?: string 
 }
 
 async function getJobVisibility(): Promise<JobVisibility> {
-  const queueName = JOBS_QUEUE_NAME;
+  const queueName = resolveJobsQueueName();
 
   try {
+    const bullPrefix = resolveBullPrefix();
     const bullmq = await import("bullmq");
+    const { bullConnection } = await import("@/lib/bull");
     const queue = new bullmq.Queue(queueName, {
       connection: bullConnection,
-      prefix: BULL_PREFIX,
+      prefix: bullPrefix,
     });
 
     const counts = await queue.getJobCounts(
@@ -394,7 +395,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         topProfitableOpportunities: [],
       })),
       getJobVisibility().catch((error) => ({
-        queueName: JOBS_QUEUE_NAME,
+        queueName: resolveJobsQueueName(),
         counts: {},
         recentFailed: [],
         recentSucceeded: [],
