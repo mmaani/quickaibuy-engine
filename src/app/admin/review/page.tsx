@@ -451,6 +451,7 @@ export default async function ReviewPage({
     getReviewFilterOptions(),
     getReviewCandidates(filters),
   ]);
+  const safeCandidateCount = candidates.filter((candidate) => isSafePresetCandidate(candidate)).length;
 
   const selectedCandidateId = filters.candidateId || candidates[0]?.id || "";
   const detail = selectedCandidateId ? await getCandidateDetail(selectedCandidateId) : null;
@@ -571,6 +572,12 @@ export default async function ReviewPage({
                 <h2 className="text-lg font-semibold text-white">Candidate Queue</h2>
                 <div className="flex items-center gap-2">
                   <div className="text-xs text-white/45">{candidates.length} row(s)</div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/85">
+                    Selected: <span data-review-selected-total>0</span>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+                    Safe selected: <span data-review-safe-selected>0</span> / {safeCandidateCount}
+                  </div>
                   <button
                     type="button"
                     className="rounded-2xl border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white/85"
@@ -606,6 +613,14 @@ export default async function ReviewPage({
               <p className="mb-3 text-xs text-white/55">
                 Batch approve is intentionally limited to clearly safe candidates. Manual-review/risky edge cases are skipped and must be handled in detail view.
               </p>
+              <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full border border-emerald-300/30 bg-emerald-400/12 px-2.5 py-1 font-semibold uppercase tracking-[0.14em] text-emerald-100">
+                  Safe for batch = no blocking risk flags and no manual review hold
+                </span>
+                <span className="rounded-full border border-amber-300/30 bg-amber-400/12 px-2.5 py-1 font-semibold uppercase tracking-[0.14em] text-amber-100">
+                  Manual required = open detail view before deciding
+                </span>
+              </div>
               <div className="overflow-hidden rounded-2xl border border-white/10">
                 <div className="max-h-[78vh] overflow-auto">
                   <table className="min-w-full border-collapse text-sm text-white/90">
@@ -641,7 +656,9 @@ export default async function ReviewPage({
                               />
                               {candidate.decisionStatus === "MANUAL_REVIEW" || candidate.blockingRiskFlags.length ? (
                                 <div className="mt-2 text-[10px] uppercase tracking-[0.12em] text-amber-200">Manual required</div>
-                              ) : null}
+                              ) : (
+                                <div className="mt-2 text-[10px] uppercase tracking-[0.12em] text-emerald-200">Safe for batch</div>
+                              )}
                             </td>
                             <td className="border-b border-white/5 px-3 py-3 align-top">
                               <a href={buildReviewHref(filters, candidate.id)} className="block text-cyan-100">
@@ -716,12 +733,23 @@ export default async function ReviewPage({
 
   const selectAllVisibleButton = root.querySelector('[data-review-select-all-visible]');
   const selectSafeButton = root.querySelector('[data-review-select-safe]');
+  const selectedTotalNode = root.querySelector('[data-review-selected-total]');
+  const safeSelectedNode = root.querySelector('[data-review-safe-selected]');
+
+  const updateSummary = () => {
+    const checkboxes = getVisibleCheckboxes();
+    const selected = checkboxes.filter((checkbox) => checkbox.checked);
+    const safeSelected = selected.filter((checkbox) => checkbox.dataset.safePresetEligible === '1');
+    if (selectedTotalNode) selectedTotalNode.textContent = String(selected.length);
+    if (safeSelectedNode) safeSelectedNode.textContent = String(safeSelected.length);
+  };
 
   if (selectAllVisibleButton instanceof HTMLButtonElement) {
     selectAllVisibleButton.addEventListener('click', () => {
       for (const checkbox of getVisibleCheckboxes()) {
         checkbox.checked = true;
       }
+      updateSummary();
     });
   }
 
@@ -730,8 +758,18 @@ export default async function ReviewPage({
       for (const checkbox of getVisibleCheckboxes()) {
         checkbox.checked = checkbox.dataset.safePresetEligible === '1';
       }
+      updateSummary();
     });
   }
+
+  root.addEventListener('change', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (!target.matches('input[data-review-candidate-checkbox]')) return;
+    updateSummary();
+  });
+
+  updateSummary();
 })();`,
               }}
             />

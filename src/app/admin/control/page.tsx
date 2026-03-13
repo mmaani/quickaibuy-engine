@@ -300,6 +300,30 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   if ((data.orderOperations.purchaseSafetyPending ?? 0) > 0) {
     nextSteps.push("Orders need purchase checks in /admin/orders.");
   }
+  const parserTotals = data.supplierDiscoveryHealth.parserTelemetry.reduce(
+    (acc, row) => {
+      acc.parsed += row.parsed ?? 0;
+      acc.fallback += row.fallback ?? 0;
+      acc.challenge += row.challenge ?? 0;
+      acc.lowQuality += row.lowQuality ?? 0;
+      return acc;
+    },
+    { parsed: 0, fallback: 0, challenge: 0, lowQuality: 0 }
+  );
+  const quickActionGuidance = [
+    {
+      title: "Run pipeline steps",
+      description: "Use supplier, matching, marketplace scan, and profit engine when source data needs a refresh.",
+    },
+    {
+      title: "Use diagnostics before publishing",
+      description: "Prepare, execution snapshot, and monitor snapshot help you check state without bypassing review rules.",
+    },
+    {
+      title: "Manual actions stay manual",
+      description: "Publishing, listing recovery, and order handling still require the existing operator-driven flow.",
+    },
+  ];
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -340,6 +364,46 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/listings</Link>
             <Link href="/admin/review" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/review</Link>
             <Link href="/admin/orders" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/orders</Link>
+          </div>
+        </Section>
+
+        <Section title="Supplier Discovery Health">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            Parser telemetry helps confirm whether supplier discovery is returning usable rows or falling back to sparse data.
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="Parsed rows"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.parsed : "not wired yet"}
+            />
+            <StatCard
+              label="Fallback rows"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.fallback : "not wired yet"}
+            />
+            <StatCard
+              label="Challenge pages"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.challenge : "not wired yet"}
+            />
+            <StatCard
+              label="Low-quality rows"
+              value={data.supplierDiscoveryHealth.telemetryWired ? parserTotals.lowQuality : "not wired yet"}
+            />
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <DataTable rows={data.supplierDiscoveryHealth.bySupplier} empty="No supplier discovery rows yet." />
+            <DataTable rows={data.supplierDiscoveryHealth.freshnessBySupplier} empty="No supplier freshness rows yet." />
+          </div>
+          <div className="mt-4">
+            <DataTable
+              rows={data.supplierDiscoveryHealth.parserTelemetry.map((row) => ({
+                supplier: row.supplierKey,
+                parsed: row.parsed ?? "-",
+                fallback: row.fallback ?? "-",
+                challenge: row.challenge ?? "-",
+                low_quality: row.lowQuality ?? "-",
+              }))}
+              empty="No supplier parser telemetry yet."
+            />
           </div>
         </Section>
 
@@ -934,6 +998,14 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
         <Section title="Quick Actions">
           <div className="rounded-xl border border-amber-300/30 bg-amber-400/10 p-3 text-xs text-amber-100">
             Listing execution-related actions are eBay-only and preserve review gate constraints.
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-3">
+            {quickActionGuidance.map((item) => (
+              <div key={item.title} className="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/85">
+                <div className="font-semibold text-white">{item.title}</div>
+                <div className="mt-1 text-xs text-white/60">{item.description}</div>
+              </div>
+            ))}
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {quickActions.map((item) => {

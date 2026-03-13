@@ -315,10 +315,19 @@ export function getCompactBatchReviewSummary(
         ? "Safety review required"
         : purchaseStatus === "FAILED"
           ? "Supplier purchase failed"
-          : status === "FAILED" || status === "CANCELED"
+        : status === "FAILED" || status === "CANCELED"
             ? "Order needs attention"
             : row.trackingSyncError
               ? "Sync issue needs review"
+              : (
+                    isSupplierPurchaseRecordedStatus(purchaseStatus) ||
+                    isWaitingTrackingOrderStatus(status)
+                  ) &&
+                  (isTrackingStatusNotAvailable(String(row.trackingStatus ?? "").toUpperCase()) ||
+                    String(row.trackingStatus ?? "").trim() === "")
+                ? "Tracking required"
+                : status === ORDER_STATUS.PURCHASE_APPROVED || status === ORDER_STATUS.PURCHASE_PENDING
+                  ? "Waiting for supplier purchase"
               : null;
 
   const operatorStage = getOperatorOrderStepFromRow({

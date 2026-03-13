@@ -26,6 +26,14 @@ export type ControlPanelData = {
   supplierDiscoveryHealth: {
     bySupplier: Row[];
     freshnessBySupplier: Row[];
+    parserTelemetry: Array<{
+      supplierKey: string;
+      parsed: number | null;
+      fallback: number | null;
+      challenge: number | null;
+      lowQuality: number | null;
+    }>;
+    telemetryWired: boolean;
   };
   matchQuality: {
     totalMatches: number | null;
@@ -629,6 +637,34 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       order by latest_snapshot_ts desc nulls last
     `)
     : [];
+
+  const productsRawHasRawPayload = productsRawExists ? await columnExists("products_raw", "raw_payload") : false;
+  const supplierParserTelemetry =
+    productsRawExists && productsRawHasRawPayload
+      ? await runQuery(`
+        select
+          supplier_key as "supplierKey",
+          count(*) filter (
+            where upper(coalesce(raw_payload->>'crawlStatus', '')) = 'PARSED'
+          )::int as parsed,
+          count(*) filter (
+            where lower(coalesce(raw_payload->>'parseMode', '')) = 'fallback'
+              or upper(coalesce(raw_payload->>'crawlStatus', '')) in ('NO_PRODUCTS_PARSED', 'FETCH_FAILED')
+          )::int as fallback,
+          count(*) filter (
+            where upper(coalesce(raw_payload->>'crawlStatus', '')) = 'CHALLENGE_PAGE'
+              or lower(coalesce(raw_payload->>'pageChallengeDetected', 'false')) = 'true'
+          )::int as challenge,
+          count(*) filter (
+            where lower(coalesce(raw_payload->>'parseMode', '')) = 'fallback'
+              or upper(coalesce(raw_payload->>'crawlStatus', '')) in ('NO_PRODUCTS_PARSED', 'FETCH_FAILED', 'CHALLENGE_PAGE')
+              or lower(coalesce(raw_payload->>'pageChallengeDetected', 'false')) = 'true'
+          )::int as "lowQuality"
+        from products_raw
+        group by supplier_key
+        order by supplier_key asc
+      `)
+      : [];
 
   const matchesHasStatus = matchesExists ? await columnExists("matches", "status") : false;
   const matchesHasConfidence = matchesExists ? await columnExists("matches", "confidence") : false;
@@ -1801,6 +1837,14 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     supplierDiscoveryHealth: {
       bySupplier: supplierDiscoveryHealthBySupplier,
       freshnessBySupplier: supplierDiscoveryFreshness,
+      parserTelemetry: supplierParserTelemetry.map((row) => ({
+        supplierKey: toStr(row.supplierKey) ?? "-",
+        parsed: toNum(row.parsed),
+        fallback: toNum(row.fallback),
+        challenge: toNum(row.challenge),
+        lowQuality: toNum(row.lowQuality),
+      })),
+      telemetryWired: productsRawExists && productsRawHasRawPayload,
     },
     matchQuality: {
       totalMatches,
