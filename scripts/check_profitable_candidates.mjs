@@ -1,39 +1,32 @@
 import dotenv from "dotenv";
-import pg from "pg";
+import { withPgClient } from "./lib/pgRetry.mjs";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-const { Client } = pg;
-
 async function main() {
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+  const rows = await withPgClient(async (client) => {
+    const result = await client.query(`
+      SELECT
+        id,
+        supplier_key,
+        supplier_product_id,
+        marketplace_key,
+        marketplace_listing_id,
+        estimated_profit,
+        margin_pct,
+        roi_pct,
+        decision_status,
+        reason,
+        calc_ts
+      FROM profitable_candidates
+      ORDER BY calc_ts DESC
+      LIMIT 20
+    `);
+    return result.rows;
   });
 
-  await client.connect();
-
-  const { rows } = await client.query(`
-    SELECT
-      id,
-      supplier_key,
-      supplier_product_id,
-      marketplace_key,
-      marketplace_listing_id,
-      estimated_profit,
-      margin_pct,
-      roi_pct,
-      decision_status,
-      reason,
-      calc_ts
-    FROM profitable_candidates
-    ORDER BY calc_ts DESC
-    LIMIT 20
-  `);
-
   console.log(JSON.stringify(rows, null, 2));
-  await client.end();
 }
 
 main().catch((err) => {

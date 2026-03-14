@@ -4,6 +4,7 @@ import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplace
 import { extractAvailabilityFromRawPayload, normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
 import { sql } from "drizzle-orm";
 import { calculateRealProfit } from "./realProfitCalculator";
+import { getPriceGuardThresholds } from "./priceGuardConfig";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -27,6 +28,7 @@ type ProfitRow = {
   supplierRawPayload: unknown;
   marketPrice: string | null;
   shippingPrice: string | null;
+  marketSnapshotTs: Date | string | null;
 };
 
 type ExistingCandidateState = {
@@ -66,6 +68,7 @@ export async function runProfitEngine(input?: {
   const limit = Number(input?.limit ?? 50);
   const minRoiPct = Number(process.env.MIN_ROI_PCT || "15");
   const minMatchConfidence = Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.50");
+  const maxMarketplaceSnapshotAgeHours = getPriceGuardThresholds().maxMarketplaceSnapshotAgeHours;
 
   const supplierKeyFilter =
     input?.supplierKey && String(input.supplierKey).trim()
@@ -167,7 +170,8 @@ export async function runProfitEngine(input?: {
       lp.availability_status AS "supplierAvailabilityStatus",
       lp.raw_payload AS "supplierRawPayload",
       lmp.price AS "marketPrice",
-      lmp.shipping_price AS "shippingPrice"
+      lmp.shipping_price AS "shippingPrice",
+      lmp.snapshot_ts AS "marketSnapshotTs"
     FROM ranked_matches rm
     INNER JOIN latest_products lp
       ON lp.supplier_key = rm.supplier_key
@@ -280,6 +284,7 @@ export async function runProfitEngine(input?: {
     const marketPrice = toNum(row.marketPrice) ?? 0;
     const shipping = toNum(row.shippingPrice) ?? 0;
     const supplierSnapshotAgeHours = computeAgeHours(now, toDate(row.supplierSnapshotTs));
+    const marketplaceSnapshotAgeHours = computeAgeHours(now, toDate(row.marketSnapshotTs));
     const availability = extractAvailabilityFromRawPayload({
       availabilityStatus: row.supplierAvailabilityStatus,
       rawPayload: row.supplierRawPayload,
@@ -306,25 +311,32 @@ export async function runProfitEngine(input?: {
     const supplierPriceDriftPct = computePctChange(expectedSupplierPrice, supplierCost);
     const supplierDriftExceeded =
       supplierPriceDriftPct != null && Math.abs(supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT;
+    const staleMarketplaceSnapshot =
+      marketplaceSnapshotAgeHours != null &&
+      marketplaceSnapshotAgeHours > maxMarketplaceSnapshotAgeHours;
     const availabilityUnsafe = availabilitySignal === "OUT_OF_STOCK";
     const availabilityManualReview =
       availabilitySignal === "UNKNOWN" || availabilitySignal === "LOW_STOCK";
 
-    const decisionStatus = supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
+    const decisionStatus = staleMarketplaceSnapshot || supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
       ? "MANUAL_REVIEW"
       : (existing?.decisionStatus ?? "PENDING");
     const listingEligible =
-      supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
+      staleMarketplaceSnapshot || supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
         ? false
         : Boolean(existing?.listingEligible ?? false);
-    const listingBlockReason = supplierDriftExceeded
+    const listingBlockReason = staleMarketplaceSnapshot
+      ? `marketplace snapshot age ${marketplaceSnapshotAgeHours}h exceeds ${maxMarketplaceSnapshotAgeHours}h`
+      : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
       : availabilityUnsafe
         ? "supplier availability indicates out of stock"
         : availabilityManualReview
           ? `supplier availability requires manual review (${availabilitySignal})`
       : (existing?.listingBlockReason ?? null);
-    const riskFlagsSql = supplierDriftExceeded
+    const riskFlagsSql = staleMarketplaceSnapshot
+      ? sql`ARRAY['STALE_MARKETPLACE_SNAPSHOT']::text[]`
+      : supplierDriftExceeded
       ? sql`ARRAY['SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT']::text[]`
       : availabilityUnsafe
         ? sql`ARRAY['SUPPLIER_OUT_OF_STOCK']::text[]`
@@ -364,9 +376,11 @@ export async function runProfitEngine(input?: {
       breakEvenPriceUsd: economics.breakEvenPriceUsd,
     };
 
-    const reason = supplierDriftExceeded
+    const reason = staleMarketplaceSnapshot
+      ? `marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} > ${maxMarketplaceSnapshotAgeHours} | roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`
+      : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
-      : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
+      : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
 
     await db.execute(sql`
       INSERT INTO profitable_candidates (
