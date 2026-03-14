@@ -300,6 +300,12 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   if ((data.orderOperations.purchaseSafetyPending ?? 0) > 0) {
     nextSteps.push("Orders need purchase checks in /admin/orders.");
   }
+  if ((data.matchQuality.lowConfidenceAcceptedMatches ?? 0) > 0) {
+    nextSteps.push("Low-confidence active matches need review before changing matcher thresholds.");
+  }
+  if ((data.matchQuality.duplicatePairCount ?? 0) > 0) {
+    nextSteps.push("Duplicate match pairs detected. Review match diagnostics in /admin/control.");
+  }
   const parserTotals = data.supplierDiscoveryHealth.parserTelemetry.reduce(
     (acc, row) => {
       acc.parsed += row.parsed ?? 0;
@@ -427,6 +433,49 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 stub: row.stubQuality ?? "-",
               }))}
               empty="No supplier parser telemetry yet."
+            />
+          </div>
+        </Section>
+
+        <Section title="Match Quality">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            These diagnostics are observability-only for v1. Use them to validate confidence bands, duplicate patterns, and weak evidence before changing matcher behavior.
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <StatCard label="Matches" value={data.matchQuality.totalMatches ?? "-"} />
+            <StatCard label="Active matches" value={data.matchQuality.activeMatches ?? "-"} />
+            <StatCard label="Inactive matches" value={data.matchQuality.inactiveMatches ?? "-"} />
+            <StatCard label="Low confidence" value={data.matchQuality.lowConfidenceCount ?? "-"} />
+            <StatCard label="Borderline active" value={data.matchQuality.borderlineAcceptedMatches ?? "-"} />
+            <StatCard label="Weak matches" value={data.matchQuality.weakMatchCount ?? "-"} />
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <DataTable
+              rows={data.matchQuality.confidenceDistribution.map((row) => ({
+                bucket: row.bucket,
+                count: row.count,
+              }))}
+              empty="No match confidence distribution yet."
+            />
+            <DataTable
+              rows={[
+                {
+                  low_confidence_active: data.matchQuality.lowConfidenceAcceptedMatches ?? "-",
+                  duplicate_pairs: data.matchQuality.duplicatePairCount ?? "-",
+                  weak_matches: data.matchQuality.weakMatchCount ?? "-",
+                  invalid_supplier_keys: data.matchQuality.supplierKeyConsistency.invalidKeyCount ?? "-",
+                  noncanonical_supplier_keys: data.matchQuality.supplierKeyConsistency.nonCanonicalKeyCount ?? "-",
+                },
+              ]}
+              empty="No compact match diagnostics yet."
+            />
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <DataTable rows={data.matchQuality.weakMatchReasons} empty="No weak-match reasons found." />
+            <DataTable rows={data.matchQuality.duplicatePatterns} empty="No duplicate match patterns found." />
+            <DataTable
+              rows={data.matchQuality.supplierKeyConsistency.inconsistentGroups}
+              empty="Supplier keys are already canonical."
             />
           </div>
         </Section>

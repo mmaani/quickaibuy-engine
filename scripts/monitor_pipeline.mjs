@@ -65,7 +65,7 @@ try {
   const confidenceBands = await client.query(`
     select
       case
-        when confidence >= 0.90 then 'strong'
+        when confidence >= 0.90 then 'high'
         when confidence >= 0.75 then 'medium'
         else 'low'
       end as band,

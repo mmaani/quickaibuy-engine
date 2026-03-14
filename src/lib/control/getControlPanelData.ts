@@ -5,6 +5,7 @@ import { resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { getManualOverrideSnapshot } from "./manualOverrides";
+import { getMatchQualitySummary } from "./getMatchQualitySummary";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -41,9 +42,20 @@ export type ControlPanelData = {
   matchQuality: {
     totalMatches: number | null;
     activeMatches: number | null;
+    inactiveMatches: number | null;
     confidenceDistribution: Row[];
     lowConfidenceCount: number | null;
-    weakOrDuplicateIndicators: Row[];
+    lowConfidenceAcceptedMatches: number | null;
+    borderlineAcceptedMatches: number | null;
+    duplicatePairCount: number | null;
+    weakMatchCount: number | null;
+    weakMatchReasons: Row[];
+    duplicatePatterns: Row[];
+    supplierKeyConsistency: {
+      invalidKeyCount: number | null;
+      nonCanonicalKeyCount: number | null;
+      inconsistentGroups: Row[];
+    };
   };
   marketplaceScanHealth: {
     totalEbayPrices: number | null;
@@ -686,63 +698,11 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const matchesHasStatus = matchesExists ? await columnExists("matches", "status") : false;
   const matchesHasConfidence = matchesExists ? await columnExists("matches", "confidence") : false;
 
-  const totalMatches = matchesExists
-    ? toNum((await runQuery(`select count(*)::int as count from matches`))[0]?.count)
-    : null;
-
-  const activeMatches = matchesHasStatus
-    ? toNum(
-        (
-          await runQuery(`
-            select count(*)::int as count
-            from matches
-            where upper(coalesce(status, '')) = 'ACTIVE'
-          `)
-        )[0]?.count
-      )
-    : null;
-
-  const confidenceDistribution = matchesHasConfidence
-    ? await runQuery(`
-      select
-        case
-          when confidence::numeric < 0.5 then 'low (<0.50)'
-          when confidence::numeric < 0.8 then 'medium (0.50-0.79)'
-          else 'high (>=0.80)'
-        end as bucket,
-        count(*)::int as count
-      from matches
-      group by 1
-      order by count desc
-    `)
-    : [];
-
-  const lowConfidenceCount = matchesHasConfidence
-    ? toNum(
-        (
-          await runQuery(`
-            select count(*)::int as count
-            from matches
-            where confidence::numeric < 0.6
-          `)
-        )[0]?.count
-      )
-    : null;
-
-  const weakOrDuplicateIndicators = matchesHasConfidence
-    ? await runQuery(`
-      select
-        supplier_key,
-        supplier_product_id,
-        count(*)::int as match_count,
-        round(avg(confidence)::numeric, 4) as avg_confidence
-      from matches
-      group by supplier_key, supplier_product_id
-      having count(*) > 1 or avg(confidence) < 0.6
-      order by match_count desc, avg_confidence asc nulls last
-      limit 15
-    `)
-    : [];
+  const matchQuality = await getMatchQualitySummary({
+    matchesExists,
+    matchesHasStatus,
+    matchesHasConfidence,
+  });
 
   const pricesHasMarketplaceKey = marketplacePricesExists
     ? await columnExists("marketplace_prices", "marketplace_key")
@@ -1752,7 +1712,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     }
   }
 
-  if ((totalMatches ?? 0) > 0 && (lowConfidenceCount ?? 0) >= (totalMatches ?? 0)) {
+  if ((matchQuality.totalMatches ?? 0) > 0 && (matchQuality.lowConfidenceCount ?? 0) >= (matchQuality.totalMatches ?? 0)) {
     operationalFreshnessAlerts.push({
       id: "all-matches-low-confidence",
       tone: "warning",
@@ -1761,7 +1721,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     });
   }
 
-  if ((toNum(profitStats.total_candidates) ?? 0) === 0 && (totalMatches ?? 0) > 0) {
+  if ((toNum(profitStats.total_candidates) ?? 0) === 0 && (matchQuality.totalMatches ?? 0) > 0) {
     operationalFreshnessAlerts.push({
       id: "no-profitable-candidates",
       tone: "warning",
@@ -1867,11 +1827,18 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       telemetryWired: productsRawExists && productsRawHasRawPayload,
     },
     matchQuality: {
-      totalMatches,
-      activeMatches,
-      confidenceDistribution,
-      lowConfidenceCount,
-      weakOrDuplicateIndicators,
+      totalMatches: matchQuality.totalMatches,
+      activeMatches: matchQuality.activeMatches,
+      inactiveMatches: matchQuality.inactiveMatches,
+      confidenceDistribution: matchQuality.confidenceDistribution,
+      lowConfidenceCount: matchQuality.lowConfidenceCount,
+      lowConfidenceAcceptedMatches: matchQuality.lowConfidenceAcceptedMatches,
+      borderlineAcceptedMatches: matchQuality.borderlineAcceptedMatches,
+      duplicatePairCount: matchQuality.duplicatePairCount,
+      weakMatchCount: matchQuality.weakMatchCount,
+      weakMatchReasons: matchQuality.weakMatchReasons,
+      duplicatePatterns: matchQuality.duplicatePatterns,
+      supplierKeyConsistency: matchQuality.supplierKeyConsistency,
     },
     marketplaceScanHealth: {
       totalEbayPrices,
