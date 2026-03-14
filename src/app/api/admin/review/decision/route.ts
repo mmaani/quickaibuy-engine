@@ -148,7 +148,7 @@ async function applyCandidateDecision(input: {
       if (!supplierSnapshotAgeAvailable) reasons.push("SUPPLIER_SNAPSHOT_AGE_REQUIRED");
       effectiveDecisionStatus = "MANUAL_REVIEW";
       listingEligible = false;
-      listingBlockReason = `PRICE_GUARD_${priceGuard.decision}: ${reasons.join(", ")}`;
+      listingBlockReason = `PRICE_GUARD_${priceGuard.decision}: ${priceGuard.reasonSummary} | codes: ${reasons.join(", ")}`;
       effectiveReason = listingBlockReason;
 
       if (input.enforceBatchSafeApprove) {

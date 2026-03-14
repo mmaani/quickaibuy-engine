@@ -48,6 +48,7 @@ async function main() {
       current_listing_eligible: row.listing_eligible,
       guard_decision: result.decision,
       allow: result.allow,
+      reason_summary: result.reasonSummary,
       reasons: result.reasons.join("|"),
       stale_market_snapshot: result.reasons.includes("STALE_MARKETPLACE_SNAPSHOT"),
       reason_details: JSON.stringify(result.reasonDetails),

@@ -160,7 +160,7 @@ export async function reevaluateListingForRecovery(
       UPDATE profitable_candidates
       SET
         listing_eligible = FALSE,
-        listing_block_reason = ${`PRICE_GUARD_${priceGuard.decision}: ${priceGuard.reasons.join(", ")}`},
+        listing_block_reason = ${`PRICE_GUARD_${priceGuard.decision}: ${priceGuard.reasonSummary} | codes: ${priceGuard.reasons.join(", ")}`},
         listing_eligible_ts = NOW()
       WHERE id = ${candidateId}
     `);

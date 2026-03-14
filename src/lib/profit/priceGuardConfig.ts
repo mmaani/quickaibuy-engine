@@ -2,6 +2,9 @@ export type PriceGuardThresholds = {
   minProfitUsd: number;
   minMarginPct: number;
   minRoiPct: number;
+  reviewProfitBufferUsd: number;
+  reviewMarginBufferPct: number;
+  reviewRoiBufferPct: number;
   maxSupplierDriftPct: number;
   maxMarketplaceSnapshotAgeHours: number;
   maxSupplierSnapshotAgeHours: number;
@@ -33,6 +36,9 @@ export function getPriceGuardThresholds(): PriceGuardThresholds {
     minProfitUsd: toNumber(process.env.PRICE_GUARD_MIN_PROFIT_USD, 1),
     minMarginPct: toNumber(process.env.PRICE_GUARD_MIN_MARGIN_PCT, 20),
     minRoiPct: toNumber(process.env.PRICE_GUARD_MIN_ROI_PCT, 25),
+    reviewProfitBufferUsd: toNumber(process.env.PRICE_GUARD_REVIEW_PROFIT_BUFFER_USD, 1),
+    reviewMarginBufferPct: toNumber(process.env.PRICE_GUARD_REVIEW_MARGIN_BUFFER_PCT, 3),
+    reviewRoiBufferPct: toNumber(process.env.PRICE_GUARD_REVIEW_ROI_BUFFER_PCT, 5),
     // Drift >15% routes to MANUAL_REVIEW unless overridden explicitly.
     maxSupplierDriftPct: toNumber(process.env.PRICE_GUARD_MAX_SUPPLIER_DRIFT_PCT, 15),
     maxMarketplaceSnapshotAgeHours,

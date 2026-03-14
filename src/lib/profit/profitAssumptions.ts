@@ -20,11 +20,25 @@ export type ProfitCostBreakdown = {
   variableCostsUsd: number;
   fixedCostUsd: number;
   totalFeeUsd: number;
+  totalReserveUsd: number;
+  totalOperatingCostUsd: number;
 };
 
 function toNumber(value: string | undefined, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function toPct(value: string | undefined, fallback: number): number {
+  const n = toNumber(value, fallback);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return fallback;
+  return n;
+}
+
+function toNonNegative(value: string | undefined, fallback: number): number {
+  const n = toNumber(value, fallback);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
 }
 
 export function getProfitAssumptions(input?: {
@@ -39,11 +53,11 @@ export function getProfitAssumptions(input?: {
   return {
     country: "JO",
     marketplaceKey: "ebay",
-    ebayFeeRatePct: toNumber(process.env.PROFIT_EBAY_FEE_RATE_PCT, 12),
-    payoutReservePct: toNumber(process.env.PROFIT_PAYOUT_RESERVE_PCT, 2),
-    paymentReservePct: toNumber(process.env.PROFIT_PAYMENT_RESERVE_PCT, 3),
-    fxReservePct: toNumber(process.env.PROFIT_FX_RESERVE_PCT, 2),
-    shippingVariancePct: toNumber(process.env.PROFIT_SHIPPING_VARIANCE_PCT, 10),
-    fixedCostUsd: toNumber(process.env.PROFIT_FIXED_COST_USD, 2),
+    ebayFeeRatePct: toPct(process.env.PROFIT_EBAY_FEE_RATE_PCT, 12),
+    payoutReservePct: toPct(process.env.PROFIT_PAYOUT_RESERVE_PCT, 2),
+    paymentReservePct: toPct(process.env.PROFIT_PAYMENT_RESERVE_PCT, 3),
+    fxReservePct: toPct(process.env.PROFIT_FX_RESERVE_PCT, 2),
+    shippingVariancePct: toPct(process.env.PROFIT_SHIPPING_VARIANCE_PCT, 10),
+    fixedCostUsd: toNonNegative(process.env.PROFIT_FIXED_COST_USD, 2),
   };
 }

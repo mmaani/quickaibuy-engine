@@ -19,6 +19,7 @@ export type RealProfitResult = {
   estimatedShippingUsd: number;
   estimatedCogsUsd: number;
   estimatedProfitUsd: number;
+  breakEvenPriceUsd: number;
   marginPct: number;
   roiPct: number;
 };
@@ -43,11 +44,13 @@ export function calculateRealProfit(input: RealProfitInput): RealProfitResult {
   const paymentReserveUsd = calcPct(marketplacePriceUsd, assumptions.paymentReservePct);
   const fxReserveUsd = calcPct(marketplacePriceUsd, assumptions.fxReservePct);
   const shippingVarianceUsd = calcPct(shippingPriceUsd, assumptions.shippingVariancePct);
+  const totalReserveUsd = round2(payoutReserveUsd + paymentReserveUsd + fxReserveUsd);
 
   const variableCostsUsd = round2(
     marketplaceFeeUsd + payoutReserveUsd + paymentReserveUsd + fxReserveUsd + shippingVarianceUsd
   );
   const totalFeeUsd = round2(variableCostsUsd + assumptions.fixedCostUsd);
+  const totalOperatingCostUsd = round2(supplierPriceUsd + shippingPriceUsd + totalFeeUsd);
 
   const estimatedShippingUsd = round2(shippingPriceUsd + shippingVarianceUsd);
   const estimatedCogsUsd = round2(supplierPriceUsd + assumptions.fixedCostUsd);
@@ -55,6 +58,7 @@ export function calculateRealProfit(input: RealProfitInput): RealProfitResult {
   const estimatedProfitUsd = round2(
     marketplacePriceUsd - supplierPriceUsd - shippingPriceUsd - totalFeeUsd
   );
+  const breakEvenPriceUsd = round2(totalOperatingCostUsd);
 
   const marginPct = marketplacePriceUsd > 0 ? round2((estimatedProfitUsd / marketplacePriceUsd) * 100) : 0;
   const roiPct = estimatedCogsUsd > 0 ? round2((estimatedProfitUsd / estimatedCogsUsd) * 100) : 0;
@@ -70,11 +74,14 @@ export function calculateRealProfit(input: RealProfitInput): RealProfitResult {
       variableCostsUsd,
       fixedCostUsd: assumptions.fixedCostUsd,
       totalFeeUsd,
+      totalReserveUsd,
+      totalOperatingCostUsd,
     },
     estimatedFeesUsd,
     estimatedShippingUsd,
     estimatedCogsUsd,
     estimatedProfitUsd,
+    breakEvenPriceUsd,
     marginPct,
     roiPct,
   };

@@ -176,16 +176,17 @@ export async function markListingReadyToPublish(
       priceGuard.reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
       !driftMetricAvailable ||
       !supplierSnapshotAgeAvailable;
-    const reasons = [...priceGuard.reasons];
-    if (!driftMetricAvailable) reasons.push("SUPPLIER_DRIFT_DATA_REQUIRED");
-    if (!supplierSnapshotAgeAvailable) reasons.push("SUPPLIER_SNAPSHOT_AGE_REQUIRED");
+      const reasons = [...priceGuard.reasons];
+      if (!driftMetricAvailable) reasons.push("SUPPLIER_DRIFT_DATA_REQUIRED");
+      if (!supplierSnapshotAgeAvailable) reasons.push("SUPPLIER_SNAPSHOT_AGE_REQUIRED");
+      const listingBlockReason = `PRICE_GUARD_${priceGuard.decision}: ${priceGuard.reasonSummary} | codes: ${reasons.join(", ")}`;
 
-    await db.execute(sql`
+      await db.execute(sql`
       UPDATE profitable_candidates
       SET
         decision_status = CASE WHEN ${shouldManualReview} THEN 'MANUAL_REVIEW' ELSE decision_status END,
         listing_eligible = FALSE,
-        listing_block_reason = ${`PRICE_GUARD_${priceGuard.decision}: ${reasons.join(", ")}`},
+        listing_block_reason = ${listingBlockReason},
         listing_eligible_ts = NOW()
       WHERE id = ${candidateId}
     `);

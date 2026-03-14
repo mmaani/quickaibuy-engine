@@ -18,6 +18,8 @@ export type PriceGuardReasonCode =
   | "MISSING_MARKETPLACE_PRICE"
   | "MISSING_FEE_ASSUMPTIONS"
   | "MISSING_SHIPPING_DATA"
+  | "SUPPLIER_SNAPSHOT_AGE_UNAVAILABLE"
+  | "MARKETPLACE_SNAPSHOT_AGE_UNAVAILABLE"
   | "STALE_SUPPLIER_SNAPSHOT"
   | "STALE_MARKETPLACE_SNAPSHOT"
   | "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE"
@@ -28,8 +30,11 @@ export type PriceGuardReasonCode =
   | "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE"
   | "INCOMPLETE_ECONOMICS"
   | "PROFIT_BELOW_MINIMUM"
+  | "PROFIT_NEAR_MINIMUM"
   | "MARGIN_BELOW_MINIMUM"
-  | "ROI_BELOW_MINIMUM";
+  | "MARGIN_NEAR_MINIMUM"
+  | "ROI_BELOW_MINIMUM"
+  | "ROI_NEAR_MINIMUM";
 
 export type PriceGuardReason = {
   code: PriceGuardReasonCode;
@@ -66,6 +71,7 @@ export type PriceGuardResult = {
   decision: PriceGuardDecision;
   reasons: string[];
   reasonDetails: PriceGuardReason[];
+  reasonSummary: string;
   metrics: PriceGuardMetrics;
   thresholds: PriceGuardThresholds;
   context: {
@@ -208,6 +214,36 @@ function addReason(
   }
 }
 
+function assumptionsLookDeterministic(assumptions: ProfitAssumptions): boolean {
+  return (
+    Number.isFinite(assumptions.ebayFeeRatePct) &&
+    assumptions.ebayFeeRatePct >= 0 &&
+    assumptions.ebayFeeRatePct <= 100 &&
+    Number.isFinite(assumptions.payoutReservePct) &&
+    assumptions.payoutReservePct >= 0 &&
+    assumptions.payoutReservePct <= 100 &&
+    Number.isFinite(assumptions.paymentReservePct) &&
+    assumptions.paymentReservePct >= 0 &&
+    assumptions.paymentReservePct <= 100 &&
+    Number.isFinite(assumptions.fxReservePct) &&
+    assumptions.fxReservePct >= 0 &&
+    assumptions.fxReservePct <= 100 &&
+    Number.isFinite(assumptions.shippingVariancePct) &&
+    assumptions.shippingVariancePct >= 0 &&
+    assumptions.shippingVariancePct <= 100 &&
+    Number.isFinite(assumptions.fixedCostUsd) &&
+    assumptions.fixedCostUsd >= 0
+  );
+}
+
+function buildReasonSummary(reasonDetails: PriceGuardReason[], decision: PriceGuardDecision): string {
+  if (!reasonDetails.length) return `${decision}: economics and safety checks passed`;
+  return `${decision}: ${reasonDetails
+    .slice(0, 3)
+    .map((reason) => reason.code)
+    .join(", ")}`;
+}
+
 export async function validateProfitSafety(input: {
   candidateId: string;
   listingId?: string | null;
@@ -341,7 +377,7 @@ export async function validateProfitSafety(input: {
     });
   }
 
-  if (estimatedFees == null) {
+  if (!assumptionsLookDeterministic(assumptions) || estimatedFees == null) {
     addReason(reasonDetails, {
       code: "MISSING_FEE_ASSUMPTIONS",
       severity: "MANUAL_REVIEW",
@@ -357,10 +393,13 @@ export async function validateProfitSafety(input: {
     });
   }
 
-  if (
-    supplierSnapshotAgeHours != null &&
-    supplierSnapshotAgeHours > thresholds.maxSupplierSnapshotAgeHours
-  ) {
+  if (supplierSnapshotAgeHours == null) {
+    addReason(reasonDetails, {
+      code: "SUPPLIER_SNAPSHOT_AGE_UNAVAILABLE",
+      severity: "MANUAL_REVIEW",
+      message: "Supplier snapshot age is unavailable for fail-closed validation.",
+    });
+  } else if (supplierSnapshotAgeHours > thresholds.maxSupplierSnapshotAgeHours) {
     addReason(reasonDetails, {
       code: "STALE_SUPPLIER_SNAPSHOT",
       severity: "MANUAL_REVIEW",
@@ -372,10 +411,13 @@ export async function validateProfitSafety(input: {
     });
   }
 
-  if (
-    marketplaceSnapshotAgeHours != null &&
-    marketplaceSnapshotAgeHours > thresholds.maxMarketplaceSnapshotAgeHours
-  ) {
+  if (marketplaceSnapshotAgeHours == null) {
+    addReason(reasonDetails, {
+      code: "MARKETPLACE_SNAPSHOT_AGE_UNAVAILABLE",
+      severity: "MANUAL_REVIEW",
+      message: "Marketplace snapshot age is unavailable for fail-closed validation.",
+    });
+  } else if (marketplaceSnapshotAgeHours > thresholds.maxMarketplaceSnapshotAgeHours) {
     addReason(reasonDetails, {
       code: "STALE_MARKETPLACE_SNAPSHOT",
       severity: "MANUAL_REVIEW",
@@ -460,6 +502,17 @@ export async function validateProfitSafety(input: {
         recomputedProfit,
       },
     });
+  } else if (recomputedProfit < thresholds.minProfitUsd + thresholds.reviewProfitBufferUsd) {
+    addReason(reasonDetails, {
+      code: "PROFIT_NEAR_MINIMUM",
+      severity: "MANUAL_REVIEW",
+      message: "Recomputed profit is above minimum but too close to threshold for auto-allow.",
+      meta: {
+        minProfitUsd: thresholds.minProfitUsd,
+        reviewProfitBufferUsd: thresholds.reviewProfitBufferUsd,
+        recomputedProfit,
+      },
+    });
   }
 
   if (recomputedMarginPct != null && recomputedMarginPct < thresholds.minMarginPct) {
@@ -469,6 +522,20 @@ export async function validateProfitSafety(input: {
       message: "Recomputed margin is below minimum threshold.",
       meta: {
         minMarginPct: thresholds.minMarginPct,
+        recomputedMarginPct,
+      },
+    });
+  } else if (
+    recomputedMarginPct != null &&
+    recomputedMarginPct < thresholds.minMarginPct + thresholds.reviewMarginBufferPct
+  ) {
+    addReason(reasonDetails, {
+      code: "MARGIN_NEAR_MINIMUM",
+      severity: "MANUAL_REVIEW",
+      message: "Recomputed margin is too close to threshold for auto-allow.",
+      meta: {
+        minMarginPct: thresholds.minMarginPct,
+        reviewMarginBufferPct: thresholds.reviewMarginBufferPct,
         recomputedMarginPct,
       },
     });
@@ -484,15 +551,31 @@ export async function validateProfitSafety(input: {
         recomputedRoiPct,
       },
     });
+  } else if (
+    recomputedRoiPct != null &&
+    recomputedRoiPct < thresholds.minRoiPct + thresholds.reviewRoiBufferPct
+  ) {
+    addReason(reasonDetails, {
+      code: "ROI_NEAR_MINIMUM",
+      severity: "MANUAL_REVIEW",
+      message: "Recomputed ROI is too close to threshold for auto-allow.",
+      meta: {
+        minRoiPct: thresholds.minRoiPct,
+        reviewRoiBufferPct: thresholds.reviewRoiBufferPct,
+        recomputedRoiPct,
+      },
+    });
   }
 
   const decision = decideFromReasons(reasonDetails);
+  const reasonSummary = buildReasonSummary(reasonDetails, decision);
 
   return {
     allow: decision === "ALLOW",
     decision,
     reasons: reasonDetails.map((reason) => reason.code),
     reasonDetails,
+    reasonSummary,
     metrics: {
       profit: recomputedProfit,
       margin_pct: recomputedMarginPct,

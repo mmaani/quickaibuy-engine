@@ -361,6 +361,7 @@ export async function runProfitEngine(input?: {
       matchId: row.matchId,
       country: economics.assumptions.country,
       economicsModel: "jordan_ebay_deterministic_v1",
+      breakEvenPriceUsd: economics.breakEvenPriceUsd,
     };
 
     const reason = supplierDriftExceeded

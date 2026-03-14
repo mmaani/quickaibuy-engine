@@ -16,6 +16,7 @@ console.log(
       estimatedShippingUsd: sample.estimatedShippingUsd,
       estimatedCogsUsd: sample.estimatedCogsUsd,
       estimatedProfitUsd: sample.estimatedProfitUsd,
+      breakEvenPriceUsd: sample.breakEvenPriceUsd,
       marginPct: sample.marginPct,
       roiPct: sample.roiPct,
     },
