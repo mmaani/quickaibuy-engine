@@ -123,10 +123,11 @@ async function main() {
     dev.bullPrefix === prod.bullPrefix && dev.jobsQueueName === prod.jobsQueueName;
 
   const warnings: string[] = [];
+  const notes: string[] = [];
   if (sameRedisEndpoint && sameNamespace) {
     warnings.push("dev/prod share the same Redis endpoint and Bull queue namespace");
   } else if (sameRedisEndpoint) {
-    warnings.push("dev/prod share the same Redis endpoint (namespace differs)");
+    notes.push("dev/prod share the same Redis endpoint but use different Bull namespaces");
   }
   if (!devProbe.ok) warnings.push(`dev queue probe failed: ${devProbe.reason}`);
   if (!prodProbe.ok) warnings.push(`prod queue probe failed: ${prodProbe.reason}`);
@@ -153,6 +154,7 @@ async function main() {
       probe: prodProbe,
     },
     warnings,
+    notes,
     recommendation:
       warnings.length === 0
         ? "Upstash setup is isolated and reachable."

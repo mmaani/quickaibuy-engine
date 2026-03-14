@@ -3,7 +3,9 @@ import fs from "node:fs";
 import dotenv from "dotenv";
 import { Pool } from "pg";
 
-dotenv.config({ path: ".env.local" });
+const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
+
+dotenv.config({ path: dotenvPath });
 dotenv.config();
 
 const verbose = process.env.DIAG_VERBOSE === "1";
@@ -102,7 +104,7 @@ async function runFingerprint(pool, connectionString) {
 
   return {
     status: "OK",
-    envFileChecked: fs.existsSync(".env.local") ? ".env.local" : null,
+    envFileChecked: fs.existsSync(dotenvPath) ? dotenvPath : null,
     dbUrlFingerprint: {
       host: dbUrlHost,
       databaseName: dbUrlName,
@@ -122,7 +124,7 @@ async function main() {
       status: "FAILED",
       class: "CONFIG_MISSING",
       reason: "Missing DATABASE_URL or DATABASE_URL_DIRECT",
-      nextStep: "Set DATABASE_URL in .env.local or runtime env and retry.",
+      nextStep: `Set DATABASE_URL in ${dotenvPath} or runtime env and retry.`,
     };
     console.log(JSON.stringify(payload, null, 2));
     process.exit(1);
