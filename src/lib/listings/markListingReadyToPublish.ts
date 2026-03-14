@@ -11,6 +11,10 @@ import {
   canPromotePreviewListingStatus,
   isPausedListingStatus,
 } from "./statuses";
+import {
+  findListingDuplicatesForCandidate,
+  getDuplicateBlockDecision,
+} from "./duplicateProtection";
 
 export type MarkListingReadyInput = {
   listingId: string;
@@ -48,6 +52,9 @@ export async function markListingReadyToPublish(
       l.candidate_id AS "candidateId",
       l.marketplace_key AS "marketplaceKey",
       l.status,
+      l.title AS "listingTitle",
+      pc.supplier_key AS "supplierKey",
+      pc.supplier_product_id AS "supplierProductId",
       pc.decision_status AS "decisionStatus",
       pc.listing_eligible AS "listingEligible"
     FROM listings l
@@ -69,6 +76,9 @@ export async function markListingReadyToPublish(
   const candidateId = String(row.candidateId ?? "");
   const marketplaceKey = String(row.marketplaceKey ?? "");
   const previousStatus = String(row.status ?? "");
+  const listingTitle = String(row.listingTitle ?? "").trim() || null;
+  const supplierKey = String(row.supplierKey ?? "").trim() || null;
+  const supplierProductId = String(row.supplierProductId ?? "").trim() || null;
   const decisionStatus = String(row.decisionStatus ?? "");
   const listingEligible = Boolean(row.listingEligible);
 
@@ -295,24 +305,41 @@ export async function markListingReadyToPublish(
     };
   }
 
-  const duplicate = await db.execute(sql`
-    SELECT id, status
-    FROM listings
-    WHERE candidate_id = ${candidateId}
-      AND marketplace_key = 'ebay'
-      AND status IN (${sql.join(LISTING_ACTIVE_PATH_STATUSES.map((status) => sql`${status}`), sql`, `)})
-      AND id <> ${input.listingId}
-    LIMIT 1
-  `);
+  const duplicateMatches = await findListingDuplicatesForCandidate({
+    marketplaceKey: "ebay",
+    supplierKey,
+    supplierProductId,
+    listingTitle,
+    excludeListingId: input.listingId,
+    statuses: LISTING_ACTIVE_PATH_STATUSES,
+  });
+  const duplicateDecision = getDuplicateBlockDecision(duplicateMatches);
 
-  if (duplicate.rows.length > 0) {
+  if (duplicateDecision.blocked) {
+    await writeAuditLog({
+      actorType,
+      actorId,
+      entityType: "LISTING",
+      entityId: input.listingId,
+      eventType: "LISTING_READY_BLOCKED_DUPLICATE",
+      details: {
+        listingId: input.listingId,
+        candidateId,
+        marketplaceKey,
+        duplicateReason: duplicateDecision.reason,
+        duplicateListingIds: duplicateDecision.duplicateListingIds,
+        blockingListingId: duplicateDecision.blockingListingId,
+        blockingStatus: duplicateDecision.blockingStatus,
+      },
+    });
+
     return {
       ok: false,
       listingId: input.listingId,
       candidateId,
       marketplaceKey,
       previousStatus,
-      reason: "duplicate live-path listing already exists for candidate",
+      reason: duplicateDecision.reason ?? "duplicate listing conflict detected",
     };
   }
 

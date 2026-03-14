@@ -59,7 +59,7 @@ export async function findListingDuplicatesForCandidate(input: {
   supplierProductId?: string | null;
   listingTitle?: string | null;
   excludeListingId?: string | null;
-  statuses?: DuplicateListingStatus[];
+  statuses?: readonly DuplicateListingStatus[];
 }): Promise<ListingDuplicateMatch[]> {
   const marketplaceKey = String(input.marketplaceKey ?? "").trim().toLowerCase();
   const supplierKey = String(input.supplierKey ?? "").trim().toLowerCase();

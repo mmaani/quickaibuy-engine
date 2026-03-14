@@ -2,6 +2,10 @@ import { pool } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { computeRecoveryState, type RecoveryState } from "@/lib/listings/recoveryState";
 import { LISTING_STATUSES } from "@/lib/listings/statuses";
+import {
+  findListingDuplicatesForCandidate,
+  getDuplicateBlockDecision,
+} from "@/lib/listings/duplicateProtection";
 
 export const LISTINGS_ROUTE = "/admin/listings";
 export const LISTINGS_RISK_FILTERS = {
@@ -596,7 +600,36 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
     values
   );
 
-  return result.rows.map(mapQueueRow);
+  const items = result.rows.map(mapQueueRow);
+
+  return Promise.all(
+    items.map(async (item) => {
+      const duplicateMatches = await findListingDuplicatesForCandidate({
+        marketplaceKey: item.marketplaceKey,
+        supplierKey: item.supplierKey,
+        supplierProductId: item.supplierProductId,
+        listingTitle: item.listingTitle,
+        excludeListingId: item.listingId,
+      });
+      const duplicateDecision = getDuplicateBlockDecision(duplicateMatches);
+
+      if (!duplicateDecision.blocked) {
+        return {
+          ...item,
+          duplicateDetected: false,
+          duplicateReason: null,
+          duplicateListingIds: [],
+        };
+      }
+
+      return {
+        ...item,
+        duplicateDetected: true,
+        duplicateReason: duplicateDecision.reason,
+        duplicateListingIds: duplicateDecision.duplicateListingIds,
+      };
+    })
+  );
 }
 
 export async function getListingsQueueDetail(candidateId: string): Promise<ListingsQueueDetail | null> {
