@@ -1,5 +1,10 @@
+import dotenv from "dotenv";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
+
+const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
+dotenv.config({ path: dotenvPath });
+dotenv.config();
 
 const connectionString =
   process.env.DATABASE_URL ||
@@ -7,7 +12,9 @@ const connectionString =
   "";
 
 if (!connectionString) {
-  throw new Error("Missing DATABASE_URL or DATABASE_URL_DIRECT");
+  throw new Error(
+    `Missing DATABASE_URL or DATABASE_URL_DIRECT. Set it in ${dotenvPath} or runtime env.`
+  );
 }
 
 // Neon recommends SSL; postgres-js handles it via connection string params.

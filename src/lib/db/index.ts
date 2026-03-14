@@ -1,10 +1,15 @@
+import dotenv from "dotenv";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
-const DATABASE_URL = process.env.DATABASE_URL;
+const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
+dotenv.config({ path: dotenvPath });
+dotenv.config();
+
+const DATABASE_URL = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
 if (!DATABASE_URL) {
   throw new Error(
-    "Missing DATABASE_URL. Set it in .env.local (for local dev) or your runtime environment."
+    `Missing DATABASE_URL or DATABASE_URL_DIRECT. Set it in ${dotenvPath} (for local dev) or your runtime environment.`
   );
 }
 

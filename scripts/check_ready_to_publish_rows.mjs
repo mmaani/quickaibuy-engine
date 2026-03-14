@@ -1,13 +1,12 @@
-import dotenv from "dotenv";
 import pg from "pg";
+import { getRequiredDatabaseUrl, loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 const { Client } = pg;
 
 async function main() {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  const client = new Client({ connectionString: getRequiredDatabaseUrl() });
   await client.connect();
 
   const rows = await client.query(`

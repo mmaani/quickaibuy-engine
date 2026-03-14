@@ -1,8 +1,7 @@
-import dotenv from "dotenv";
 import pg from "pg";
+import { getRequiredDatabaseUrl, loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 const { Client } = pg;
 
@@ -85,7 +84,7 @@ async function main() {
   const { markListingReadyToPublish } = await import("@/lib/listings/markListingReadyToPublish");
   const preferredId = optionalCandidateId();
   const client = new Client({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: getRequiredDatabaseUrl(),
     ssl: { rejectUnauthorized: false },
   });
 
