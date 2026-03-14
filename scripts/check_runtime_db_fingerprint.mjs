@@ -11,7 +11,10 @@ dotenv.config();
 const verbose = process.env.DIAG_VERBOSE === "1";
 
 function classify(error) {
-  const detail = error instanceof Error ? error.message : String(error);
+  const detail =
+    error instanceof Error
+      ? error.message || error.stack || error.name || String(error)
+      : String(error);
   const lower = detail.toLowerCase();
 
   if (lower.includes("eai_again") || lower.includes("enotfound") || lower.includes("dns")) {
@@ -22,7 +25,12 @@ function classify(error) {
       detail,
     };
   }
-  if (lower.includes("econnrefused") || lower.includes("timeout") || lower.includes("etimedout")) {
+  if (
+    lower.includes("econnrefused") ||
+    lower.includes("timeout") ||
+    lower.includes("etimedout") ||
+    lower.includes("enetunreach")
+  ) {
     return {
       class: "NETWORK_UNREACHABLE",
       reason: "Database network endpoint unreachable",
