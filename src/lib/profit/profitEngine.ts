@@ -64,6 +64,9 @@ function computeAgeHours(now: Date, snapshotTs: Date | null): number | null {
 export async function runProfitEngine(input?: {
   limit?: number;
   supplierKey?: string;
+  supplierProductId?: string;
+  marketplaceKey?: string;
+  marketplaceListingId?: string;
 }) {
   const limit = Number(input?.limit ?? 50);
   const minRoiPct = Number(process.env.MIN_ROI_PCT || "15");
@@ -73,6 +76,18 @@ export async function runProfitEngine(input?: {
   const supplierKeyFilter =
     input?.supplierKey && String(input.supplierKey).trim()
       ? String(input.supplierKey).trim().toLowerCase()
+      : null;
+  const supplierProductIdFilter =
+    input?.supplierProductId && String(input.supplierProductId).trim()
+      ? String(input.supplierProductId).trim()
+      : null;
+  const marketplaceKeyFilter =
+    input?.marketplaceKey && String(input.marketplaceKey).trim()
+      ? normalizeMarketplaceKey(input.marketplaceKey)
+      : null;
+  const marketplaceListingIdFilter =
+    input?.marketplaceListingId && String(input.marketplaceListingId).trim()
+      ? String(input.marketplaceListingId).trim()
       : null;
   const productsRawOrderBySql = await getProductsRawLatestOrderBySql("pr");
   const productsRawSnapshotTsSql = await getProductsRawTimestampExprSql("pr");
@@ -111,6 +126,15 @@ export async function runProfitEngine(input?: {
         m.status = 'ACTIVE'
         AND m.match_type IN ('strong_title_similarity', 'title_similarity', 'keyword_fuzzy')
         ${supplierKeyFilter ? sql`AND LOWER(m.supplier_key) = ${supplierKeyFilter}` : sql``}
+        ${supplierProductIdFilter ? sql`AND m.supplier_product_id = ${supplierProductIdFilter}` : sql``}
+        ${marketplaceKeyFilter
+          ? sql`AND CASE
+              WHEN LOWER(m.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+              WHEN LOWER(m.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+              ELSE LOWER(m.marketplace_key)
+            END = ${marketplaceKeyFilter}`
+          : sql``}
+        ${marketplaceListingIdFilter ? sql`AND m.marketplace_listing_id = ${marketplaceListingIdFilter}` : sql``}
     ),
     latest_products AS (
       SELECT
@@ -126,7 +150,9 @@ export async function runProfitEngine(input?: {
           ORDER BY ${productsRawOrderBySql}
         ) AS rn
       FROM products_raw pr
-      ${supplierKeyFilter ? sql`WHERE LOWER(pr.supplier_key) = ${supplierKeyFilter}` : sql``}
+      WHERE 1 = 1
+      ${supplierKeyFilter ? sql`AND LOWER(pr.supplier_key) = ${supplierKeyFilter}` : sql``}
+      ${supplierProductIdFilter ? sql`AND pr.supplier_product_id = ${supplierProductIdFilter}` : sql``}
     ),
     latest_marketplace_prices AS (
       SELECT
@@ -153,7 +179,17 @@ export async function runProfitEngine(input?: {
           ORDER BY mp.snapshot_ts DESC, mp.id DESC
         ) AS rn
       FROM marketplace_prices mp
-      ${supplierKeyFilter ? sql`WHERE LOWER(mp.supplier_key) = ${supplierKeyFilter}` : sql``}
+      WHERE 1 = 1
+      ${supplierKeyFilter ? sql`AND LOWER(mp.supplier_key) = ${supplierKeyFilter}` : sql``}
+      ${supplierProductIdFilter ? sql`AND mp.supplier_product_id = ${supplierProductIdFilter}` : sql``}
+      ${marketplaceKeyFilter
+        ? sql`AND CASE
+            WHEN LOWER(mp.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+            WHEN LOWER(mp.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+            ELSE LOWER(mp.marketplace_key)
+          END = ${marketplaceKeyFilter}`
+        : sql``}
+      ${marketplaceListingIdFilter ? sql`AND mp.marketplace_listing_id = ${marketplaceListingIdFilter}` : sql``}
     )
     SELECT
       rm.match_id AS "matchId",
@@ -228,6 +264,17 @@ export async function runProfitEngine(input?: {
   }
 
   let staleDeleted = 0;
+  const exactScopedRun = Boolean(
+    supplierProductIdFilter || marketplaceKeyFilter || marketplaceListingIdFilter
+  );
+
+  const candidateScopeSql = sql`
+    1 = 1
+    ${supplierKeyFilter ? sql`AND LOWER(pc.supplier_key) = ${supplierKeyFilter}` : sql``}
+    ${supplierProductIdFilter ? sql`AND pc.supplier_product_id = ${supplierProductIdFilter}` : sql``}
+    ${marketplaceKeyFilter ? sql`AND pc.marketplace_key = ${marketplaceKeyFilter}` : sql``}
+    ${marketplaceListingIdFilter ? sql`AND pc.marketplace_listing_id = ${marketplaceListingIdFilter}` : sql``}
+  `;
 
   if (acceptedRows.length > 0) {
     const acceptedPairs = acceptedRows.map((row) => sql`
@@ -243,7 +290,8 @@ export async function runProfitEngine(input?: {
       SELECT COUNT(*)::int AS count
       FROM profitable_candidates pc
       WHERE
-        ${supplierKeyFilter ? sql`LOWER(pc.supplier_key) = ${supplierKeyFilter} AND` : sql``}
+        ${candidateScopeSql}
+        AND
         (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
         NOT IN (${sql.join(acceptedPairs, sql`, `)})
     `);
@@ -253,22 +301,23 @@ export async function runProfitEngine(input?: {
     await db.execute(sql`
       DELETE FROM profitable_candidates pc
       WHERE
-        ${supplierKeyFilter ? sql`LOWER(pc.supplier_key) = ${supplierKeyFilter} AND` : sql``}
+        ${candidateScopeSql}
+        AND
         (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
         NOT IN (${sql.join(acceptedPairs, sql`, `)})
     `);
-  } else if (supplierKeyFilter) {
+  } else if (supplierKeyFilter && !exactScopedRun) {
     const staleCountResult = await db.execute<{ count: number }>(sql`
       SELECT COUNT(*)::int AS count
       FROM profitable_candidates pc
-      WHERE LOWER(pc.supplier_key) = ${supplierKeyFilter}
+      WHERE ${candidateScopeSql}
     `);
 
     staleDeleted = Number(staleCountResult.rows?.[0]?.count ?? 0);
 
     await db.execute(sql`
       DELETE FROM profitable_candidates pc
-      WHERE LOWER(pc.supplier_key) = ${supplierKeyFilter}
+      WHERE ${candidateScopeSql}
     `);
   }
 

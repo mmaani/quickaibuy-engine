@@ -124,7 +124,9 @@ function readNumericField(payload: Record<string, unknown>, keys: string[]): num
   for (const key of keys) {
     const value = payload[key];
     if (typeof value === "number" && Number.isFinite(value)) return value;
-    const parsed = Number(String(value ?? "").trim());
+    const raw = String(value ?? "").trim();
+    if (!raw) continue;
+    const parsed = Number(raw);
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;

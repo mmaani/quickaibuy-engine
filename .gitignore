@@ -33,7 +33,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!.env*.example
 codex*.private
+
+# generated AI/source bundles
+/ai_sources/
+sources_quickaibuy.zip
 
 # vercel
 .vercel

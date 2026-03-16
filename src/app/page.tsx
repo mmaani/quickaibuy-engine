@@ -856,31 +856,15 @@ export default function Home() {
 
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/78">
-                Other Ventures
+                Operations
               </h3>
               <div className="mt-4 flex flex-col gap-3">
-                <a
-                  href="https://zomorodmedical.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-white/58 transition hover:text-white"
-                >
-                  Zomorod Medical Supplies
-                </a>
-                <a
-                  href="https://nivran.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-white/58 transition hover:text-white"
-                >
-                  NIVRAN Fragrance 
-                </a>
-                <a
-                  href="tel:+962791752686"
-                  className="pt-2 text-sm text-sky-100 transition hover:text-white"
-                >
-                  Contact: +962 79 175 2686
-                </a>
+                <span className="text-sm text-white/58">
+                  QuickAIBuy repository scope is limited to marketplace automation and operator tooling.
+                </span>
+                <span className="text-sm text-sky-100">
+                  Project-isolated workflows only.
+                </span>
               </div>
             </div>
           </div>

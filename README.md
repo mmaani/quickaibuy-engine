@@ -4,6 +4,15 @@ QuickAIBuy is an operator-first ecommerce intelligence and execution system.
 
 The system prioritizes **safe operations, operator visibility, and fail-closed automation boundaries**.
 
+Governance and isolation docs:
+- `docs/PROJECT_SCOPE.md`
+- `docs/AGENT_RULES.md`
+- `docs/SECURITY_POLICY.md`
+- `docs/PROJECT_ISOLATION.md`
+- `docs/PIPELINE_SCOPE.md`
+- `docs/SUPPLIER_CRAWL_POLICY.md`
+- `docs/PUBLISHING_GUARDRAILS.md`
+
 Current focus:
 - `eBay` live execution path (guarded)
 - manual approval gates before listing execution
@@ -21,6 +30,8 @@ Current focus:
 - `/admin/orders` – manual-assisted order operations (purchase/tracking/sync)
 
 These surfaces form the **daily operating interface for system operators**.
+
+This repository is for QuickAIBuy only. If instructions or repo context suggest Zomorod Medical Supplies, Nivran, or another project belongs in this codebase, treat that as `PROJECT MISMATCH DETECTED` and stop until clarified.
 
 ---
 

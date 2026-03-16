@@ -42,6 +42,61 @@ export async function insertProductsRaw(rows: InsertRawProductInput[]): Promise<
   return rows.length;
 }
 
+export async function insertProductRawReturningId(row: InsertRawProductInput): Promise<string> {
+  const inserted = await db
+    .insert(productsRaw)
+    .values({
+      supplierKey: row.supplierKey,
+      supplierProductId: row.supplierProductId,
+      sourceUrl: row.sourceUrl ?? null,
+      title: row.title ?? null,
+      images: row.images ?? null,
+      variants: row.variants ?? null,
+      currency: row.currency ?? null,
+      priceMin: row.priceMin != null ? String(row.priceMin) : null,
+      priceMax: row.priceMax != null ? String(row.priceMax) : null,
+      availabilityStatus: row.availabilityStatus ?? null,
+      shippingEstimates: row.shippingEstimates ?? null,
+      rawPayload: row.rawPayload,
+      snapshotTs: row.snapshotTs ?? new Date(),
+    })
+    .returning({ id: productsRaw.id });
+
+  return String(inserted[0]?.id ?? "");
+}
+
+export async function getLatestProductRawBySupplierProduct(input: {
+  supplierKey: string;
+  supplierProductId: string;
+}) {
+  const rows = await db
+    .select({
+      id: productsRaw.id,
+      supplierKey: productsRaw.supplierKey,
+      supplierProductId: productsRaw.supplierProductId,
+      sourceUrl: productsRaw.sourceUrl,
+      title: productsRaw.title,
+      images: productsRaw.images,
+      variants: productsRaw.variants,
+      currency: productsRaw.currency,
+      priceMin: productsRaw.priceMin,
+      priceMax: productsRaw.priceMax,
+      availabilityStatus: productsRaw.availabilityStatus,
+      shippingEstimates: productsRaw.shippingEstimates,
+      rawPayload: productsRaw.rawPayload,
+      snapshotTs: productsRaw.snapshotTs,
+    })
+    .from(productsRaw)
+    .where(
+      sql`LOWER(${productsRaw.supplierKey}) = ${String(input.supplierKey).trim().toLowerCase()}
+        AND ${productsRaw.supplierProductId} = ${String(input.supplierProductId).trim()}`
+    )
+    .orderBy(desc(productsRaw.snapshotTs), desc(productsRaw.id))
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 export async function getProductsRawForMarketplaceScan(limit = 100) {
   return db
     .select({
