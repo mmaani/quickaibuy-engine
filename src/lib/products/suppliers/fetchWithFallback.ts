@@ -17,6 +17,7 @@ type SupplierPageFetchInput = {
   url: string;
   accept: string;
   validate: (input: { text: string; status: number; mode: FetchMode }) => boolean;
+  skipModes?: FetchMode[];
 };
 
 const DEFAULT_HEADERS = {
@@ -108,7 +109,7 @@ function buildScrapingBeeAttempt(url: string): FetchAttempt | null {
 export async function fetchSupplierPageWithFallback(
   input: SupplierPageFetchInput
 ): Promise<SupplierPageFetchResult> {
-  const { url, accept, validate } = input;
+  const { url, accept, validate, skipModes = [] } = input;
   const attempts: FetchAttempt[] = [
     {
       mode: "direct",
@@ -149,6 +150,7 @@ export async function fetchSupplierPageWithFallback(
   let lastError: Error | null = null;
 
   for (const attempt of attempts) {
+    if (skipModes.includes(attempt.mode)) continue;
     try {
       const res = await fetch(attempt.url, attempt.init);
       const text = await res.text();

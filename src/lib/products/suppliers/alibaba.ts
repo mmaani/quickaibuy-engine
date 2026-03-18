@@ -294,6 +294,16 @@ async function fetchAlibabaSearchText(searchUrl: string): Promise<{ text: string
   return { text: fetched.text, mode: fetched.mode };
 }
 
+async function fetchAlibabaSearchFallbackText(searchUrl: string): Promise<{ text: string; mode: string }> {
+  const fetched = await fetchSupplierPageWithFallback({
+    url: searchUrl,
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    validate: ({ text, status }) => status >= 200 && status < 300 && text.length > 500 && !looksLikeAlibabaChallengePage(text),
+    skipModes: ["direct"],
+  });
+  return { text: fetched.text, mode: fetched.mode };
+}
+
 export async function searchAlibabaByKeyword(
   keyword: string,
   limit = 20
@@ -325,7 +335,7 @@ export async function searchAlibabaByKeyword(
     const fetched = await fetchAlibabaSearchText(searchUrl);
     const challengePage = looksLikeAlibabaChallengePage(fetched.text);
     const challengeHint = extractAlibabaChallengeHint(fetched.text);
-    const rows = parseAlibabaText(fetched.text, normalizedKeyword, snapshotTs)
+    let rows = parseAlibabaText(fetched.text, normalizedKeyword, snapshotTs)
       .slice(0, capped)
       .map((row) => ({
         ...row,
@@ -337,18 +347,38 @@ export async function searchAlibabaByKeyword(
         },
       }));
 
-    fallbackRaw.fetchMode = fetched.mode;
-    fallbackRaw.pageChallengeDetected = challengePage;
-    fallbackRaw.challengeHint = challengeHint;
-    fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
-    fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
-    fallbackRaw.telemetrySignals = challengePage
+    let effectiveFetched = fetched;
+    let effectiveChallengePage = challengePage;
+    let effectiveChallengeHint = challengeHint;
+    if (fetched.mode === "direct" && (challengePage || rows.length === 0)) {
+      effectiveFetched = await fetchAlibabaSearchFallbackText(searchUrl);
+      effectiveChallengePage = looksLikeAlibabaChallengePage(effectiveFetched.text);
+      effectiveChallengeHint = extractAlibabaChallengeHint(effectiveFetched.text);
+      rows = parseAlibabaText(effectiveFetched.text, normalizedKeyword, snapshotTs)
+        .slice(0, capped)
+        .map((row) => ({
+          ...row,
+          raw: {
+            ...row.raw,
+            fetchMode: effectiveFetched.mode,
+            searchUrl,
+            pageChallengeDetected: effectiveChallengePage,
+          },
+        }));
+    }
+
+    fallbackRaw.fetchMode = effectiveFetched.mode;
+    fallbackRaw.pageChallengeDetected = effectiveChallengePage;
+    fallbackRaw.challengeHint = effectiveChallengeHint;
+    fallbackRaw.pageTextSample = effectiveChallengeHint ? sliceEvidence(effectiveChallengeHint) : null;
+    fallbackRaw.crawlStatus = effectiveChallengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
+    fallbackRaw.telemetrySignals = effectiveChallengePage
       ? ["fallback", "challenge", "low_quality"]
       : ["fallback", "low_quality"];
 
     if (rows.length) {
       const enrichedRows = await Promise.all(rows.map((row) => enrichAlibabaProductWithDetail(row)));
-      console.log(`[supplier][Alibaba] keyword="${normalizedKeyword}" fetchMode=${fetched.mode} results=${rows.length}`);
+      console.log(`[supplier][Alibaba] keyword="${normalizedKeyword}" fetchMode=${effectiveFetched.mode} results=${rows.length}`);
       return enrichedRows;
     }
   } catch (error) {
