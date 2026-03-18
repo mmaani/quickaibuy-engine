@@ -174,9 +174,9 @@ export async function withPgClient(task, options = {}) {
   throw failure;
 }
 
-function tcpProbe(host, port, timeoutMs) {
+function tcpProbeAddress(address, family, port, timeoutMs) {
   return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port });
+    const socket = net.createConnection({ host: address, family, port });
     let settled = false;
 
     const finish = (result) => {
@@ -189,16 +189,53 @@ function tcpProbe(host, port, timeoutMs) {
     };
 
     socket.setTimeout(timeoutMs);
-    socket.on("connect", () => finish({ ok: true }));
+    socket.on("connect", () => finish({ ok: true, address, family }));
     socket.on("timeout", () => finish({ ok: false, code: "ETIMEDOUT", message: "TCP connection timed out" }));
     socket.on("error", (error) =>
       finish({
         ok: false,
+        address,
+        family,
         code: error?.code ?? null,
         message: error instanceof Error ? error.message : String(error),
       })
     );
   });
+}
+
+async function tcpProbe(host, port, timeoutMs) {
+  let addresses;
+  try {
+    addresses = await dns.lookup(host, { all: true });
+  } catch (error) {
+    return {
+      ok: false,
+      code: error?.code ?? null,
+      message: error instanceof Error ? error.message : String(error),
+      attempts: [],
+    };
+  }
+
+  const attempts = [];
+  for (const entry of addresses) {
+    const family = entry.family ?? (entry.address.includes(":") ? 6 : 4);
+    const result = await tcpProbeAddress(entry.address, family, port, timeoutMs);
+    attempts.push(result);
+    if (result.ok) {
+      return {
+        ...result,
+        attempts,
+      };
+    }
+  }
+
+  const lastFailure = attempts.at(-1) ?? null;
+  return {
+    ok: false,
+    code: lastFailure?.code ?? null,
+    message: lastFailure?.message ?? "TCP connection failed",
+    attempts,
+  };
 }
 
 export async function diagnosePgConnectivity(options = {}) {
@@ -244,6 +281,7 @@ export async function diagnosePgConnectivity(options = {}) {
 
     const tcp = await tcpProbe(host, port, timeoutMs);
     result.tcp_ok = tcp.ok;
+    result.tcp_attempts = tcp.attempts ?? [];
     if (!tcp.ok) {
       result.pg_error_kind = "tcp";
       result.pg_error_code = tcp.code ?? null;
