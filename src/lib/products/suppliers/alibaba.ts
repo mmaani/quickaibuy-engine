@@ -218,6 +218,27 @@ async function fetchAlibabaSearchText(searchUrl: string): Promise<{ text: string
   return { text: await res.text(), mode: "read-through" };
 }
 
+async function fetchAlibabaReadThroughText(searchUrl: string): Promise<string> {
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+
+  const proxyUrl = `https://r.jina.ai/http://${searchUrl.replace(/^https?:\/\//, "")}`;
+  const res = await fetch(proxyUrl, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Alibaba read-through fetch failed: ${res.status}`);
+  }
+  return await res.text();
+}
+
 export async function searchAlibabaByKeyword(
   keyword: string,
   limit = 20
@@ -246,18 +267,10 @@ export async function searchAlibabaByKeyword(
   };
 
   try {
-    const fetched = await fetchAlibabaSearchText(searchUrl);
-    const challengePage = looksLikeAlibabaChallengePage(fetched.text);
-    const challengeHint = extractAlibabaChallengeHint(fetched.text);
-    fallbackRaw.fetchMode = fetched.mode;
-    fallbackRaw.pageChallengeDetected = challengePage;
-    fallbackRaw.challengeHint = challengeHint;
-    fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
-    fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
-    fallbackRaw.telemetrySignals = challengePage
-      ? ["fallback", "challenge", "low_quality"]
-      : ["fallback", "low_quality"];
-    const rows = parseAlibabaText(fetched.text, normalizedKeyword, snapshotTs)
+    let fetched = await fetchAlibabaSearchText(searchUrl);
+    let challengePage = looksLikeAlibabaChallengePage(fetched.text);
+    let challengeHint = extractAlibabaChallengeHint(fetched.text);
+    let rows = parseAlibabaText(fetched.text, normalizedKeyword, snapshotTs)
       .slice(0, capped)
       .map((row) => ({
         ...row,
@@ -268,6 +281,34 @@ export async function searchAlibabaByKeyword(
           pageChallengeDetected: challengePage,
         },
       }));
+
+    // Retry through the read-through proxy when the direct page is a challenge
+    // or when direct HTML is present but still yields zero parsable products.
+    if (fetched.mode === "direct" && (challengePage || rows.length === 0)) {
+      fetched = { text: await fetchAlibabaReadThroughText(searchUrl), mode: "read-through" };
+      challengePage = looksLikeAlibabaChallengePage(fetched.text);
+      challengeHint = extractAlibabaChallengeHint(fetched.text);
+      rows = parseAlibabaText(fetched.text, normalizedKeyword, snapshotTs)
+        .slice(0, capped)
+        .map((row) => ({
+          ...row,
+          raw: {
+            ...row.raw,
+            fetchMode: fetched.mode,
+            searchUrl,
+            pageChallengeDetected: challengePage,
+          },
+        }));
+    }
+
+    fallbackRaw.fetchMode = fetched.mode;
+    fallbackRaw.pageChallengeDetected = challengePage;
+    fallbackRaw.challengeHint = challengeHint;
+    fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
+    fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
+    fallbackRaw.telemetrySignals = challengePage
+      ? ["fallback", "challenge", "low_quality"]
+      : ["fallback", "low_quality"];
 
     if (rows.length) {
       console.log(`[supplier][Alibaba] keyword="${normalizedKeyword}" fetchMode=${fetched.mode} results=${rows.length}`);
