@@ -110,6 +110,135 @@ function extractImageNear(text: string, offset: number): string[] {
   return image ? [image.replace(/^http:\/\//i, "https://")] : [];
 }
 
+function extractDetailTitle(text: string): string | null {
+  const compact = String(text ?? "");
+  const headingMatch =
+    compact.match(/(?:^|\n)#{1,3}\s+([^\n]{8,220})/) ??
+    compact.match(/title[:=]?\s*([^\n]{8,220})/i);
+  return headingMatch?.[1] ? sliceEvidence(headingMatch[1], 220) : null;
+}
+
+function extractDetailImages(text: string): string[] {
+  const matches = Array.from(
+    String(text ?? "").matchAll(/https?:\/\/[^\s)"']*(?:alibaba\.com|alicdn\.com|aliimg\.com)[^\s)"']*/gi)
+  )
+    .map((match) => String(match[0] ?? "").replace(/^http:\/\//i, "https://"))
+    .filter((url) => /\.(jpg|jpeg|png|webp|avif)/i.test(url));
+
+  return Array.from(new Set(matches)).slice(0, 6);
+}
+
+async function fetchAlibabaDetailText(detailUrl: string): Promise<{ text: string; mode: string }> {
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+
+  try {
+    const res = await fetch(detailUrl, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+    const text = await res.text();
+    if (res.ok && text.length > 500 && !looksLikeAlibabaChallengePage(text)) {
+      return { text, mode: "direct" };
+    }
+  } catch {
+    // fall through to read-through fetch
+  }
+
+  const proxyUrl = `https://r.jina.ai/http://${detailUrl.replace(/^https?:\/\//, "")}`;
+  const res = await fetch(proxyUrl, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Alibaba detail read-through fetch failed: ${res.status}`);
+  }
+  return { text: await res.text(), mode: "read-through" };
+}
+
+async function enrichAlibabaProductWithDetail(product: SupplierProduct): Promise<SupplierProduct> {
+  const detailUrl = normalizeAlibabaItemUrl(product.sourceUrl);
+  if (!detailUrl) return product;
+
+  try {
+    const fetched = await fetchAlibabaDetailText(detailUrl);
+    if (looksLikeAlibabaChallengePage(fetched.text)) {
+      return product;
+    }
+
+    const inferredAvailability = inferAvailabilityFromText(fetched.text);
+    const evidence = extractAvailabilityEvidence(fetched.text);
+    const shipping = extractShippingEvidence(fetched.text);
+    const priceEvidence = extractPriceEvidence(fetched.text);
+    const listingValidity = inferListingValidity(fetched.text);
+    if (listingValidity.status === "INVALID") {
+      return product;
+    }
+
+    const title = extractDetailTitle(fetched.text) ?? product.title;
+    const images = extractDetailImages(fetched.text);
+    const mergedImages = Array.from(new Set([...(product.images ?? []), ...images])).slice(0, 6);
+    const availabilitySignal =
+      inferredAvailability.signal !== "UNKNOWN"
+        ? inferredAvailability.signal
+        : product.availabilitySignal ?? "UNKNOWN";
+    const availabilityConfidence =
+      inferredAvailability.signal !== "UNKNOWN"
+        ? inferredAvailability.confidence
+        : (product.availabilityConfidence ?? 0.35);
+    const evidencePresent = Boolean(
+      evidence.evidenceText || evidence.inventoryBadge || evidence.stockCount != null || evidence.sellerStatusHint
+    );
+    const evidenceQuality = availabilitySignal === "UNKNOWN" ? "MEDIUM" : "HIGH";
+
+    return {
+      ...product,
+      title,
+      price: priceEvidence.price ?? product.price,
+      images: mergedImages.length ? mergedImages : product.images,
+      shippingEstimates: shipping.shippingEstimates.length ? shipping.shippingEstimates : product.shippingEstimates,
+      availabilitySignal,
+      availabilityConfidence,
+      snapshotQuality: evidencePresent || shipping.shippingEstimates.length || mergedImages.length ? "MEDIUM" : product.snapshotQuality,
+      raw: {
+        ...product.raw,
+        provider: "alibaba-detail",
+        parseMode: "detail",
+        detailUrl,
+        detailFetchMode: fetched.mode,
+        availabilitySignal,
+        availabilityConfidence,
+        availabilityEvidencePresent: evidencePresent,
+        availabilityEvidenceQuality: evidenceQuality,
+        availabilityEvidenceText: evidence.evidenceText,
+        inventoryBadge: evidence.inventoryBadge,
+        stockCount: evidence.stockCount,
+        sellerStatusHint: evidence.sellerStatusHint,
+        priceText: priceEvidence.priceText,
+        priceSignal: priceEvidence.signal,
+        shippingSignal: shipping.signal,
+        shippingEvidenceText: shipping.evidenceText,
+        shipsFromHint: shipping.shipsFromHint,
+        listingValidity: listingValidity.status,
+        listingValidityReason: listingValidity.reason,
+        detailTextSample: sliceEvidence(fetched.text),
+        crawlStatus: "PARSED",
+        telemetrySignals: ["parsed"],
+      },
+    };
+  } catch {
+    return product;
+  }
+}
+
 function parseAlibabaText(text: string, keyword: string, snapshotTs: string): SupplierProduct[] {
   const out: SupplierProduct[] = [];
   const seen = new Set<string>();
@@ -311,8 +440,9 @@ export async function searchAlibabaByKeyword(
       : ["fallback", "low_quality"];
 
     if (rows.length) {
+      const enrichedRows = await Promise.all(rows.map((row) => enrichAlibabaProductWithDetail(row)));
       console.log(`[supplier][Alibaba] keyword="${normalizedKeyword}" fetchMode=${fetched.mode} results=${rows.length}`);
-      return rows;
+      return enrichedRows;
     }
   } catch (error) {
     fallbackRaw.crawlStatus = "FETCH_FAILED";
