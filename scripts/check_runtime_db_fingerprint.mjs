@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import dotenv from "dotenv";
 import { Pool } from "pg";
+import { diagnosePgConnectivity } from "./lib/pgRetry.mjs";
 
 const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
 
@@ -66,6 +67,25 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getEnvironmentLabel() {
+  return process.env.APP_ENV || process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown";
+}
+
+function getDbUrlFingerprint(connectionString) {
+  try {
+    const parsed = new URL(connectionString);
+    return {
+      host: parsed.hostname,
+      databaseName: parsed.pathname.replace(/^\//, "") || null,
+    };
+  } catch {
+    return {
+      host: null,
+      databaseName: null,
+    };
+  }
+}
+
 async function runFingerprint(pool, connectionString) {
   const dbMeta = await pool.query(`
     SELECT
@@ -102,21 +122,11 @@ async function runFingerprint(pool, connectionString) {
     ? await pool.query(`SELECT count(*)::int AS n FROM listings`)
     : { rows: [{ n: 0 }] };
 
-  let dbUrlHost = null;
-  let dbUrlName = null;
-  try {
-    const parsed = new URL(connectionString);
-    dbUrlHost = parsed.hostname;
-    dbUrlName = parsed.pathname.replace(/^\//, "") || null;
-  } catch {}
-
   return {
     status: "OK",
     envFileChecked: fs.existsSync(dotenvPath) ? dotenvPath : null,
-    dbUrlFingerprint: {
-      host: dbUrlHost,
-      databaseName: dbUrlName,
-    },
+    environment: getEnvironmentLabel(),
+    dbUrlFingerprint: getDbUrlFingerprint(connectionString),
     runtimeDb: dbMeta.rows[0] ?? null,
     approvedCandidatesCount: approvedCount.rows[0]?.n ?? 0,
     latestApprovedCandidates: latestApproved.rows,
@@ -167,12 +177,19 @@ async function main() {
     }
   } catch (error) {
     const c = classify(error);
+    const connectivity = await diagnosePgConnectivity({ attempts: 1, timeoutMs: 4000 }).catch(
+      () => null
+    );
     const payload = {
       status: "FAILED",
+      envFileChecked: fs.existsSync(dotenvPath) ? dotenvPath : null,
+      environment: getEnvironmentLabel(),
+      dbUrlFingerprint: getDbUrlFingerprint(connectionString),
       class: c.class,
       reason: c.reason,
       nextStep: c.nextStep,
       detail: c.detail,
+      connectivity,
     };
     console.log(JSON.stringify(payload, null, 2));
     if (verbose) {
