@@ -1,8 +1,7 @@
-import dotenv from "dotenv";
 import { classifyError } from "./lib/runtimeDiagnostics";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 async function main() {
   const limit = Number(process.argv[2] ?? "50");

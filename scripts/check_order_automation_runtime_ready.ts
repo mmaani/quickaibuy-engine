@@ -1,9 +1,8 @@
-import dotenv from "dotenv";
 import { Pool } from "pg";
 import { checkOrderAutomationSchema, REQUIRED_COLUMNS } from "./lib/orderAutomationSchemaCheck";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 type LedgerInfo = {
   exists: boolean;
