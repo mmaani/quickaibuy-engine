@@ -1,7 +1,6 @@
-import dotenv from "dotenv";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 async function main() {
   const orderId = String(process.argv[2] ?? "").trim();

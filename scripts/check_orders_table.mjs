@@ -1,8 +1,7 @@
-import dotenv from "dotenv";
 import pg from "pg";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 const { Pool } = pg;
 

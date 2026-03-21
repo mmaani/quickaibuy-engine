@@ -10,6 +10,7 @@ const RETRYABLE_CODES = new Set([
   "ECONNRESET",
   "ECONNREFUSED",
   "ETIMEDOUT",
+  "ENETUNREACH",
   "57P01",
   "53300",
 ]);
@@ -100,7 +101,14 @@ export function classifyPgError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
 
   if (code === "EAI_AGAIN" || code === "ENOTFOUND") return "dns";
-  if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT") return "tcp";
+  if (
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "ETIMEDOUT" ||
+    code === "ENETUNREACH"
+  ) {
+    return "tcp";
+  }
   if (code === "28P01") return "auth";
   if (
     /self[- ]signed|certificate|tls|ssl|hostname/i.test(message) ||
