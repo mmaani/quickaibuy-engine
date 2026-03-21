@@ -24,13 +24,28 @@ function flattenErrorDetail(error: unknown): string {
   if (typeof error === "string") return error;
 
   const parts: string[] = [];
+  const seen = new Set<unknown>();
   let cursor: unknown = error;
   let depth = 0;
 
   while (cursor && depth < 4) {
+    if (seen.has(cursor)) {
+      break;
+    }
+    seen.add(cursor);
+
     if (cursor instanceof Error) {
       if (cursor.message) {
         parts.push(cursor.message);
+      }
+      const nestedErrors = (cursor as Error & { errors?: unknown[] }).errors;
+      if (Array.isArray(nestedErrors)) {
+        for (const nested of nestedErrors) {
+          const nestedDetail = flattenErrorDetail(nested);
+          if (nestedDetail) {
+            parts.push(nestedDetail);
+          }
+        }
       }
       cursor = (cursor as Error & { cause?: unknown }).cause;
       depth += 1;
@@ -40,8 +55,17 @@ function flattenErrorDetail(error: unknown): string {
     if (typeof cursor === "object") {
       const maybeMessage = (cursor as { message?: unknown }).message;
       const maybeCause = (cursor as { cause?: unknown }).cause;
+      const maybeErrors = (cursor as { errors?: unknown[] }).errors;
       if (typeof maybeMessage === "string" && maybeMessage.trim()) {
         parts.push(maybeMessage);
+      }
+      if (Array.isArray(maybeErrors)) {
+        for (const nested of maybeErrors) {
+          const nestedDetail = flattenErrorDetail(nested);
+          if (nestedDetail) {
+            parts.push(nestedDetail);
+          }
+        }
       }
       cursor = maybeCause;
       depth += 1;
@@ -113,6 +137,7 @@ export function classifyError(error: unknown): {
   }
 
   if (
+    message.includes("enetunreach") ||
     message.includes("econnrefused") ||
     message.includes("etimedout") ||
     message.includes("timeout") ||
