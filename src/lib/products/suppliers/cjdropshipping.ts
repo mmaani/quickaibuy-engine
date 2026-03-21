@@ -185,7 +185,7 @@ function buildInventoryEvidenceText(entries: CjInventoryEntry[] | undefined): st
 export function parseCjProductIdFromUrl(sourceUrl: string): string | null {
   const raw = String(sourceUrl ?? "").trim();
   if (!raw) return null;
-  const match = raw.match(/-p-([A-Z0-9-]{20,})\.html/i);
+  const match = raw.match(/-p-([A-Z0-9-]{8,})\.html/i);
   return match?.[1]?.toUpperCase() ?? null;
 }
 
