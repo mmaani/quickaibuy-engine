@@ -569,16 +569,16 @@ function extractImageUrls(payload: Record<string, unknown>): string[] {
   const source = objectOrNull(payload.source) ?? {};
   const supplierImage = stringOrNull(source.supplierImageUrl);
 
-  if (supplierImage) {
-    images.push(supplierImage);
-  }
-
   const rawImages = payload.images;
   if (Array.isArray(rawImages)) {
     for (const entry of rawImages) {
       const url = stringOrNull(entry);
       if (url) images.push(url);
     }
+  }
+
+  if (images.length === 0 && supplierImage) {
+    images.push(supplierImage);
   }
 
   return [...new Set(images)].slice(0, 12);

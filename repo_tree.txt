@@ -122,6 +122,7 @@
 │   ├── quickaibuy-logo.svg
 │   ├── vercel.svg
 │   └── window.svg
+├── quickaibuy-auto-listing-expanded.zip
 ├── repo_tree.txt
 ├── review_files
 │   ├── db.ts
@@ -132,6 +133,7 @@
 ├── scripts
 │   ├── README.md
 │   ├── approve_profitable_candidate.ts
+│   ├── approve_single_candidate_ready.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
 │   ├── backfill_listing_previews_for_approved.ts
 │   ├── backfill_supplier_snapshot_quality.ts
@@ -208,6 +210,7 @@
 │   ├── find_db_file.sh
 │   ├── fix_env_local_missing.sh
 │   ├── fix_single_listing_payload_for_retry.ts
+│   ├── ingest_cj_direct_product.ts
 │   ├── inspect-products-raw-columns.mjs
 │   ├── inspect_failed_listing_payload.ts
 │   ├── inspect_products_raw_keys.mjs
@@ -503,6 +506,7 @@
 │   │   │   └── suppliers
 │   │   │       ├── alibaba.ts
 │   │   │       ├── aliexpress.ts
+│   │   │       ├── cjdropshipping.ts
 │   │   │       ├── fetchWithFallback.ts
 │   │   │       ├── parserSignals.ts
 │   │   │       ├── temu.ts
@@ -546,4 +550,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-82 directories, 465 files
+82 directories, 469 files
