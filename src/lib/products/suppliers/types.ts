@@ -14,7 +14,7 @@ export type ProductVariant = {
   value: string;
 };
 
-export type SupplierPlatform = "AliExpress" | "Alibaba" | "Temu";
+export type SupplierPlatform = "AliExpress" | "Alibaba" | "Temu" | "CJ Dropshipping";
 
 export type SupplierProduct = {
   title: string | null;
