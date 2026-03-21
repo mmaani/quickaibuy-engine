@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
 import {
   getEbayPublishEnvValidation,
   getEbaySellAccessToken,
@@ -9,6 +10,7 @@ dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 async function main() {
+  const shipFromCountryArg = normalizeWarehouseCountry(String(process.argv[2] ?? "").trim() || null);
   const validation = getEbayPublishEnvValidation();
   if (!validation.config) {
     console.error("eBay publish config is invalid. Run scripts/check_ebay_publish_env.ts first.");
@@ -34,9 +36,32 @@ async function main() {
       merchantLocationKey: location.merchantLocationKey,
       name: location.name,
       merchantLocationStatus: location.merchantLocationStatus,
+      country: location.country,
+      city: location.city,
+      stateOrProvince: location.stateOrProvince,
       locationTypes: location.locationTypes.join(", "),
     }))
   );
+
+  if (shipFromCountryArg) {
+    const matching = locations.filter(
+      (location) =>
+        normalizeWarehouseCountry(location.country) === shipFromCountryArg &&
+        String(location.merchantLocationStatus ?? "").toUpperCase() !== "DISABLED"
+    );
+
+    console.log("");
+    console.log(`Enabled inventory locations matching ship-from country ${shipFromCountryArg}:`);
+    console.table(
+      matching.map((location) => ({
+        merchantLocationKey: location.merchantLocationKey,
+        name: location.name,
+        country: location.country,
+        city: location.city,
+        stateOrProvince: location.stateOrProvince,
+      }))
+    );
+  }
 
   if (!found) {
     console.error(

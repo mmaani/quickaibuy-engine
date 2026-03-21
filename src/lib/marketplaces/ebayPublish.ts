@@ -35,6 +35,9 @@ export type EbayInventoryLocationSummary = {
   name: string | null;
   merchantLocationStatus: string | null;
   locationTypes: string[];
+  country: string | null;
+  city: string | null;
+  stateOrProvince: string | null;
 };
 
 export type EbayPublishEnvValidation = {
@@ -54,6 +57,8 @@ export type EbayPublishPreflightResult = {
   errors: string[];
   warnings: string[];
   shipFromCountry: string | null;
+  resolvedMerchantLocationKey: string | null;
+  resolvedMerchantLocationSource: "configured-default" | "auto-country-match" | null;
   config: EbayPublishConfig | null;
   publicUrls: {
     privacyPolicyUrl: string | null;
@@ -491,6 +496,8 @@ function summarizeInventoryLocation(entry: unknown): EbayInventoryLocationSummar
 
   const merchantLocationKey = stringOrNull(item.merchantLocationKey);
   if (!merchantLocationKey) return null;
+  const location = objectOrNull(item.location);
+  const address = objectOrNull(location?.address);
 
   return {
     merchantLocationKey,
@@ -499,6 +506,83 @@ function summarizeInventoryLocation(entry: unknown): EbayInventoryLocationSummar
     locationTypes: Array.isArray(item.locationTypes)
       ? item.locationTypes.map((value) => String(value)).filter(Boolean)
       : [],
+    country: stringOrNull(address?.country),
+    city: stringOrNull(address?.city),
+    stateOrProvince: stringOrNull(address?.stateOrProvince),
+  };
+}
+
+function normalizeLocationCountry(value: string | null | undefined): string | null {
+  return normalizeWarehouseCountry(value ?? null);
+}
+
+function isEnabledInventoryLocation(location: EbayInventoryLocationSummary): boolean {
+  return String(location.merchantLocationStatus ?? "").toUpperCase() !== "DISABLED";
+}
+
+function resolveMerchantLocationForShipFromCountry(input: {
+  config: EbayPublishConfig;
+  shipFromCountry: string | null;
+  inventoryLocations: EbayInventoryLocationSummary[];
+}): {
+  merchantLocationKey: string | null;
+  source: "configured-default" | "auto-country-match" | null;
+  error?: string;
+} {
+  if (!input.shipFromCountry) {
+    return {
+      merchantLocationKey: null,
+      source: null,
+      error: "Missing normalized supplier ship-from country.",
+    };
+  }
+
+  const normalizedShipFromCountry = normalizeLocationCountry(input.shipFromCountry);
+  if (!normalizedShipFromCountry) {
+    return {
+      merchantLocationKey: null,
+      source: null,
+      error: `Unsupported supplier ship-from country '${input.shipFromCountry}'.`,
+    };
+  }
+
+  const activeLocations = input.inventoryLocations.filter(isEnabledInventoryLocation);
+  const configuredLocation =
+    activeLocations.find((location) => location.merchantLocationKey === input.config.merchantLocationKey) ?? null;
+  const configuredCountry = normalizeLocationCountry(configuredLocation?.country);
+
+  if (configuredLocation && configuredCountry === normalizedShipFromCountry) {
+    return {
+      merchantLocationKey: configuredLocation.merchantLocationKey,
+      source: "configured-default",
+    };
+  }
+
+  const matchingLocations = activeLocations.filter(
+    (location) => normalizeLocationCountry(location.country) === normalizedShipFromCountry
+  );
+
+  if (matchingLocations.length === 1) {
+    return {
+      merchantLocationKey: matchingLocations[0].merchantLocationKey,
+      source: "auto-country-match",
+    };
+  }
+
+  if (matchingLocations.length === 0) {
+    return {
+      merchantLocationKey: null,
+      source: null,
+      error: configuredLocation
+        ? `Configured EBAY_MERCHANT_LOCATION_KEY '${input.config.merchantLocationKey}' resolves to ${configuredCountry ?? "unknown"}, but supplier ship-from country is ${normalizedShipFromCountry}. Create or enable a seller inventory location for ${normalizedShipFromCountry} before live publish.`
+        : `No enabled seller inventory location matches supplier ship-from country ${normalizedShipFromCountry}. Create or enable a seller inventory location for that country before live publish.`,
+    };
+  }
+
+  return {
+    merchantLocationKey: null,
+    source: null,
+    error: `Multiple enabled eBay inventory locations match supplier ship-from country ${normalizedShipFromCountry}. Keep one canonical location or extend runtime mapping before live publish.`,
   };
 }
 
@@ -667,6 +751,8 @@ export async function validateEbayPublishPreflight(payloadInput: unknown): Promi
   const envValidation = buildEbayPublishConfigValidation();
   const errors = [...envValidation.errors];
   const warnings: string[] = [];
+  let resolvedMerchantLocationKey: string | null = null;
+  let resolvedMerchantLocationSource: "configured-default" | "auto-country-match" | null = null;
 
   if (!shipFromCountry) {
     errors.push(
@@ -690,6 +776,19 @@ export async function validateEbayPublishPreflight(payloadInput: unknown): Promi
         errors.push(
           `Configured EBAY_MERCHANT_LOCATION_KEY '${config.merchantLocationKey}' was not found in seller inventory locations. Run scripts/check_ebay_inventory_location.ts and fix eBay account setup.`
         );
+      } else {
+        const merchantLocation = resolveMerchantLocationForShipFromCountry({
+          config,
+          shipFromCountry,
+          inventoryLocations,
+        });
+
+        resolvedMerchantLocationKey = merchantLocation.merchantLocationKey;
+        resolvedMerchantLocationSource = merchantLocation.source;
+
+        if (merchantLocation.error) {
+          errors.push(merchantLocation.error);
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -708,6 +807,8 @@ export async function validateEbayPublishPreflight(payloadInput: unknown): Promi
     errors,
     warnings,
     shipFromCountry,
+    resolvedMerchantLocationKey,
+    resolvedMerchantLocationSource,
     config: envValidation.config,
     publicUrls: envValidation.publicUrls,
     inventoryLocationFound,
@@ -753,6 +854,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
   const price = numberOrNull(payload.price) ?? numberOrNull(listing.price) ?? null;
   const quantity = Math.max(1, Math.floor(numberOrNull(payload.quantity) ?? 1));
   const shipFromCountry = preflight.shipFromCountry;
+  const merchantLocationKey = preflight.resolvedMerchantLocationKey;
 
   if (price == null || price <= 0) {
     return {
@@ -773,6 +875,16 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     };
   }
 
+  if (!merchantLocationKey) {
+    return {
+      success: false,
+      externalListingId: null,
+      raw: { payload, preflight },
+      errorMessage:
+        "eBay merchant location could not be resolved for the supplier ship-from country. Refusing live publish instead of using a mismatched seller location.",
+    };
+  }
+
   const inventoryItemKey = safeSku(`qab-${listing.id}`);
   const imageUrls = extractImageUrls(payload);
   const description = buildDescription(payload, title);
@@ -784,7 +896,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     sanitizedPayload: payload,
     publishInput: {
       marketplaceId: config.marketplaceId,
-      merchantLocationKey: config.merchantLocationKey,
+      merchantLocationKey,
       categoryId,
       paymentPolicyId: config.paymentPolicyId,
       returnPolicyId: config.returnPolicyId,
@@ -849,7 +961,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
             format: "FIXED_PRICE",
             availableQuantity: quantity,
             categoryId,
-            merchantLocationKey: config.merchantLocationKey,
+            merchantLocationKey,
             listingDescription: description,
             pricingSummary: {
               price: {
