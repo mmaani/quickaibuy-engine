@@ -573,6 +573,15 @@ export async function runListingExecution(opts?: {
         SET
           status = ${LISTING_STATUSES.ACTIVE},
           published_external_id = ${result.externalListingId},
+          response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
+            liveApiCalled: true,
+            publishSucceeded: true,
+            publishedExternalId: result.externalListingId,
+            offerId: result.offerId ?? null,
+            inventoryItemKey: result.inventoryItemKey ?? null,
+            publishResult: result.raw ?? null,
+          })}::jsonb,
+          last_publish_error = NULL,
           publish_finished_ts = NOW(),
           listing_date = CURRENT_DATE,
           updated_at = NOW()

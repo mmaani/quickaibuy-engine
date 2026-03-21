@@ -1,12 +1,14 @@
-import "dotenv/config";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orderEvents, orderItems, orders } from "@/lib/db/schema";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 import {
   upsertNormalizedEbayOrder,
   type ListingLinkage,
 } from "@/lib/orders/syncEbayOrders";
 import type { NormalizedEbayOrder } from "@/lib/orders/ebayFetchOrders";
+
+loadRuntimeEnv();
 
 const MARKETPLACE_ORDER_ID = "test-ebay-order-sync-optimization";
 const LISTING_EXTERNAL_ID = "test-ebay-listing-sync-optimization";
