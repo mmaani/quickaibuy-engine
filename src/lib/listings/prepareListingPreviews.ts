@@ -125,6 +125,7 @@ function extractSupplierShipFromCountry(row: CandidatePreviewSourceRow): {
   return {
     supplierWarehouseCountry:
       fromColumns.supplierWarehouseCountry ??
+      cleanString(payload.supplierWarehouseCountry) ??
       cleanString(payload.supplier_warehouse_country) ??
       cleanString(payload.warehouse_country),
     shipFromCountry:
