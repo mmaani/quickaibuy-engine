@@ -343,6 +343,7 @@ async function processCandidatePreviewRows(
       supplierTitle: row.supplierTitle,
       supplierSourceUrl: row.supplierSourceUrl,
       supplierImageUrl,
+      supplierRawPayload: row.supplierRawPayload,
       supplierPrice: toNum(row.supplierPrice),
       supplierWarehouseCountry: supplierCountry.supplierWarehouseCountry,
       shipFromCountry: supplierCountry.shipFromCountry,

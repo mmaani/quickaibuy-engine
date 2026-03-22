@@ -1,4 +1,5 @@
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
+import { generateListingDescription } from "./generateListingDescription";
 import type { EbayListingPreviewPayload, ListingPreviewInput, ListingPreviewOutput } from "./types";
 
 function cleanTitle(input: string): string {
@@ -45,6 +46,11 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
   const quantity = 1;
   const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
   const images = pickImages(input);
+  const description = generateListingDescription({
+    title,
+    supplierTitle: input.supplierTitle,
+    supplierRawPayload: input.supplierRawPayload,
+  });
 
   const payload: EbayListingPreviewPayload = {
     dryRun: true,
@@ -56,6 +62,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
     condition: "NEW",
     shipFromCountry,
     images,
+    description,
     source: {
       candidateId: input.candidateId,
       supplierKey: input.supplierKey,
@@ -92,6 +99,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       liveApiCalled: false,
       titleLength: title.length,
       categoryId: input.categoryId ?? null,
+      description,
     },
   };
 }

@@ -9,6 +9,7 @@ export type ListingPreviewInput = {
   supplierSourceUrl: string | null;
   supplierImageUrl: string | null;
   supplierPrice: number | null;
+  supplierRawPayload?: unknown;
   supplierWarehouseCountry: string | null;
   shipFromCountry: string | null;
   marketplaceImageUrl: string | null;
@@ -35,6 +36,7 @@ export type EbayListingPreviewPayload = {
   condition: "NEW";
   shipFromCountry: string | null;
   images?: string[];
+  description?: string | null;
   source: {
     candidateId: string;
     supplierKey: string;
