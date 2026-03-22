@@ -1,11 +1,12 @@
 import { db } from "@/lib/db";
+import { getEbayPublishEnvValidation, getEbaySellAccessToken } from "@/lib/marketplaces/ebayPublish";
 import { sql } from "drizzle-orm";
 
 export type ListingThroughputPolicy = {
   sellerFeedback: number;
   maxActiveListings: number;
   maxDailyPublish: number;
-  feedbackSource: "env" | "marketplace-match" | "fail-closed-default";
+  feedbackSource: "ebay-api" | "env" | "marketplace-match" | "fail-closed-default";
 };
 
 export type ListingThroughputState = ListingThroughputPolicy & {
@@ -24,6 +25,8 @@ type Input = {
   marketplaceListingId: string;
 };
 
+let cachedSellerFeedback: { value: number; expiresAt: number } | null = null;
+
 function toInt(value: unknown, fallback = 0): number {
   const num = Number(value);
   return Number.isFinite(num) ? Math.max(0, Math.floor(num)) : fallback;
@@ -37,6 +40,48 @@ function resolveConfiguredSellerFeedback(): number | null {
   if (raw == null || String(raw).trim() === "") return null;
   const value = Number(raw);
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : null;
+}
+
+async function fetchEbaySellerFeedbackScore(): Promise<number | null> {
+  const now = Date.now();
+  if (cachedSellerFeedback && cachedSellerFeedback.expiresAt > now) {
+    return cachedSellerFeedback.value;
+  }
+
+  const validation = getEbayPublishEnvValidation();
+  if (!validation.config) return null;
+
+  const token = await getEbaySellAccessToken(validation.config);
+  const response = await fetch("https://api.ebay.com/ws/api.dll", {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml",
+      "X-EBAY-API-CALL-NAME": "GetFeedback",
+      "X-EBAY-API-SITEID": "0",
+      "X-EBAY-API-COMPATIBILITY-LEVEL": "1231",
+      "X-EBAY-API-IAF-TOKEN": token,
+    },
+    body: `<?xml version="1.0" encoding="utf-8"?>
+<GetFeedbackRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetFeedbackRequest>`,
+    cache: "no-store",
+  });
+
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`eBay GetFeedback failed: ${response.status}`);
+  }
+
+  const match = body.match(/<FeedbackScore>(\d+)<\/FeedbackScore>/i);
+  if (!match) return null;
+
+  const value = toInt(match[1], 0);
+  cachedSellerFeedback = {
+    value,
+    expiresAt: now + 10 * 60 * 1000,
+  };
+  return value;
 }
 
 function buildPolicy(
@@ -73,11 +118,25 @@ export async function getListingThroughputState(input: Input): Promise<ListingTh
   const marketplaceKey = (input.marketplaceKey ?? "ebay") as "ebay";
   const envFeedback = resolveConfiguredSellerFeedback();
 
-  let sellerFeedback = envFeedback ?? 0;
-  let feedbackSource: ListingThroughputPolicy["feedbackSource"] =
-    envFeedback != null ? "env" : "fail-closed-default";
+  let sellerFeedback = 0;
+  let feedbackSource: ListingThroughputPolicy["feedbackSource"] = "fail-closed-default";
 
-  if (envFeedback == null) {
+  try {
+    const ebayFeedback = await fetchEbaySellerFeedbackScore();
+    if (ebayFeedback != null) {
+      sellerFeedback = ebayFeedback;
+      feedbackSource = "ebay-api";
+    }
+  } catch {
+    // fall through to env/database fallback
+  }
+
+  if (feedbackSource === "fail-closed-default" && envFeedback != null) {
+    sellerFeedback = envFeedback;
+    feedbackSource = "env";
+  }
+
+  if (feedbackSource === "fail-closed-default") {
     const feedbackResult = await db.execute(sql`
       SELECT mp.raw_payload->'seller'->>'feedbackScore' AS seller_feedback
       FROM marketplace_prices mp
