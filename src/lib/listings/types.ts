@@ -16,11 +16,13 @@ export type ListingPreviewInput = {
   marketplaceKey: string;
   marketplaceListingId: string;
   marketplaceTitle: string | null;
+  marketplaceRawPayload?: unknown;
   marketplacePrice: number | null;
 
   estimatedProfit: number | null;
   marginPct: number | null;
   roiPct: number | null;
+  categoryId?: string | null;
 };
 
 export type EbayListingPreviewPayload = {
@@ -55,6 +57,8 @@ export type EbayListingPreviewPayload = {
     roiPct: number | null;
   };
   categoryId?: string | null;
+  categoryConfidence?: number | null;
+  categoryRuleLabel?: string | null;
 };
 
 export type ListingPreviewOutput = {

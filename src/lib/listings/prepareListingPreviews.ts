@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { listings, marketplacePrices, matches, productsRaw, profitableCandidates } from "@/lib/db/schema";
 import { buildListingPreview } from "./build_listing_preview";
 import { buildListingPreviewIdempotencyKey } from "./idempotency";
+import { CATEGORY_CONFIDENCE_THRESHOLD, classifyEbayCategory } from "./ebayCategoryClassifier";
 import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
@@ -59,6 +60,8 @@ type CandidatePreviewSourceRow = {
   supplierWarehouseCountry: string | null;
   shipFromCountry: string | null;
   marketplaceImageUrl: string | null;
+  marketplaceTitle: string | null;
+  marketplaceRawPayload: unknown;
   supplierPrice: unknown;
   marketplacePrice: unknown;
   matchId: string | null;
@@ -161,6 +164,8 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
       supplierWarehouseCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'supplier_warehouse_country'), '')`,
       shipFromCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'ship_from_country'), '')`,
       marketplaceImageUrl: sql<string | null>`NULLIF(BTRIM(COALESCE(${marketplacePrices.imageUrl}, ${marketplacePrices.rawPayload} -> 'image' ->> 'imageUrl')), '')`,
+      marketplaceTitle: sql<string | null>`NULLIF(BTRIM(${marketplacePrices.rawPayload} ->> 'title'), '')`,
+      marketplaceRawPayload: marketplacePrices.rawPayload,
       supplierPrice: productsRaw.priceMin,
       marketplacePrice: marketplacePrices.price,
       matchId: matches.id,
@@ -278,6 +283,58 @@ async function processCandidatePreviewRows(
       ? ((row.supplierImages.find((v) => typeof v === "string") as string | undefined) ?? null)
       : null;
     const supplierCountry = extractSupplierShipFromCountry(row);
+    const categoryClassification =
+      context.marketplace === "ebay"
+        ? classifyEbayCategory({
+            supplierTitle: row.supplierTitle,
+            marketplaceTitle: row.marketplaceTitle,
+            marketplaceRawPayload: row.marketplaceRawPayload,
+          })
+        : null;
+
+    if (
+      context.marketplace === "ebay" &&
+      (!categoryClassification ||
+        !categoryClassification.categoryId ||
+        categoryClassification.confidence < CATEGORY_CONFIDENCE_THRESHOLD)
+    ) {
+      failed++;
+      const reason = categoryClassification?.reason ?? "category classification unavailable";
+      const blockReason = `CATEGORY_CONFIDENCE_TOO_LOW: ${reason}`;
+
+      await db.execute(sql`
+        UPDATE profitable_candidates
+        SET
+          decision_status = 'MANUAL_REVIEW',
+          listing_eligible = FALSE,
+          listing_block_reason = ${blockReason},
+          listing_eligible_ts = NOW()
+        WHERE id = ${row.candidateId}
+      `);
+
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "PROFITABLE_CANDIDATE",
+        entityId: row.candidateId,
+        eventType: "LISTING_CATEGORY_MANUAL_REVIEW_REQUIRED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          categoryConfidence: categoryClassification?.confidence ?? null,
+          categoryThreshold: CATEGORY_CONFIDENCE_THRESHOLD,
+          categoryId: categoryClassification?.categoryId ?? null,
+          categoryName: categoryClassification?.categoryName ?? null,
+          categoryRuleLabel: categoryClassification?.ruleLabel ?? null,
+          matchedKeywords: categoryClassification?.matchedKeywords ?? [],
+          matchedCategoryTokens: categoryClassification?.matchedCategoryTokens ?? [],
+          reason,
+          source: context.source,
+        },
+      });
+      continue;
+    }
 
     const preview = buildListingPreview(context.marketplace, {
       candidateId: row.candidateId,
@@ -292,12 +349,24 @@ async function processCandidatePreviewRows(
       marketplaceImageUrl: cleanString(row.marketplaceImageUrl),
       marketplaceKey: row.marketplaceKey,
       marketplaceListingId: row.marketplaceListingId,
-      marketplaceTitle: null,
+      marketplaceTitle: row.marketplaceTitle,
+      marketplaceRawPayload: row.marketplaceRawPayload,
       marketplacePrice: toNum(row.marketplacePrice),
       estimatedProfit: toNum(row.estimatedProfit),
       marginPct: toNum(row.marginPct),
       roiPct: toNum(row.roiPct),
+      categoryId: categoryClassification?.categoryId ?? null,
     });
+
+    if (context.marketplace === "ebay") {
+      const response = (preview.response ?? {}) as Record<string, unknown>;
+      preview.response = {
+        ...response,
+        categoryId: categoryClassification?.categoryId ?? null,
+        categoryConfidence: categoryClassification?.confidence ?? null,
+        categoryRuleLabel: categoryClassification?.ruleLabel ?? null,
+      };
+    }
 
     const validation = validateListingPreview(preview);
     if (!validation.ok) {

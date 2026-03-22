@@ -77,6 +77,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       marginPct: input.marginPct,
       roiPct: input.roiPct,
     },
+    categoryId: input.categoryId ?? null,
   };
 
   return {
@@ -90,6 +91,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       previewVersion: "v1",
       liveApiCalled: false,
       titleLength: title.length,
+      categoryId: input.categoryId ?? null,
     },
   };
 }

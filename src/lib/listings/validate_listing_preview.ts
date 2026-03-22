@@ -23,6 +23,14 @@ export function validateListingPreview(preview: ListingPreviewOutput) {
       errors.push("ebay shipFromCountry must be ISO-3166-1 alpha-2");
     }
   }
+  if (preview.marketplaceKey === "ebay") {
+    const categoryId = String(payload?.categoryId ?? "").trim();
+    if (!categoryId) {
+      errors.push("ebay categoryId required");
+    } else if (!/^\d+$/.test(categoryId)) {
+      errors.push("ebay categoryId must be numeric");
+    }
+  }
 
   return {
     ok: errors.length === 0,
