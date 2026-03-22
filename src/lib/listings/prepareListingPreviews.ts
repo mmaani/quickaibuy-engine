@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { listings, marketplacePrices, matches, productsRaw, profitableCandidates } from "@/lib/db/schema";
@@ -28,7 +28,7 @@ type PrepareListingPreviewCounters = {
   updated: number;
   skipped: number;
   failed: number;
-  };
+};
 
 type PrepareListingPreviewResult = PrepareListingPreviewCounters & {
   ok: boolean;
@@ -219,35 +219,23 @@ async function processCandidatePreviewRows(
       marketplaceKey: context.marketplace,
     });
 
-    const existingPreview = await db
+    const existingListing = await db
       .select({
         id: listings.id,
         status: listings.status,
+        idempotencyKey: listings.idempotencyKey,
       })
       .from(listings)
-      .where(
-        and(
-          eq(listings.candidateId, row.candidateId),
-          eq(listings.marketplaceKey, context.marketplace),
-          eq(listings.status, "PREVIEW")
-        )
-      )
+      .where(eq(listings.idempotencyKey, idempotencyKey))
       .limit(1);
 
-    const existingLivePath = await db
-      .select({
-        id: listings.id,
-        status: listings.status,
-      })
-      .from(listings)
-      .where(
-        and(
-          eq(listings.candidateId, row.candidateId),
-          eq(listings.marketplaceKey, context.marketplace),
-          inArray(listings.status, ["READY_TO_PUBLISH", "PUBLISH_IN_PROGRESS", "ACTIVE"])
-        )
-      )
-      .limit(1);
+    const existingPreview =
+      existingListing.length && existingListing[0].status === "PREVIEW" ? existingListing : [];
+    const existingLivePath =
+      existingListing.length &&
+      ["READY_TO_PUBLISH", "PUBLISH_IN_PROGRESS", "ACTIVE"].includes(existingListing[0].status)
+        ? existingListing
+        : [];
 
     if (existingLivePath.length) {
       skipped++;
@@ -365,7 +353,7 @@ async function processCandidatePreviewRows(
     const payloadJson = preview.payload;
     const responseJson = preview.response ?? null;
 
-    if (existingPreview.length && context.forceRefresh) {
+    if (existingListing.length && (context.forceRefresh || existingListing[0].status !== "PREVIEW")) {
       await db
         .update(listings)
         .set({
@@ -378,19 +366,20 @@ async function processCandidatePreviewRows(
           status: "PREVIEW",
           updatedAt: new Date(),
         })
-        .where(eq(listings.id, existingPreview[0].id));
+        .where(eq(listings.id, existingListing[0].id));
 
       updated++;
       await writeAuditLog({
         actorType: context.actorType,
         actorId: context.actorId,
         entityType: "LISTING",
-        entityId: existingPreview[0].id,
+        entityId: existingListing[0].id,
         eventType: "LISTING_PREVIEW_REFRESHED",
         details: {
           candidateId: row.candidateId,
           marketplaceKey: context.marketplace,
           idempotencyKey,
+          previousStatus: existingListing[0].status,
           source: context.source,
         },
       });
