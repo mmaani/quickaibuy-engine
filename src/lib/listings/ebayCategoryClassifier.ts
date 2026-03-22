@@ -1,12 +1,8 @@
-type CategoryEvidence = {
-  categoryId: string;
-  categoryName: string | null;
-};
-
 type CategoryRule = {
   label: string;
+  categoryId: string;
+  categoryName: string;
   keywords: string[];
-  categoryTokens: string[];
 };
 
 export type EbayCategoryClassificationInput = {
@@ -21,33 +17,34 @@ export type EbayCategoryClassificationResult = {
   confidence: number;
   ruleLabel: string | null;
   matchedKeywords: string[];
-  matchedCategoryTokens: string[];
+  sellerFeedback: number | null;
   reason: string;
   manualReviewRequired: boolean;
 };
 
 const CATEGORY_CONFIDENCE_THRESHOLD = 0.75;
+const SAFE_HOME_DECOR_OTHER_CATEGORY_ID = "10034";
+const LIGHTING_OTHER_CATEGORY_ID = "3201";
+const CAR_ACCESSORIES_CATEGORY_ID = "6028";
 
 const RULES: CategoryRule[] = [
   {
-    label: "consumer-electronics-speakers",
-    keywords: ["speaker", "bluetooth", "portable audio", "audio"],
-    categoryTokens: ["speaker", "audio", "sound therapy", "portable"],
+    label: "lighting-other",
+    categoryId: LIGHTING_OTHER_CATEGORY_ID,
+    categoryName: "Home & Garden > Lamps, Lighting & Ceiling Fans > Other Lighting & Ceiling Fans",
+    keywords: ["light", "lamp", "rgb"],
   },
   {
-    label: "home-cleaning-vacuums",
-    keywords: ["vacuum", "cleaner", "cleaning"],
-    categoryTokens: ["vacuum", "cleaning", "household supplies"],
+    label: "car-accessories",
+    categoryId: CAR_ACCESSORIES_CATEGORY_ID,
+    categoryName: "eBay Motors > Parts & Accessories",
+    keywords: ["car"],
   },
   {
-    label: "ebay-motors-car-accessories",
-    keywords: ["car", "automotive", "vehicle", "seat", "dashboard"],
-    categoryTokens: ["car", "truck", "interior", "automotive", "vehicle"],
-  },
-  {
-    label: "home-kitchen",
-    keywords: ["kitchen", "sink", "dish", "scrubber", "storage", "organizer"],
-    categoryTokens: ["kitchen", "home", "storage", "cleaning", "dish"],
+    label: "safe-home-decor-other",
+    categoryId: SAFE_HOME_DECOR_OTHER_CATEGORY_ID,
+    categoryName: "Home & Garden > Home Decor > Other Home Decor",
+    keywords: ["speaker", "bluetooth"],
   },
 ];
 
@@ -66,44 +63,15 @@ function includesToken(text: string, token: string): boolean {
   return text.includes(token.toLowerCase());
 }
 
-function extractCategoryEvidence(rawPayload: unknown): CategoryEvidence[] {
+function extractSellerFeedback(rawPayload: unknown): number | null {
   const payload = objectOrNull(rawPayload);
-  if (!payload) return [];
+  const seller = objectOrNull(payload?.seller);
+  const value = Number(seller?.feedbackScore);
+  return Number.isFinite(value) ? value : null;
+}
 
-  const categories = Array.isArray(payload.categories) ? payload.categories : [];
-  const categoryEvidence = categories
-    .map((entry) => {
-      const category = objectOrNull(entry);
-      const categoryId = cleanString(category?.categoryId);
-      if (!categoryId || !/^\d+$/.test(categoryId)) return null;
-      return {
-        categoryId,
-        categoryName: cleanString(category?.categoryName),
-      } satisfies CategoryEvidence;
-    })
-    .filter((entry): entry is CategoryEvidence => entry != null);
-
-  const leafIds = Array.isArray(payload.leafCategoryIds)
-    ? payload.leafCategoryIds
-        .map((value) => cleanString(value))
-        .filter((value): value is string => value != null && /^\d+$/.test(value))
-    : [];
-
-  const prioritized: CategoryEvidence[] = [];
-
-  for (const leafId of leafIds) {
-    const matching = categoryEvidence.find((entry) => entry.categoryId === leafId);
-    if (matching) prioritized.push(matching);
-    else prioritized.push({ categoryId: leafId, categoryName: null });
-  }
-
-  for (const entry of categoryEvidence) {
-    if (!prioritized.some((existing) => existing.categoryId === entry.categoryId)) {
-      prioritized.push(entry);
-    }
-  }
-
-  return prioritized;
+function buildKeywordMatch(rule: CategoryRule, title: string): string[] {
+  return rule.keywords.filter((keyword) => includesToken(title, keyword));
 }
 
 export function classifyEbayCategory(
@@ -112,7 +80,7 @@ export function classifyEbayCategory(
   const supplierTitle = cleanString(input.supplierTitle) ?? "";
   const marketplaceTitle = cleanString(input.marketplaceTitle) ?? "";
   const combinedTitle = `${supplierTitle} ${marketplaceTitle}`.trim().toLowerCase();
-  const evidence = extractCategoryEvidence(input.marketplaceRawPayload);
+  const sellerFeedback = extractSellerFeedback(input.marketplaceRawPayload);
 
   if (!combinedTitle) {
     return {
@@ -121,63 +89,41 @@ export function classifyEbayCategory(
       confidence: 0,
       ruleLabel: null,
       matchedKeywords: [],
-      matchedCategoryTokens: [],
+      sellerFeedback,
       reason: "missing supplier and marketplace title for category classification",
       manualReviewRequired: true,
     };
   }
 
-  let best: EbayCategoryClassificationResult | null = null;
-
-  for (const rule of RULES) {
-    const matchedKeywords = rule.keywords.filter((keyword) => includesToken(combinedTitle, keyword));
-    if (!matchedKeywords.length) continue;
-
-    for (const candidate of evidence) {
-      const categoryName = (candidate.categoryName ?? "").toLowerCase();
-      const matchedCategoryTokens = rule.categoryTokens.filter((token) => includesToken(categoryName, token));
-      const confidence =
-        0.55 +
-        Math.min(0.2, matchedKeywords.length * 0.1) +
-        Math.min(0.25, matchedCategoryTokens.length * 0.125);
-
-      const result: EbayCategoryClassificationResult = {
-        categoryId: candidate.categoryId,
-        categoryName: candidate.categoryName,
-        confidence,
-        ruleLabel: rule.label,
-        matchedKeywords,
-        matchedCategoryTokens,
-        reason: matchedCategoryTokens.length
-          ? `matched rule '${rule.label}' against marketplace category '${candidate.categoryName ?? candidate.categoryId}'`
-          : `matched rule '${rule.label}' by keywords only, but marketplace category evidence was weak`,
-        manualReviewRequired:
-          matchedCategoryTokens.length === 0 || confidence < CATEGORY_CONFIDENCE_THRESHOLD,
-      };
-
-      if (!best || result.confidence > best.confidence) {
-        best = result;
-      }
-    }
-
-    if (!evidence.length) {
-      const keywordOnly: EbayCategoryClassificationResult = {
-        categoryId: null,
-        categoryName: null,
-        confidence: 0.5 + Math.min(0.2, matchedKeywords.length * 0.1),
-        ruleLabel: rule.label,
-        matchedKeywords,
-        matchedCategoryTokens: [],
-        reason: `matched rule '${rule.label}' by keywords but marketplace category evidence was unavailable`,
-        manualReviewRequired: true,
-      };
-      if (!best || keywordOnly.confidence > best.confidence) {
-        best = keywordOnly;
-      }
-    }
+  if (sellerFeedback != null && sellerFeedback < 5) {
+    return {
+      categoryId: SAFE_HOME_DECOR_OTHER_CATEGORY_ID,
+      categoryName: "Home & Garden > Home Decor > Other Home Decor",
+      confidence: 0.98,
+      ruleLabel: "seller-feedback-safe-override",
+      matchedKeywords: [],
+      sellerFeedback,
+      reason: `seller feedback ${sellerFeedback} is below 5, forcing safe category`,
+      manualReviewRequired: false,
+    };
   }
 
-  if (best) return best;
+  for (const rule of RULES) {
+    const matchedKeywords = buildKeywordMatch(rule, combinedTitle);
+    if (!matchedKeywords.length) continue;
+
+    const confidence = Math.min(0.95, 0.78 + matchedKeywords.length * 0.08);
+    return {
+      categoryId: rule.categoryId,
+      categoryName: rule.categoryName,
+      confidence,
+      ruleLabel: rule.label,
+      matchedKeywords,
+      sellerFeedback,
+      reason: `matched keywords for rule '${rule.label}'`,
+      manualReviewRequired: confidence < CATEGORY_CONFIDENCE_THRESHOLD,
+    };
+  }
 
   return {
     categoryId: null,
@@ -185,8 +131,8 @@ export function classifyEbayCategory(
     confidence: 0,
     ruleLabel: null,
     matchedKeywords: [],
-    matchedCategoryTokens: [],
-    reason: "no category keyword rule matched the product titles",
+    sellerFeedback,
+    reason: "no keyword category rule matched the product titles",
     manualReviewRequired: true,
   };
 }

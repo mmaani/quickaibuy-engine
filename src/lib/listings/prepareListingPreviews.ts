@@ -328,7 +328,7 @@ async function processCandidatePreviewRows(
           categoryName: categoryClassification?.categoryName ?? null,
           categoryRuleLabel: categoryClassification?.ruleLabel ?? null,
           matchedKeywords: categoryClassification?.matchedKeywords ?? [],
-          matchedCategoryTokens: categoryClassification?.matchedCategoryTokens ?? [],
+          sellerFeedback: categoryClassification?.sellerFeedback ?? null,
           reason,
           source: context.source,
         },
