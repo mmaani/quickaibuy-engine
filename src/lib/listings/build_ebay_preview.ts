@@ -27,14 +27,24 @@ function pickPrice(input: ListingPreviewInput): number {
   return 0;
 }
 
+function pickImages(input: ListingPreviewInput): string[] {
+  if (typeof input.marketplaceImageUrl === "string" && input.marketplaceImageUrl.trim().length > 0) {
+    return [input.marketplaceImageUrl];
+  }
+
+  if (typeof input.supplierImageUrl === "string" && input.supplierImageUrl.trim().length > 0) {
+    return [input.supplierImageUrl];
+  }
+
+  return [];
+}
+
 export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutput {
   const title = pickTitle(input);
   const price = pickPrice(input);
   const quantity = 1;
   const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
-  const images = [input.supplierImageUrl, input.marketplaceImageUrl].filter(
-    (v): v is string => typeof v === "string" && v.trim().length > 0
-  );
+  const images = pickImages(input);
 
   const payload: EbayListingPreviewPayload = {
     dryRun: true,

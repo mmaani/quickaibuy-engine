@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import pg from "pg";
 
-dotenv.config({ path: ".env.local" });
+dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || ".env.local" });
 dotenv.config();
 
 const { Client } = pg;
@@ -20,7 +20,7 @@ async function main() {
   const countryCode = requiredArg(4, "country_code");
 
   const client = new Client({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
 

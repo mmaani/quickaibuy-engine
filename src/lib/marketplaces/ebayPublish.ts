@@ -58,7 +58,15 @@ export type EbayPublishPreflightResult = {
   warnings: string[];
   shipFromCountry: string | null;
   resolvedMerchantLocationKey: string | null;
-  resolvedMerchantLocationSource: "configured-default" | "auto-country-match" | null;
+  resolvedMerchantLocationSource: "configured-default" | null;
+  shippingTransparency: {
+    handlingDaysMin: number;
+    handlingDaysMax: number;
+    shippingDaysMin: number;
+    shippingDaysMax: number;
+    mode: "international";
+    source: "cn-default" | "payload";
+  } | null;
   config: EbayPublishConfig | null;
   publicUrls: {
     privacyPolicyUrl: string | null;
@@ -520,14 +528,68 @@ function isEnabledInventoryLocation(location: EbayInventoryLocationSummary): boo
   return String(location.merchantLocationStatus ?? "").toUpperCase() !== "DISABLED";
 }
 
+function parsePositiveInt(value: unknown): number | null {
+  const n = numberOrNull(value);
+  if (n == null) return null;
+  const rounded = Math.floor(n);
+  return rounded > 0 ? rounded : null;
+}
+
+function resolveShippingTransparency(payload: Record<string, unknown>, shipFromCountry: string | null): {
+  handlingDaysMin: number;
+  handlingDaysMax: number;
+  shippingDaysMin: number;
+  shippingDaysMax: number;
+  mode: "international";
+  source: "cn-default" | "payload";
+} | null {
+  const handlingDaysMin = parsePositiveInt(
+    payload.handlingDaysMin ?? payload.handling_time_min_days ?? payload.handlingTimeMinDays
+  );
+  const handlingDaysMax = parsePositiveInt(
+    payload.handlingDaysMax ?? payload.handling_time_max_days ?? payload.handlingTimeMaxDays
+  );
+  const shippingDaysMin = parsePositiveInt(
+    payload.shippingDaysMin ?? payload.shipping_time_min_days ?? payload.shippingTimeMinDays
+  );
+  const shippingDaysMax = parsePositiveInt(
+    payload.shippingDaysMax ?? payload.shipping_time_max_days ?? payload.shippingTimeMaxDays
+  );
+
+  if (handlingDaysMin && handlingDaysMax && shippingDaysMin && shippingDaysMax) {
+    return {
+      handlingDaysMin,
+      handlingDaysMax,
+      shippingDaysMin,
+      shippingDaysMax,
+      mode: "international",
+      source: "payload",
+    };
+  }
+
+  if (normalizeLocationCountry(shipFromCountry) === "CN") {
+    return {
+      handlingDaysMin: 2,
+      handlingDaysMax: 3,
+      shippingDaysMin: 7,
+      shippingDaysMax: 12,
+      mode: "international",
+      source: "cn-default",
+    };
+  }
+
+  return null;
+}
+
 function resolveMerchantLocationForShipFromCountry(input: {
   config: EbayPublishConfig;
   shipFromCountry: string | null;
   inventoryLocations: EbayInventoryLocationSummary[];
 }): {
   merchantLocationKey: string | null;
-  source: "configured-default" | "auto-country-match" | null;
+  source: "configured-default" | null;
   error?: string;
+  warning?: string;
 } {
   if (!input.shipFromCountry) {
     return {
@@ -551,38 +613,21 @@ function resolveMerchantLocationForShipFromCountry(input: {
     activeLocations.find((location) => location.merchantLocationKey === input.config.merchantLocationKey) ?? null;
   const configuredCountry = normalizeLocationCountry(configuredLocation?.country);
 
-  if (configuredLocation && configuredCountry === normalizedShipFromCountry) {
+  if (configuredLocation) {
     return {
       merchantLocationKey: configuredLocation.merchantLocationKey,
       source: "configured-default",
-    };
-  }
-
-  const matchingLocations = activeLocations.filter(
-    (location) => normalizeLocationCountry(location.country) === normalizedShipFromCountry
-  );
-
-  if (matchingLocations.length === 1) {
-    return {
-      merchantLocationKey: matchingLocations[0].merchantLocationKey,
-      source: "auto-country-match",
-    };
-  }
-
-  if (matchingLocations.length === 0) {
-    return {
-      merchantLocationKey: null,
-      source: null,
-      error: configuredLocation
-        ? `Configured EBAY_MERCHANT_LOCATION_KEY '${input.config.merchantLocationKey}' resolves to ${configuredCountry ?? "unknown"}, but supplier ship-from country is ${normalizedShipFromCountry}. Create or enable a seller inventory location for ${normalizedShipFromCountry} before live publish.`
-        : `No enabled seller inventory location matches supplier ship-from country ${normalizedShipFromCountry}. Create or enable a seller inventory location for that country before live publish.`,
+      warning:
+        configuredCountry && configuredCountry !== normalizedShipFromCountry
+          ? `Merchant inventory location ${configuredLocation.merchantLocationKey} resolves to ${configuredCountry}, while supplier ship-from country is ${normalizedShipFromCountry}. Using seller location with international-fulfillment transparency.`
+          : undefined,
     };
   }
 
   return {
     merchantLocationKey: null,
     source: null,
-    error: `Multiple enabled eBay inventory locations match supplier ship-from country ${normalizedShipFromCountry}. Keep one canonical location or extend runtime mapping before live publish.`,
+    error: `Configured EBAY_MERCHANT_LOCATION_KEY '${input.config.merchantLocationKey}' was not found in seller inventory locations. Run scripts/check_ebay_inventory_location.ts and fix eBay account setup.`,
   };
 }
 
@@ -633,11 +678,19 @@ function buildDescription(payload: Record<string, unknown>, title: string): stri
     features.push(matchedTitle);
   }
 
+  const shippingTransparency = resolveShippingTransparency(payload, resolveShipFromCountry(payload));
+  const shippingLine = shippingTransparency
+    ? `- Handling time: ${shippingTransparency.handlingDaysMin}-${shippingTransparency.handlingDaysMax} business days\n- Estimated delivery: ${shippingTransparency.shippingDaysMin}-${shippingTransparency.shippingDaysMax} business days\n- International fulfillment from supplier warehouse`
+    : "- Shipping timing is operator-reviewed before dispatch";
+
   const lines = [
     title,
     "",
     "Key features:",
     features.length > 0 ? `- ${features.join("\n- ")}` : "- Compact and practical design\n- Everyday-use convenience\n- Ready for immediate dispatch",
+    "",
+    "Shipping:",
+    shippingLine,
     "",
     "Package includes:",
     "- 1 item",
@@ -747,16 +800,23 @@ function resolveCategoryId(payload: Record<string, unknown>, config: EbayPublish
 export async function validateEbayPublishPreflight(payloadInput: unknown): Promise<EbayPublishPreflightResult> {
   const payload = sanitizeEbayPayload(payloadInput);
   const shipFromCountry = resolveShipFromCountry(payload);
+  const shippingTransparency = resolveShippingTransparency(payload, shipFromCountry);
 
   const envValidation = buildEbayPublishConfigValidation();
   const errors = [...envValidation.errors];
   const warnings: string[] = [];
   let resolvedMerchantLocationKey: string | null = null;
-  let resolvedMerchantLocationSource: "configured-default" | "auto-country-match" | null = null;
+  let resolvedMerchantLocationSource: "configured-default" | null = null;
 
   if (!shipFromCountry) {
     errors.push(
       "Missing normalized supplier ship-from country. Provide supplier_warehouse_country (preferred) or ship_from_country so eBay publish can set item origin explicitly."
+    );
+  }
+
+  if (!shippingTransparency) {
+    errors.push(
+      "Missing shipping transparency for supplier fulfillment. Provide handling/shipping timing or keep supplier country clear enough for fail-closed defaults."
     );
   }
 
@@ -788,6 +848,8 @@ export async function validateEbayPublishPreflight(payloadInput: unknown): Promi
 
         if (merchantLocation.error) {
           errors.push(merchantLocation.error);
+        } else if (merchantLocation.warning) {
+          warnings.push(merchantLocation.warning);
         }
       }
     } catch (err) {
@@ -809,6 +871,7 @@ export async function validateEbayPublishPreflight(payloadInput: unknown): Promi
     shipFromCountry,
     resolvedMerchantLocationKey,
     resolvedMerchantLocationSource,
+    shippingTransparency,
     config: envValidation.config,
     publicUrls: envValidation.publicUrls,
     inventoryLocationFound,
@@ -855,6 +918,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
   const quantity = Math.max(1, Math.floor(numberOrNull(payload.quantity) ?? 1));
   const shipFromCountry = preflight.shipFromCountry;
   const merchantLocationKey = preflight.resolvedMerchantLocationKey;
+  const shippingTransparency = preflight.shippingTransparency;
 
   if (price == null || price <= 0) {
     return {
@@ -893,10 +957,12 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
   const raw: Record<string, unknown> = {
     inventoryItemKey,
     shipFromCountry,
+    shippingTransparency,
     sanitizedPayload: payload,
     publishInput: {
       marketplaceId: config.marketplaceId,
       merchantLocationKey,
+      merchantLocationSource: preflight.resolvedMerchantLocationSource,
       categoryId,
       paymentPolicyId: config.paymentPolicyId,
       returnPolicyId: config.returnPolicyId,
