@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
+import { getListingThroughputState } from "@/lib/listings/listingThroughputController";
 import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
@@ -484,8 +485,46 @@ export async function runListingExecution(opts?: {
       continue;
     }
 
+    const throughput = await getListingThroughputState({
+      marketplaceKey: "ebay",
+      candidateId,
+      marketplaceListingId: row.marketplaceListingId,
+    });
+
+    if (!throughput.allowed) {
+      await db.execute(sql`
+        UPDATE listings
+        SET
+          response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
+            listingThroughput: throughput,
+          })}::jsonb,
+          last_publish_error = ${`publish blocked by throughput controller (${throughput.blockingReason ?? "unknown"})`},
+          updated_at = NOW()
+        WHERE id = ${listingId}
+      `);
+
+      await writeAuditLog({
+        actorType: "WORKER",
+        actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_PUBLISH_BLOCKED_THROUGHPUT",
+        details: {
+          listingId,
+          candidateId,
+          marketplaceKey,
+          listingIdFilter: listingIdFilter || null,
+          throughput,
+        },
+      });
+
+      skipped++;
+      continue;
+    }
+
     const reserved = await reserveDailyListingSlot({
       marketplaceKey: "ebay",
+      dailyCap: throughput.maxDailyPublish,
     });
 
     if (!reserved.allowed) {

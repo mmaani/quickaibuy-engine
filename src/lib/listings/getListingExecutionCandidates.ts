@@ -9,6 +9,7 @@ export type ListingExecutionCandidate = {
   supplierKey: string;
   supplierProductId: string;
   marketplaceKey: "ebay";
+  marketplaceListingId: string;
   title: string;
   price: string;
   status: string;
@@ -37,6 +38,7 @@ export async function getListingExecutionCandidates(
       pc.supplier_key AS "supplierKey",
       pc.supplier_product_id AS "supplierProductId",
       l.marketplace_key AS "marketplaceKey",
+      pc.marketplace_listing_id AS "marketplaceListingId",
       l.title,
       l.price::text AS price,
       l.status,
