@@ -236,6 +236,9 @@ export type ControlPanelData = {
     recentPublishAttempts24h: number | null;
     recentPublishSuccesses24h: number | null;
     recentPublishFailures24h: number | null;
+    sellerFeedbackScore: number | null;
+    sellerFeedbackSource: string | null;
+    sellerFeedbackFetchedAt: string | null;
   };
   listingLifecycle: {
     statusCounts: Row[];
@@ -851,6 +854,21 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const listingsHasPublishStartedTs = listingsExists ? await columnExists("listings", "publish_started_ts") : false;
   const listingsHasLastPublishError = listingsExists ? await columnExists("listings", "last_publish_error") : false;
   const listingsHasUpdatedAt = listingsExists ? await columnExists("listings", "updated_at") : false;
+  const sellerAccountMetricsExists = await tableExists("seller_account_metrics");
+  const sellerMetricRow =
+    sellerAccountMetricsExists
+      ? (
+          await runQuery(`
+            select
+              feedback_score,
+              source,
+              fetched_at
+            from seller_account_metrics
+            where marketplace_key = 'ebay'
+            limit 1
+          `)
+        )[0] ?? {}
+      : {};
 
   const listingThroughput = {
     previews: listingsExists ? countByStatus(listingStatuses, "PREVIEW") : null,
@@ -892,6 +910,9 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           )[0]?.count
         )
       : null,
+    sellerFeedbackScore: sellerAccountMetricsExists ? toNum(sellerMetricRow.feedback_score) : null,
+    sellerFeedbackSource: sellerAccountMetricsExists ? toStr(sellerMetricRow.source) : null,
+    sellerFeedbackFetchedAt: sellerAccountMetricsExists ? toStr(sellerMetricRow.fetched_at) : null,
   };
 
   const listingsHasResponse = listingsExists ? await columnExists("listings", "response") : false;

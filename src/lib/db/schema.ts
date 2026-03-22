@@ -171,6 +171,25 @@ export const listingDailyCaps = pgTable(
   })
 );
 
+export const sellerAccountMetrics = pgTable(
+  "seller_account_metrics",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    marketplaceKey: text("marketplace_key").notNull(),
+    feedbackScore: integer("feedback_score"),
+    source: text("source"),
+    rawPayload: jsonb("raw_payload").$type<unknown>(),
+    fetchedAt: timestamp("fetched_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    sellerAccountMetricsMarketplaceUnique: uniqueIndex("seller_account_metrics_marketplace_unique").on(
+      t.marketplaceKey
+    ),
+  })
+);
+
 export const auditLog = pgTable("audit_log", {
   id: uuid("id").defaultRandom().primaryKey(),
   eventTs: timestamp("event_ts").notNull().defaultNow(),

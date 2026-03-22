@@ -19,6 +19,13 @@ export type ListingThroughputState = ListingThroughputPolicy & {
   blockingReason: string | null;
 };
 
+export type StoredSellerFeedbackMetric = {
+  marketplaceKey: "ebay";
+  feedbackScore: number | null;
+  source: string | null;
+  fetchedAt: string | null;
+};
+
 type Input = {
   marketplaceKey?: "ebay";
   candidateId: string;
@@ -84,6 +91,66 @@ async function fetchEbaySellerFeedbackScore(): Promise<number | null> {
   return value;
 }
 
+async function persistSellerFeedbackMetric(input: {
+  marketplaceKey: "ebay";
+  feedbackScore: number;
+  source: "ebay-api" | "env" | "marketplace-match" | "fail-closed-default";
+  rawPayload?: unknown;
+}): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO seller_account_metrics (
+      marketplace_key,
+      feedback_score,
+      source,
+      raw_payload,
+      fetched_at,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ${input.marketplaceKey},
+      ${input.feedbackScore},
+      ${input.source},
+      ${input.rawPayload ?? null},
+      NOW(),
+      NOW(),
+      NOW()
+    )
+    ON CONFLICT (marketplace_key)
+    DO UPDATE SET
+      feedback_score = EXCLUDED.feedback_score,
+      source = EXCLUDED.source,
+      raw_payload = EXCLUDED.raw_payload,
+      fetched_at = EXCLUDED.fetched_at,
+      updated_at = NOW()
+  `);
+}
+
+export async function getStoredSellerFeedbackMetric(
+  marketplaceKey: "ebay" = "ebay"
+): Promise<StoredSellerFeedbackMetric | null> {
+  const result = await db.execute(sql`
+    SELECT
+      marketplace_key AS "marketplaceKey",
+      feedback_score AS "feedbackScore",
+      source,
+      fetched_at AS "fetchedAt"
+    FROM seller_account_metrics
+    WHERE marketplace_key = ${marketplaceKey}
+    LIMIT 1
+  `);
+
+  const row = (result.rows?.[0] ?? null) as Record<string, unknown> | null;
+  if (!row) return null;
+
+  return {
+    marketplaceKey,
+    feedbackScore: toInt(row.feedbackScore, 0),
+    source: typeof row.source === "string" ? row.source : null,
+    fetchedAt: row.fetchedAt ? new Date(String(row.fetchedAt)).toISOString() : null,
+  };
+}
+
 function buildPolicy(
   sellerFeedback: number,
   feedbackSource: ListingThroughputPolicy["feedbackSource"]
@@ -126,14 +193,39 @@ export async function getListingThroughputState(input: Input): Promise<ListingTh
     if (ebayFeedback != null) {
       sellerFeedback = ebayFeedback;
       feedbackSource = "ebay-api";
+      await persistSellerFeedbackMetric({
+        marketplaceKey,
+        feedbackScore: ebayFeedback,
+        source: "ebay-api",
+        rawPayload: { feedbackScore: ebayFeedback },
+      });
     }
   } catch {
     // fall through to env/database fallback
   }
 
+  if (feedbackSource === "fail-closed-default") {
+    const storedMetric = await getStoredSellerFeedbackMetric(marketplaceKey);
+    if (storedMetric?.feedbackScore != null && storedMetric.feedbackScore > 0) {
+      sellerFeedback = storedMetric.feedbackScore;
+      feedbackSource =
+        storedMetric.source === "ebay-api" ||
+        storedMetric.source === "env" ||
+        storedMetric.source === "marketplace-match"
+          ? storedMetric.source
+          : "fail-closed-default";
+    }
+  }
+
   if (feedbackSource === "fail-closed-default" && envFeedback != null) {
     sellerFeedback = envFeedback;
     feedbackSource = "env";
+    await persistSellerFeedbackMetric({
+      marketplaceKey,
+      feedbackScore: envFeedback,
+      source: "env",
+      rawPayload: { feedbackScore: envFeedback },
+    });
   }
 
   if (feedbackSource === "fail-closed-default") {
@@ -153,6 +245,14 @@ export async function getListingThroughputState(input: Input): Promise<ListingTh
 
     sellerFeedback = marketplaceFeedback;
     feedbackSource = marketplaceFeedback > 0 ? "marketplace-match" : "fail-closed-default";
+    if (marketplaceFeedback > 0) {
+      await persistSellerFeedbackMetric({
+        marketplaceKey,
+        feedbackScore: marketplaceFeedback,
+        source: "marketplace-match",
+        rawPayload: { feedbackScore: marketplaceFeedback, marketplaceListingId: input.marketplaceListingId },
+      });
+    }
   }
 
   const policy = buildPolicy(sellerFeedback, feedbackSource);

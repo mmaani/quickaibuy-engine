@@ -891,6 +891,9 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <StatCard label="publish attempts (24h)" value={data.listingThroughput.recentPublishAttempts24h ?? "unknown"} />
             <StatCard label="publish successes (24h)" value={data.listingThroughput.recentPublishSuccesses24h ?? "unknown"} />
             <StatCard label="publish failures (24h)" value={data.listingThroughput.recentPublishFailures24h ?? "unknown"} />
+            <StatCard label="seller feedback score" value={data.listingThroughput.sellerFeedbackScore ?? "unknown"} />
+            <StatCard label="feedback source" value={data.listingThroughput.sellerFeedbackSource ?? "unknown"} />
+            <StatCard label="feedback fetched at" value={formatDateTime(data.listingThroughput.sellerFeedbackFetchedAt)} />
           </div>
         </Section>
 
