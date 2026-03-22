@@ -1,21 +1,15 @@
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
 import { generateListingDescription } from "./generateListingDescription";
+import { optimizeListingTitle } from "./optimizeListingTitle";
 import type { EbayListingPreviewPayload, ListingPreviewInput, ListingPreviewOutput } from "./types";
 
-function cleanTitle(input: string): string {
-  return input
-    .replace(/\s+/g, " ")
-    .replace(/[^\p{L}\p{N}\s\-&,./()]/gu, "")
-    .trim()
-    .slice(0, 80);
-}
-
 function pickTitle(input: ListingPreviewInput): string {
-  const source =
-    input.marketplaceTitle?.trim() ||
-    input.supplierTitle?.trim() ||
-    `${input.supplierKey} ${input.supplierProductId}`;
-  return cleanTitle(source);
+  return optimizeListingTitle({
+    marketplaceTitle: input.marketplaceTitle,
+    supplierTitle: input.supplierTitle,
+    supplierKey: input.supplierKey,
+    supplierProductId: input.supplierProductId,
+  });
 }
 
 function pickPrice(input: ListingPreviewInput): number {
