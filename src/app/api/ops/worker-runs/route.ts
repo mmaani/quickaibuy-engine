@@ -12,20 +12,28 @@ export async function GET(request: Request) {
   try {
     const result = await pool.query(
       `
-        SELECT
-          id,
-          worker,
-          job_name,
-          job_id,
-          status,
-          duration_ms,
-          ok,
-          error,
-          stats,
-          started_at,
-          finished_at
-        FROM worker_runs
-        ORDER BY started_at DESC
+        SELECT *
+        FROM (
+          SELECT
+            id,
+            worker,
+            job_name,
+            job_id,
+            status,
+            duration_ms,
+            ok,
+            error,
+            stats,
+            started_at,
+            finished_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY worker, job_name, job_id
+              ORDER BY COALESCE(finished_at, started_at) DESC NULLS LAST, started_at DESC NULLS LAST, id DESC
+            ) AS row_num
+          FROM worker_runs
+        ) runs
+        WHERE row_num = 1
+        ORDER BY COALESCE(finished_at, started_at) DESC NULLS LAST
         LIMIT 20
       `
     );

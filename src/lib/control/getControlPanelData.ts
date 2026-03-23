@@ -1157,7 +1157,21 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       : "id";
 
   const recentWorkerRuns = workerRunsExists
-    ? await runQuery(`select * from worker_runs order by ${workerRunsOrderExpr} desc nulls last limit 15`)
+    ? await runQuery(`
+      select *
+      from (
+        select
+          *,
+          row_number() over (
+            partition by worker, job_name, job_id
+            order by ${workerRunsOrderExpr} desc nulls last, id desc
+          ) as row_num
+        from worker_runs
+      ) worker_runs_latest
+      where row_num = 1
+      order by ${workerRunsOrderExpr} desc nulls last
+      limit 15
+    `)
     : [];
 
   const recentWorkerFailures = workerRunsExists
