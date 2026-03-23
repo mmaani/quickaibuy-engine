@@ -1,5 +1,9 @@
 import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
+import { db } from "@/lib/db";
+import { buildListingPreviewMedia } from "@/lib/listings/media";
+import type { ListingPreviewInput } from "@/lib/listings/types";
+import { sql } from "drizzle-orm";
 
 export type EbayListingPayload = {
   id: string;
@@ -76,6 +80,27 @@ export type EbayPublishPreflightResult = {
   };
   inventoryLocationFound: boolean;
   inventoryLocations: EbayInventoryLocationSummary[];
+};
+
+type PublishMediaHydrationRow = {
+  candidateId: string | null;
+  supplierKey: string | null;
+  supplierProductId: string | null;
+  supplierTitle: string | null;
+  supplierSourceUrl: string | null;
+  supplierImages: unknown;
+  supplierRawPayload: unknown;
+  supplierPrice: string | number | null;
+  supplierWarehouseCountry: string | null;
+  marketplaceKey: string | null;
+  marketplaceListingId: string | null;
+  marketplaceTitle: string | null;
+  marketplaceImageUrl: string | null;
+  marketplaceRawPayload: unknown;
+  marketplacePrice: string | number | null;
+  estimatedProfit: string | number | null;
+  marginPct: string | number | null;
+  roiPct: string | number | null;
 };
 
 type EbayApiErrorShape = {
@@ -324,6 +349,8 @@ export function sanitizeEbayPayload(payload: unknown): Record<string, unknown> {
     candidateId: stringOrNull(source.candidateId),
     supplierKey: stringOrNull(source.supplierKey),
     supplierProductId: stringOrNull(source.supplierProductId),
+    supplierTitle: stringOrNull(source.supplierTitle),
+    supplierSourceUrl: stringOrNull(source.supplierSourceUrl),
     supplierWarehouseCountry:
       stringOrNull(source.supplierWarehouseCountry) ?? stringOrNull(source.shipFromCountry),
     shipFromCountry: stringOrNull(source.shipFromCountry),
@@ -845,6 +872,115 @@ function extractImageUrls(payload: Record<string, unknown>): {
   };
 }
 
+function payloadAlreadyHasNormalizedMedia(payload: Record<string, unknown>): boolean {
+  const media = objectOrNull(payload.media);
+  if (!media) return false;
+
+  const images = Array.isArray(media.images) ? media.images : [];
+  const hasImage = images.some((entry) => Boolean(stringOrNull(objectOrNull(entry)?.url)));
+  const video = objectOrNull(media.video);
+  const hasVideo = Boolean(stringOrNull(video?.url));
+  const audit = objectOrNull(media.audit);
+
+  return hasImage || hasVideo || Boolean(audit);
+}
+
+async function hydrateReferenceOnlyMediaPayload(
+  listing: EbayListingPayload,
+  payload: Record<string, unknown>
+): Promise<{ payload: Record<string, unknown>; hydrated: boolean }> {
+  if (payloadAlreadyHasNormalizedMedia(payload)) {
+    return { payload, hydrated: false };
+  }
+
+  const rowResult = await db.execute<PublishMediaHydrationRow>(sql`
+    SELECT
+      pc.id::text AS "candidateId",
+      pc.supplier_key AS "supplierKey",
+      pc.supplier_product_id AS "supplierProductId",
+      pr.title AS "supplierTitle",
+      pr.source_url AS "supplierSourceUrl",
+      pr.images AS "supplierImages",
+      pr.raw_payload AS "supplierRawPayload",
+      pr.price_min AS "supplierPrice",
+      ${sql.raw("NULL")}::text AS "supplierWarehouseCountry",
+      pc.marketplace_key AS "marketplaceKey",
+      pc.marketplace_listing_id AS "marketplaceListingId",
+      mp.matched_title AS "marketplaceTitle",
+      mp.image_url AS "marketplaceImageUrl",
+      mp.raw_payload AS "marketplaceRawPayload",
+      mp.price AS "marketplacePrice",
+      pc.estimated_profit AS "estimatedProfit",
+      pc.margin_pct AS "marginPct",
+      pc.roi_pct AS "roiPct"
+    FROM listings l
+    INNER JOIN profitable_candidates pc
+      ON pc.id = l.candidate_id
+    LEFT JOIN products_raw pr
+      ON pr.id = pc.supplier_snapshot_id
+    LEFT JOIN marketplace_prices mp
+      ON mp.id = pc.market_price_snapshot_id
+    WHERE l.id = ${listing.id}
+    LIMIT 1
+  `);
+
+  const row = rowResult.rows[0];
+  if (!row?.candidateId || !row.supplierKey || !row.supplierProductId || !row.marketplaceKey || !row.marketplaceListingId) {
+    return { payload, hydrated: false };
+  }
+
+  const source = objectOrNull(payload.source) ?? {};
+  const supplierImages = stringArray(row.supplierImages);
+  const media = buildListingPreviewMedia({
+    candidateId: row.candidateId,
+    supplierKey: row.supplierKey,
+    supplierProductId: row.supplierProductId,
+    supplierTitle: stringOrNull(row.supplierTitle) ?? stringOrNull(source.supplierTitle),
+    supplierSourceUrl: stringOrNull(row.supplierSourceUrl) ?? stringOrNull(source.supplierSourceUrl),
+    supplierImageUrl:
+      stringOrNull(source.supplierImageUrl) ??
+      supplierImages[0] ??
+      null,
+    supplierImages,
+    supplierPrice: numberOrNull(row.supplierPrice),
+    supplierRawPayload: row.supplierRawPayload,
+    supplierWarehouseCountry:
+      stringOrNull(source.supplierWarehouseCountry) ??
+      stringOrNull(source.shipFromCountry) ??
+      stringOrNull(row.supplierWarehouseCountry),
+    shipFromCountry: stringOrNull(payload.shipFromCountry) ?? stringOrNull(source.shipFromCountry),
+    marketplaceImageUrl: stringOrNull(row.marketplaceImageUrl),
+    marketplaceKey: row.marketplaceKey,
+    marketplaceListingId: row.marketplaceListingId,
+    marketplaceTitle: stringOrNull(row.marketplaceTitle),
+    marketplaceRawPayload: row.marketplaceRawPayload,
+    marketplacePrice: numberOrNull(row.marketplacePrice),
+    estimatedProfit: numberOrNull(row.estimatedProfit),
+    marginPct: numberOrNull(row.marginPct),
+    roiPct: numberOrNull(row.roiPct),
+    categoryId: stringOrNull(payload.categoryId),
+  } satisfies ListingPreviewInput);
+
+  return {
+    hydrated: true,
+    payload: {
+      ...payload,
+      images: media.images.map((image) => image.url),
+      media,
+      source: {
+        ...source,
+        supplierImages:
+          stringArray(source.supplierImages).length > 0 ? stringArray(source.supplierImages) : supplierImages,
+        supplierImageUrl:
+          stringOrNull(source.supplierImageUrl) ??
+          media.images[0]?.url ??
+          supplierImages[0] ??
+          null,
+      },
+    },
+  };
+}
+
 function extractVideoDecision(payload: Record<string, unknown>): {
   detected: boolean;
   attached: boolean;
@@ -1073,7 +1209,20 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     };
   }
 
-  const payload = sanitizeEbayPayload(listing.payload);
+  let payload = sanitizeEbayPayload(listing.payload);
+  let mediaHydratedFromCandidate = false;
+
+  try {
+    const hydrated = await hydrateReferenceOnlyMediaPayload(listing, payload);
+    payload = hydrated.payload;
+    mediaHydratedFromCandidate = hydrated.hydrated;
+  } catch (err) {
+    console.warn("publishToEbayListing: media hydration fallback failed", {
+      listingId: listing.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   const preflight = await validateEbayPublishPreflight(payload);
 
   if (!preflight.ok || !preflight.config) {
@@ -1147,6 +1296,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     },
     mediaAudit: {
       storageMode: mediaStorageMode,
+      mediaHydratedFromCandidate,
       imageCountSelected: imageSelection.urls.length,
       imageHostingMode: imageSelection.hostingMode,
       mixedImageHostingModesDropped: imageSelection.mixedModesDropped,
