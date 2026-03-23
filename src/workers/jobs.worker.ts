@@ -14,6 +14,7 @@ import { pool } from "../lib/db";
 import { runOrderSyncWorker } from "./orderSync.worker";
 import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
+import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 console.log("[jobs.worker] booted and waiting for jobs");
@@ -30,20 +31,6 @@ void ensureInventoryRiskScanSchedule({
       error: error instanceof Error ? error.message : String(error),
     });
   });
-
-function buildFollowUpJobId(args: {
-  jobName: string;
-  sourceJobId: string;
-  productRawId?: string;
-  limit?: number;
-}): string {
-  const productRawId = String(args.productRawId ?? "").trim();
-  if (productRawId) {
-    return `${args.jobName}:${productRawId}`;
-  }
-  return `${args.jobName}:from:${args.sourceJobId}:limit:${Number(args.limit ?? 0)}`;
-}
-
 
 async function logWorkerRun(args: {
   status: "STARTED" | "SUCCEEDED" | "FAILED";
