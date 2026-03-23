@@ -75,16 +75,10 @@ export async function GET(request: NextRequest) {
 
   const dbFingerprintRes = await pool.query<{
     db_name: string;
-    db_user: string;
-    server_addr: string | null;
-    server_port: number | null;
   }>(
     `
       SELECT
-        current_database() AS db_name,
-        current_user AS db_user,
-        inet_server_addr()::text AS server_addr,
-        inet_server_port() AS server_port
+        current_database() AS db_name
     `
   );
 
@@ -108,11 +102,8 @@ export async function GET(request: NextRequest) {
         VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
       },
       dbFingerprint: {
-        dbHostAndName: maskDbUrlFingerprint(process.env.DATABASE_URL),
-        dbName: dbFingerprintRes.rows[0]?.db_name ?? null,
-        currentUser: dbFingerprintRes.rows[0]?.db_user ?? null,
-        serverAddr: dbFingerprintRes.rows[0]?.server_addr ?? null,
-        serverPort: dbFingerprintRes.rows[0]?.server_port ?? null,
+        configuredDbHostAndName: maskDbUrlFingerprint(process.env.DATABASE_URL),
+        connectedDatabase: dbFingerprintRes.rows[0]?.db_name ?? null,
         listingsTableExists,
       },
     },

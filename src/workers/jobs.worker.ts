@@ -31,6 +31,19 @@ void ensureInventoryRiskScanSchedule({
     });
   });
 
+function buildFollowUpJobId(args: {
+  jobName: string;
+  sourceJobId: string;
+  productRawId?: string;
+  limit?: number;
+}): string {
+  const productRawId = String(args.productRawId ?? "").trim();
+  if (productRawId) {
+    return `${args.jobName}:${productRawId}`;
+  }
+  return `${args.jobName}:from:${args.sourceJobId}:limit:${Number(args.limit ?? 0)}`;
+}
+
 
 async function logWorkerRun(args: {
   status: "STARTED" | "SUCCEEDED" | "FAILED";
@@ -265,6 +278,12 @@ export const jobsWorker = new Worker(
             productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
           },
           {
+            jobId: buildFollowUpJobId({
+              jobName: JOB_NAMES.MATCH_PRODUCT,
+              sourceJobId: String(job.id ?? idempotencyKey),
+              productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
+              limit: Number(job.data?.limit ?? 100),
+            }),
             removeOnComplete: 1000,
             removeOnFail: 5000,
           }
@@ -327,6 +346,11 @@ export const jobsWorker = new Worker(
           JOB_NAMES.EVAL_PROFIT,
           { limit: Number(job.data?.limit ?? 50) },
           {
+            jobId: buildFollowUpJobId({
+              jobName: JOB_NAMES.EVAL_PROFIT,
+              sourceJobId: String(job.id ?? idempotencyKey),
+              limit: Number(job.data?.limit ?? 50),
+            }),
             removeOnComplete: 1000,
             removeOnFail: 5000,
           }
