@@ -171,7 +171,12 @@ function normalizeTimelineEvent(event: AdminOrderEvent): OrderTimelineRow | null
   }
 
   if (type === "STATUS_CHANGED") {
-    const fromStatus = typeof details?.fromStatus === "string" ? details.fromStatus : null;
+    const fromStatus =
+      typeof details?.fromStatus === "string"
+        ? details.fromStatus
+        : typeof details?.previousStatus === "string"
+          ? details.previousStatus
+          : null;
     const toStatus =
       typeof details?.toStatus === "string"
         ? details.toStatus

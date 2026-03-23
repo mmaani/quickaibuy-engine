@@ -26,7 +26,11 @@ import {
   type AdminOrdersFilter,
   type CompactBatchReviewMode,
 } from "@/lib/orders";
-import { isAuthorizedReviewAuthorizationHeader, isReviewConsoleConfigured } from "@/lib/review/auth";
+import {
+  getReviewActorIdFromAuthorizationHeader,
+  isAuthorizedReviewAuthorizationHeader,
+  isReviewConsoleConfigured,
+} from "@/lib/review/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +59,7 @@ async function requireAdmin() {
   if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(auth)) {
     redirect("/admin/review");
   }
-  return auth;
+  return getReviewActorIdFromAuthorizationHeader(auth) ?? "admin/orders";
 }
 
 function statusLabel(status: string): string {
@@ -211,12 +215,11 @@ const ordersHelpLegend = [
 async function runOrderAction(formData: FormData) {
   "use server";
 
-  const authHeader = await requireAdmin();
+  const actorId = await requireAdmin();
   const orderId = String(formData.get("orderId") ?? "").trim();
   const actionType = String(formData.get("actionType") ?? "").trim();
   const filter = normalizeAdminOrdersFilter(String(formData.get("filter") ?? ""));
   const mode = normalizeBatchReviewMode(String(formData.get("mode") ?? ""));
-  const actorId = authHeader ? "admin/orders" : "admin/orders";
 
   if (!orderId) {
     redirect(
