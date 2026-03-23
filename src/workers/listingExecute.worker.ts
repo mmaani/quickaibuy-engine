@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
-import { reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
+import { releaseDailyListingSlot, reserveDailyListingSlot } from "@/lib/listings/checkDailyListingCap";
 import { getListingThroughputState } from "@/lib/listings/listingThroughputController";
 import {
   findListingDuplicatesForCandidate,
@@ -522,33 +522,6 @@ export async function runListingExecution(opts?: {
       continue;
     }
 
-    const reserved = await reserveDailyListingSlot({
-      marketplaceKey: "ebay",
-      dailyCap: throughput.maxDailyPublish,
-    });
-
-    if (!reserved.allowed) {
-      await writeAuditLog({
-        actorType: "WORKER",
-        actorId,
-        entityType: "LISTING",
-        entityId: listingId,
-        eventType: "LISTING_PUBLISH_SKIPPED_DAILY_CAP",
-        details: {
-          listingId,
-          candidateId,
-          marketplaceKey,
-          listingIdFilter: listingIdFilter || null,
-          dailyCap: reserved.dailyCap,
-          used: reserved.used,
-          remaining: reserved.remaining,
-        },
-      });
-
-      skipped++;
-      continue;
-    }
-
     const locked = await db.execute(sql`
       UPDATE listings
       SET
@@ -572,6 +545,43 @@ export async function runListingExecution(opts?: {
           candidateId,
           marketplaceKey,
           listingIdFilter: listingIdFilter || null,
+        },
+      });
+
+      skipped++;
+      continue;
+    }
+
+    const reserved = await reserveDailyListingSlot({
+      marketplaceKey: "ebay",
+      dailyCap: throughput.maxDailyPublish,
+    });
+
+    if (!reserved.allowed) {
+      await db.execute(sql`
+        UPDATE listings
+        SET
+          status = ${LISTING_PUBLISH_ENTRY_STATUS},
+          publish_started_ts = NULL,
+          updated_at = NOW()
+        WHERE id = ${listingId}
+          AND status = ${LISTING_STATUSES.PUBLISH_IN_PROGRESS}
+      `);
+
+      await writeAuditLog({
+        actorType: "WORKER",
+        actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_PUBLISH_SKIPPED_DAILY_CAP",
+        details: {
+          listingId,
+          candidateId,
+          marketplaceKey,
+          listingIdFilter: listingIdFilter || null,
+          dailyCap: reserved.dailyCap,
+          used: reserved.used,
+          remaining: reserved.remaining,
         },
       });
 
@@ -646,11 +656,21 @@ export async function runListingExecution(opts?: {
 
       executed++;
     } catch (err) {
+      const released = await releaseDailyListingSlot({
+        marketplaceKey: "ebay",
+        dailyCap: throughput.maxDailyPublish,
+      });
+
       await db.execute(sql`
         UPDATE listings
         SET
           status = ${LISTING_STATUSES.PUBLISH_FAILED},
           last_publish_error = ${String(err)},
+          response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
+            dailyCapRelease: {
+              released: true,
+            },
+          })}::jsonb,
           publish_finished_ts = NOW(),
           updated_at = NOW()
         WHERE id = ${listingId}
@@ -668,6 +688,11 @@ export async function runListingExecution(opts?: {
           marketplaceKey,
           listingIdFilter: listingIdFilter || null,
           error: String(err),
+          dailyCapRelease: {
+            dailyCap: released.dailyCap,
+            used: released.used,
+            remaining: released.remaining,
+          },
         },
       });
 
