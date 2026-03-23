@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
 import { pool } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = requirePipelineAdmin(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const result = await pool.query(
       `

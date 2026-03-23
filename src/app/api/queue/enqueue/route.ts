@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { jobsQueue, jobNameFromUnknown } from "@/src/lib/bull";
+import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
 import { pool } from "@/lib/db";
 import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobNames";
 
@@ -13,6 +14,11 @@ function isRecord(v: unknown): v is JsonRecord {
 }
 
 export async function POST(req: Request) {
+  const auth = requirePipelineAdmin(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const bodyRaw: unknown = await req.json().catch(() => ({}));
   const body = isRecord(bodyRaw) ? bodyRaw : {};
 
@@ -42,7 +48,7 @@ export async function POST(req: Request) {
     `,
     [
       "api",
-      "queue.enqueue",
+      auth.actorId ?? "queue.enqueue",
       "job",
       idempotencyKey ?? null,
       "ENQUEUE",

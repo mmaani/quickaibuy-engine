@@ -204,7 +204,19 @@ export async function fetchEbayOrders(input?: {
   });
 
   const text = await resp.text();
-  const body = (text ? JSON.parse(text) : {}) as EbayOrderListResponse;
+  let body: EbayOrderListResponse = {};
+
+  if (text) {
+    try {
+      body = JSON.parse(text) as EbayOrderListResponse;
+    } catch {
+      if (!resp.ok) {
+        throw new Error(`eBay order fetch failed: ${resp.status} ${text.slice(0, 500)}`);
+      }
+
+      throw new Error("eBay order fetch returned non-JSON response body.");
+    }
+  }
 
   const rawOrders = Array.isArray(body.orders) ? body.orders : [];
   logOrderSyncDebug("fetch_response", {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
 import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { enqueueProductDiscover } from "@/lib/jobs/enqueueTrendExpand";
@@ -7,6 +8,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  const auth = requirePipelineAdmin(req);
+  if (!auth.ok) return auth.response;
+
   if (
     process.env.ENABLE_STUB_PRODUCT_DISCOVER !== "true" &&
     process.env.NODE_ENV !== "development"

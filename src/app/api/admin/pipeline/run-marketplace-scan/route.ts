@@ -20,13 +20,14 @@ export async function POST(request: Request) {
   const { searchParams } = new URL(request.url);
   const limit = clampInt(body.limit ?? searchParams.get("limit"), 25, 1, 100);
   const productRawId = String(body.productRawId ?? searchParams.get("productRawId") ?? "").trim() || undefined;
-  const platformRaw = String(body.platform ?? searchParams.get("platform") ?? "ebay").trim().toLowerCase();
+  const platform = String(body.platform ?? searchParams.get("platform") ?? "ebay").trim().toLowerCase();
 
-  if (platformRaw !== "ebay" && platformRaw !== "amazon" && platformRaw !== "all") {
-    return NextResponse.json({ ok: false, error: "platform must be one of: ebay, amazon, all" }, { status: 400 });
+  if (platform !== "ebay") {
+    return NextResponse.json(
+      { ok: false, error: "platform must be 'ebay'. Other marketplaces are not implemented." },
+      { status: 400 }
+    );
   }
-
-  const platform = (platformRaw === "all" ? "ebay" : platformRaw) as "ebay" | "amazon";
 
   const result = await handleMarketplaceScanJob({
     limit,

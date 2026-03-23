@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
 import { getQueue } from "@/lib/queue/bullmq";
 import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
@@ -8,6 +9,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  const auth = requirePipelineAdmin(req);
+  if (!auth.ok) return auth.response;
+
   const body: Record<string, unknown> = await req.json().catch(() => ({}));
   const signalValue = String(body.signalValue ?? "").trim();
   if (!signalValue) {
