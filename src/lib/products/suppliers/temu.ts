@@ -125,7 +125,7 @@ function extractDetailImages(text: string): string[] {
     .map((match) => String(match[0] ?? "").replace(/^http:\/\//i, "https://"))
     .filter((url) => /\.(jpg|jpeg|png|webp|avif)/i.test(url));
 
-  return Array.from(new Set(matches)).slice(0, 6);
+  return Array.from(new Set(matches)).slice(0, 48);
 }
 
 async function fetchTemuDetailText(detailUrl: string): Promise<{ text: string; mode: string }> {
@@ -158,7 +158,7 @@ async function enrichTemuProductWithDetail(product: SupplierProduct): Promise<Su
 
     const title = extractDetailTitle(fetched.text) ?? product.title;
     const images = extractDetailImages(fetched.text);
-    const mergedImages = Array.from(new Set([...(product.images ?? []), ...images])).slice(0, 6);
+    const mergedImages = Array.from(new Set([...(product.images ?? []), ...images])).slice(0, 48);
     const availabilitySignal =
       inferredAvailability.signal !== "UNKNOWN"
         ? inferredAvailability.signal

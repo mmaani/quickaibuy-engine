@@ -1,5 +1,9 @@
 import type { ListingPreviewOutput } from "./types";
 
+function isHttpUrl(value: unknown): boolean {
+  return typeof value === "string" && /^https?:\/\//i.test(value.trim());
+}
+
 export function validateListingPreview(preview: ListingPreviewOutput) {
   const errors: string[] = [];
   const payload =
@@ -24,6 +28,24 @@ export function validateListingPreview(preview: ListingPreviewOutput) {
     }
   }
   if (preview.marketplaceKey === "ebay") {
+    const images = Array.isArray(payload?.images) ? payload.images : [];
+    if (images.some((image) => !isHttpUrl(image))) {
+      errors.push("ebay images must be URL references only");
+    }
+    if (images.length > 24) {
+      errors.push("ebay image count exceeds 24");
+    }
+    const media =
+      payload?.media && typeof payload.media === "object" && !Array.isArray(payload.media)
+        ? (payload.media as Record<string, unknown>)
+        : null;
+    const video =
+      media?.video && typeof media.video === "object" && !Array.isArray(media.video)
+        ? (media.video as Record<string, unknown>)
+        : null;
+    if (video?.url != null && !isHttpUrl(video.url)) {
+      errors.push("ebay media video must be URL reference only");
+    }
     const categoryId = String(payload?.categoryId ?? "").trim();
     if (!categoryId) {
       errors.push("ebay categoryId required");

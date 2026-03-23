@@ -1,5 +1,50 @@
 export type ListingPreviewMarketplace = "ebay" | "amazon";
 
+export type ListingPreviewMediaImageKind = "hero" | "angle" | "lifestyle" | "detail" | "other";
+export type ListingPreviewMediaHostingMode = "external" | "self_hosted" | "eps";
+
+export type ListingPreviewMediaImage = {
+  url: string;
+  kind: ListingPreviewMediaImageKind;
+  rank: number;
+  source: "supplier" | "marketplace";
+  fingerprint: string;
+  hostingMode: ListingPreviewMediaHostingMode;
+  reasons: string[];
+};
+
+export type ListingPreviewMediaVideo = {
+  url: string;
+  format: string | null;
+  durationSeconds: number | null;
+  sizeBytes: number | null;
+  validationOk: boolean;
+  validationReason: string | null;
+  attachOnPublish: boolean;
+  publishSupported: boolean;
+  operatorNote: string | null;
+};
+
+export type ListingPreviewMediaAudit = {
+  imageCandidateCount: number;
+  imageSelectedCount: number;
+  imageSkippedCount: number;
+  imageHostingMode: ListingPreviewMediaHostingMode | null;
+  mixedImageHostingModesDropped: boolean;
+  selectedImageUrls: string[];
+  videoDetected: boolean;
+  videoAttached: boolean;
+  videoSkipped: boolean;
+  videoSkipReason: string | null;
+  operatorNote: string | null;
+};
+
+export type ListingPreviewMedia = {
+  images: ListingPreviewMediaImage[];
+  video: ListingPreviewMediaVideo | null;
+  audit: ListingPreviewMediaAudit;
+};
+
 export type ListingPreviewInput = {
   candidateId: string;
 
@@ -8,6 +53,7 @@ export type ListingPreviewInput = {
   supplierTitle: string | null;
   supplierSourceUrl: string | null;
   supplierImageUrl: string | null;
+  supplierImages?: string[] | null;
   supplierPrice: number | null;
   supplierRawPayload?: unknown;
   supplierWarehouseCountry: string | null;
@@ -36,6 +82,7 @@ export type EbayListingPreviewPayload = {
   condition: "NEW";
   shipFromCountry: string | null;
   images?: string[];
+  media?: ListingPreviewMedia;
   description?: string | null;
   source: {
     candidateId: string;
@@ -44,6 +91,7 @@ export type EbayListingPreviewPayload = {
     supplierTitle: string | null;
     supplierSourceUrl: string | null;
     supplierImageUrl: string | null;
+    supplierImages?: string[];
     supplierWarehouseCountry: string | null;
     shipFromCountry: string | null;
   };

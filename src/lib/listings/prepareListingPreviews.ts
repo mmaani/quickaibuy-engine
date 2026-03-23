@@ -282,6 +282,9 @@ async function processCandidatePreviewRows(
     const supplierImageUrl = Array.isArray(row.supplierImages)
       ? ((row.supplierImages.find((v) => typeof v === "string") as string | undefined) ?? null)
       : null;
+    const supplierImages = Array.isArray(row.supplierImages)
+      ? row.supplierImages.filter((v): v is string => typeof v === "string")
+      : [];
     const supplierCountry = extractSupplierShipFromCountry(row);
     const categoryClassification =
       context.marketplace === "ebay"
@@ -343,6 +346,7 @@ async function processCandidatePreviewRows(
       supplierTitle: row.supplierTitle,
       supplierSourceUrl: row.supplierSourceUrl,
       supplierImageUrl,
+      supplierImages,
       supplierRawPayload: row.supplierRawPayload,
       supplierPrice: toNum(row.supplierPrice),
       supplierWarehouseCountry: supplierCountry.supplierWarehouseCountry,

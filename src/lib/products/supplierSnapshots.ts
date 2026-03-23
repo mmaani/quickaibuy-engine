@@ -1,4 +1,5 @@
 import type { InsertRawProductInput } from "@/lib/db/productsRaw";
+import { sanitizeForMediaStorageMode } from "@/lib/media/storage";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
 import {
   normalizeAvailabilityConfidence,
@@ -40,6 +41,28 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     shippingEstimates: product.shippingEstimates,
     telemetrySignals: product.telemetrySignals,
   });
+  const sanitizedRawPayload = sanitizeForMediaStorageMode({
+    ...product.raw,
+    jobType: "supplier:discover",
+    keyword: product.keyword,
+    title: product.title,
+    price: product.price,
+    currency: product.currency,
+    images: product.images,
+    variants: product.variants,
+    shippingEstimates: product.shippingEstimates,
+    sourceUrl: product.sourceUrl,
+    supplierProductId: product.supplierProductId,
+    snapshotTs: product.snapshotTs,
+    platform: product.platform,
+    availabilitySignal,
+    availabilityConfidence,
+    availabilityEvidencePresent,
+    availabilityEvidenceQuality,
+    snapshotQuality: product.snapshotQuality ?? quality.snapshotQuality,
+    telemetrySignals: quality.telemetrySignals,
+    telemetry: quality.telemetry,
+  });
 
   return {
     supplierKey: String(product.platform ?? "").trim().toLowerCase(),
@@ -53,28 +76,7 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     priceMax: product.price,
     availabilityStatus: availabilitySignal,
     shippingEstimates: product.shippingEstimates,
-    rawPayload: {
-      ...product.raw,
-      jobType: "supplier:discover",
-      keyword: product.keyword,
-      title: product.title,
-      price: product.price,
-      currency: product.currency,
-      images: product.images,
-      variants: product.variants,
-      shippingEstimates: product.shippingEstimates,
-      sourceUrl: product.sourceUrl,
-      supplierProductId: product.supplierProductId,
-      snapshotTs: product.snapshotTs,
-      platform: product.platform,
-      availabilitySignal,
-      availabilityConfidence,
-      availabilityEvidencePresent,
-      availabilityEvidenceQuality,
-      snapshotQuality: product.snapshotQuality ?? quality.snapshotQuality,
-      telemetrySignals: quality.telemetrySignals,
-      telemetry: quality.telemetry,
-    },
+    rawPayload: sanitizedRawPayload,
     snapshotTs,
   };
 }

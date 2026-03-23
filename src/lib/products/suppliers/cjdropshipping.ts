@@ -48,6 +48,11 @@ type CjProductDetailData = {
   isUnsold?: string | number;
   PROPERTYEN?: string;
   VARIANTKEYEN?: string;
+  video?: string;
+  videoUrl?: string;
+  goodsVideo?: string;
+  videoUrlList?: string[];
+  productVideo?: string;
 };
 
 type CjWrappedResponse<T> = {
@@ -113,7 +118,21 @@ function normalizeImageUrls(detail: CjProductDetailData): string[] {
     .map((value) => String(value ?? "").trim())
     .filter(Boolean);
 
-  return Array.from(new Set(withPrimary)).slice(0, 8);
+  return Array.from(new Set(withPrimary)).slice(0, 48);
+}
+
+function normalizeVideoUrls(detail: CjProductDetailData): string[] {
+  const raw = [
+    detail.video,
+    detail.videoUrl,
+    detail.goodsVideo,
+    detail.productVideo,
+    ...(Array.isArray(detail.videoUrlList) ? detail.videoUrlList : []),
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(raw)).slice(0, 5);
 }
 
 function parseVariantValues(expandField: string | undefined): string[] {
@@ -303,6 +322,7 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       propertyEn: toNonEmptyString(detail.PROPERTYEN),
       variantKeyEn: toNonEmptyString(detail.VARIANTKEYEN),
       goodsJsonSearch: detail.goodsJsonSearch ?? null,
+      videos: normalizeVideoUrls(detail),
       sourceFrom: detail.sourceFrom ?? null,
       stanProducts: Array.isArray(detail.stanProducts) ? detail.stanProducts.slice(0, 20) : [],
       detailPayload: detail,

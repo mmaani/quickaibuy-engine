@@ -1,5 +1,7 @@
+import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
 import { generateListingDescription } from "./generateListingDescription";
+import { buildListingPreviewMedia } from "./media";
 import { optimizeListingTitle } from "./optimizeListingTitle";
 import type { EbayListingPreviewPayload, ListingPreviewInput, ListingPreviewOutput } from "./types";
 
@@ -22,24 +24,14 @@ function pickPrice(input: ListingPreviewInput): number {
   return 0;
 }
 
-function pickImages(input: ListingPreviewInput): string[] {
-  if (typeof input.marketplaceImageUrl === "string" && input.marketplaceImageUrl.trim().length > 0) {
-    return [input.marketplaceImageUrl];
-  }
-
-  if (typeof input.supplierImageUrl === "string" && input.supplierImageUrl.trim().length > 0) {
-    return [input.supplierImageUrl];
-  }
-
-  return [];
-}
-
 export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutput {
+  const mediaStorageMode = getMediaStorageMode();
   const title = pickTitle(input);
   const price = pickPrice(input);
   const quantity = 1;
   const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
-  const images = pickImages(input);
+  const media = buildListingPreviewMedia(input);
+  const images = media.images.map((image) => image.url);
   const description = generateListingDescription({
     title,
     supplierTitle: input.supplierTitle,
@@ -56,6 +48,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
     condition: "NEW",
     shipFromCountry,
     images,
+    media,
     description,
     source: {
       candidateId: input.candidateId,
@@ -64,6 +57,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       supplierTitle: input.supplierTitle,
       supplierSourceUrl: input.supplierSourceUrl,
       supplierImageUrl: input.supplierImageUrl,
+      supplierImages: input.supplierImages ?? [],
       supplierWarehouseCountry: input.supplierWarehouseCountry,
       shipFromCountry: input.shipFromCountry,
     },
@@ -94,6 +88,12 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       titleLength: title.length,
       categoryId: input.categoryId ?? null,
       description,
+      imagesSelected: media.audit.imageSelectedCount,
+      mediaStorageMode,
+      videoDetected: media.audit.videoDetected,
+      videoAttached: media.audit.videoAttached,
+      videoSkipReason: media.audit.videoSkipReason,
+      operatorNote: media.audit.operatorNote,
     },
   };
 }

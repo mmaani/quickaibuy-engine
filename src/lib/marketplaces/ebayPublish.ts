@@ -1,3 +1,4 @@
+import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
 
 export type EbayListingPayload = {
@@ -126,6 +127,11 @@ function numberOrNull(value: unknown): number | null {
     if (Number.isFinite(n)) return n;
   }
   return null;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => stringOrNull(entry)).filter((entry): entry is string => Boolean(entry));
 }
 
 function objectOrNull(value: unknown): Record<string, unknown> | null {
@@ -298,6 +304,7 @@ function buildEbayPublishConfigValidation(): EbayPublishEnvValidation {
       EBAY_FULFILLMENT_POLICY_ID: values.fulfillmentPolicyId,
       EBAY_DEFAULT_CATEGORY_ID: values.defaultCategoryId,
       ENABLE_EBAY_LIVE_PUBLISH: stringOrNull(process.env.ENABLE_EBAY_LIVE_PUBLISH) ?? "false",
+      MEDIA_STORAGE_MODE: getMediaStorageMode(),
       PRIVACY_POLICY_URL: publicUrls.privacyPolicyUrl,
       EBAY_AUTH_ACCEPTED_URL: publicUrls.authAcceptedUrl,
       EBAY_AUTH_DECLINED_URL: publicUrls.authDeclinedUrl,
@@ -311,6 +318,7 @@ export function sanitizeEbayPayload(payload: unknown): Record<string, unknown> {
   const source = objectOrNull(raw.source) ?? {};
   const matchedMarketplace = objectOrNull(raw.matchedMarketplace) ?? {};
   const economics = objectOrNull(raw.economics) ?? {};
+  const media = objectOrNull(raw.media) ?? {};
 
   const cleanedSource: Record<string, unknown> = {
     candidateId: stringOrNull(source.candidateId),
@@ -319,6 +327,7 @@ export function sanitizeEbayPayload(payload: unknown): Record<string, unknown> {
     supplierWarehouseCountry:
       stringOrNull(source.supplierWarehouseCountry) ?? stringOrNull(source.shipFromCountry),
     supplierImageUrl: stringOrNull(source.supplierImageUrl),
+    supplierImages: stringArray(source.supplierImages),
   };
 
   const cleanedMatchedMarketplace: Record<string, unknown> = {
@@ -355,12 +364,77 @@ export function sanitizeEbayPayload(payload: unknown): Record<string, unknown> {
     images: Array.isArray(raw.images)
       ? raw.images.map((x) => stringOrNull(x)).filter(Boolean)
       : [],
+    media: sanitizeMedia(media),
     source: cleanedSource,
     matchedMarketplace: cleanedMatchedMarketplace,
     economics: cleanedEconomics,
   };
 
   return cleaned;
+}
+
+function sanitizeMedia(value: Record<string, unknown>): Record<string, unknown> | null {
+  const images = Array.isArray(value.images)
+    ? value.images
+        .map((entry) => {
+          if (typeof entry === "string") {
+            return { url: stringOrNull(entry) };
+          }
+
+          const image = objectOrNull(entry);
+          if (!image) return null;
+
+          return {
+            url: stringOrNull(image.url),
+            kind: stringOrNull(image.kind),
+            rank: numberOrNull(image.rank),
+            source: stringOrNull(image.source),
+            fingerprint: stringOrNull(image.fingerprint),
+            hostingMode: stringOrNull(image.hostingMode),
+            reasons: stringArray(image.reasons),
+          };
+        })
+        .filter((entry) => Boolean(entry?.url))
+    : [];
+
+  const videoInput = objectOrNull(value.video);
+  const video = videoInput
+    ? {
+        url: stringOrNull(videoInput.url),
+        format: stringOrNull(videoInput.format),
+        durationSeconds: numberOrNull(videoInput.durationSeconds),
+        sizeBytes: numberOrNull(videoInput.sizeBytes),
+        validationOk: Boolean(videoInput.validationOk),
+        validationReason: stringOrNull(videoInput.validationReason),
+        attachOnPublish: Boolean(videoInput.attachOnPublish),
+        publishSupported: Boolean(videoInput.publishSupported),
+        operatorNote: stringOrNull(videoInput.operatorNote),
+      }
+    : null;
+
+  const auditInput = objectOrNull(value.audit);
+  const audit = auditInput
+    ? {
+        imageCandidateCount: numberOrNull(auditInput.imageCandidateCount),
+        imageSelectedCount: numberOrNull(auditInput.imageSelectedCount),
+        imageSkippedCount: numberOrNull(auditInput.imageSkippedCount),
+        imageHostingMode: stringOrNull(auditInput.imageHostingMode),
+        mixedImageHostingModesDropped: Boolean(auditInput.mixedImageHostingModesDropped),
+        selectedImageUrls: stringArray(auditInput.selectedImageUrls),
+        videoDetected: Boolean(auditInput.videoDetected),
+        videoAttached: Boolean(auditInput.videoAttached),
+        videoSkipped: Boolean(auditInput.videoSkipped),
+        videoSkipReason: stringOrNull(auditInput.videoSkipReason),
+        operatorNote: stringOrNull(auditInput.operatorNote),
+      }
+    : null;
+
+  if (!images.length && !video && !audit) return null;
+  return {
+    images,
+    video,
+    audit,
+  };
 }
 
 export function getEbayPublishEnvValidation(): EbayPublishEnvValidation {
@@ -701,24 +775,112 @@ function buildDescription(payload: Record<string, unknown>, title: string): stri
   return lines.join("\n").slice(0, 4000);
 }
 
-function extractImageUrls(payload: Record<string, unknown>): string[] {
+function inferImageHostingMode(url: string): "external" | "self_hosted" | "eps" {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const siteHost = stringOrNull(process.env.WEBSITE_URL)
+      ? new URL(process.env.WEBSITE_URL as string).hostname.toLowerCase()
+      : null;
+
+    if (host.endsWith("ebayimg.com")) return "eps";
+    if (siteHost && host === siteHost) return "self_hosted";
+  } catch {
+    return "external";
+  }
+
+  return "external";
+}
+
+function extractImageUrls(payload: Record<string, unknown>): {
+  urls: string[];
+  hostingMode: "external" | "self_hosted" | "eps" | null;
+  mixedModesDropped: boolean;
+} {
   const images: string[] = [];
   const source = objectOrNull(payload.source) ?? {};
   const supplierImage = stringOrNull(source.supplierImageUrl);
+  const supplierImages = stringArray(source.supplierImages);
+  const media = objectOrNull(payload.media);
+  const mediaImages = Array.isArray(media?.images) ? media?.images : [];
 
-  const rawImages = payload.images;
-  if (Array.isArray(rawImages)) {
-    for (const entry of rawImages) {
-      const url = stringOrNull(entry);
-      if (url) images.push(url);
-    }
+  for (const entry of mediaImages) {
+    const image = objectOrNull(entry);
+    const url = stringOrNull(image?.url);
+    if (url) images.push(url);
+  }
+
+  const rawImages = Array.isArray(payload.images) ? payload.images : [];
+  for (const entry of rawImages) {
+    const url = stringOrNull(entry);
+    if (url) images.push(url);
+  }
+
+  for (const url of supplierImages) {
+    images.push(url);
   }
 
   if (images.length === 0 && supplierImage) {
     images.push(supplierImage);
   }
 
-  return [...new Set(images)].slice(0, 12);
+  const deduped = [...new Set(images)];
+  const byMode = new Map<"external" | "self_hosted" | "eps", string[]>();
+
+  for (const url of deduped) {
+    const mode = inferImageHostingMode(url);
+    const current = byMode.get(mode) ?? [];
+    current.push(url);
+    byMode.set(mode, current);
+  }
+
+  const selectedMode = Array.from(byMode.entries()).sort((a, b) => b[1].length - a[1].length)[0]?.[0] ?? null;
+  const mixedModesDropped = byMode.size > 1;
+
+  return {
+    urls: selectedMode ? (byMode.get(selectedMode) ?? []).slice(0, 24) : [],
+    hostingMode: selectedMode,
+    mixedModesDropped,
+  };
+}
+
+function extractVideoDecision(payload: Record<string, unknown>): {
+  detected: boolean;
+  attached: boolean;
+  skipped: boolean;
+  skipReason: string | null;
+  operatorNote: string | null;
+  url: string | null;
+} {
+  const media = objectOrNull(payload.media);
+  const video = objectOrNull(media?.video);
+  if (!video) {
+    return {
+      detected: false,
+      attached: false,
+      skipped: true,
+      skipReason: "no supplier video detected",
+      operatorNote: null,
+      url: null,
+    };
+  }
+
+  const validationOk = Boolean(video.validationOk);
+  const publishSupported = Boolean(video.publishSupported);
+  const attachOnPublish = Boolean(video.attachOnPublish && validationOk && publishSupported);
+  const operatorNote = stringOrNull(video.operatorNote);
+  const validationReason = stringOrNull(video.validationReason);
+
+  return {
+    detected: true,
+    attached: attachOnPublish,
+    skipped: !attachOnPublish,
+    skipReason: attachOnPublish
+      ? null
+      : validationReason ?? (publishSupported ? "video not attached" : "publish path not verified safe for video"),
+    operatorNote,
+    url: stringOrNull(video.url),
+  };
 }
 
 function parseExternalListingId(raw: unknown): string | null {
@@ -880,6 +1042,18 @@ export async function validateEbayPublishPreflight(payloadInput: unknown): Promi
 }
 
 export async function publishToEbayListing(listing: EbayListingPayload): Promise<EbayPublishResult> {
+  const mediaStorageMode = getMediaStorageMode();
+  if (mediaStorageMode !== "reference_only") {
+    return {
+      success: false,
+      externalListingId: null,
+      raw: {
+        mediaStorageMode,
+      },
+      errorMessage: `unsupported MEDIA_STORAGE_MODE for eBay publish: ${mediaStorageMode}`,
+    };
+  }
+
   if (listing.marketplaceKey !== "ebay") {
     return {
       success: false,
@@ -950,7 +1124,8 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
   }
 
   const inventoryItemKey = safeSku(`qab-${listing.id}`);
-  const imageUrls = extractImageUrls(payload);
+  const imageSelection = extractImageUrls(payload);
+  const videoDecision = extractVideoDecision(payload);
   const description = buildDescription(payload, title);
   const categoryId = resolveCategoryId(payload, config);
 
@@ -968,6 +1143,18 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
       returnPolicyId: config.returnPolicyId,
       fulfillmentPolicyId: config.fulfillmentPolicyId,
       shipFromCountry,
+    },
+    mediaAudit: {
+      storageMode: mediaStorageMode,
+      imageCountSelected: imageSelection.urls.length,
+      imageHostingMode: imageSelection.hostingMode,
+      mixedImageHostingModesDropped: imageSelection.mixedModesDropped,
+      videoDetected: videoDecision.detected,
+      videoAttached: videoDecision.attached,
+      videoSkipped: videoDecision.skipped,
+      videoSkipReason: videoDecision.skipReason,
+      operatorNote: videoDecision.operatorNote,
+      videoUrl: videoDecision.url,
     },
   };
 
@@ -994,7 +1181,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
           product: {
             title,
             description,
-            imageUrls,
+            imageUrls: imageSelection.urls,
             aspects: {
               Brand: [stringOrNull(payload.brand) ?? "Unbranded"],
               MPN: [stringOrNull(payload.mpn) ?? "Does Not Apply"],
