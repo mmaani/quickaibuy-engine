@@ -13,15 +13,23 @@ export type SupplierDiscoverResult = {
 };
 
 export async function runSupplierDiscover(limitPerKeyword = 20): Promise<SupplierDiscoverResult> {
-  const candidates = await getTrendCandidates(50);
+  const candidateLimit = Math.max(
+    1,
+    Math.min(Number(process.env.SUPPLIER_DISCOVER_CANDIDATE_LIMIT ?? 20), 100)
+  );
+  const candidates = await getTrendCandidates(candidateLimit);
 
   let insertedCount = 0;
   const keywords: string[] = [];
   const sources = new Set<string>();
+  const seenKeywords = new Set<string>();
 
   for (const row of candidates) {
     const keyword = String(row.candidate ?? "").trim();
     if (!keyword) continue;
+    const keywordKey = keyword.toLowerCase();
+    if (seenKeywords.has(keywordKey)) continue;
+    seenKeywords.add(keywordKey);
 
     keywords.push(keyword);
 

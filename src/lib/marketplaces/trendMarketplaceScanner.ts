@@ -303,6 +303,10 @@ export async function runTrendMarketplaceScanner(input?: {
   const limit = Number(input?.limit ?? 100);
   const platform = input?.platform ?? "ebay";
 
+  if (platform !== "ebay") {
+    throw new Error(`Unsupported marketplace scan platform: ${platform}. Only 'ebay' is implemented.`);
+  }
+
   const products = input?.productRawId
     ? (() => Promise.resolve(input.productRawId))().then(async (id) => {
         const one = await getProductRawById(id);

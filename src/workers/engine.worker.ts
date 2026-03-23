@@ -4,6 +4,7 @@ dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 import { Worker } from "bullmq";
+import { sanitizeForMediaStorageMode } from "@/lib/media/storage";
 import { bullConnection } from "@/src/lib/bull";
 import { JOBS } from "@/src/lib/jobNames";
 import { BULL_PREFIX, ENGINE_QUEUE_NAME } from "@/src/lib/queue";
@@ -12,6 +13,15 @@ import { log } from "@/lib/logger";
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function isHttpUrl(value: unknown): value is string {
+  return typeof value === "string" && /^https?:\/\//i.test(value.trim());
+}
+
+function stringArrayUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isHttpUrl);
 }
 
 type RunStatus = "STARTED" | "SUCCEEDED" | "FAILED";
@@ -83,21 +93,22 @@ async function handleScanSupplier(data: unknown) {
     throw new Error("SCAN_SUPPLIER requires payload.url");
   }
 
-  const images = Array.isArray(payload.images) ? payload.images : [];
+  const images = stringArrayUrls(payload.images);
   const variants = Array.isArray(payload.variants) ? payload.variants : [];
   const shippingEstimates = Array.isArray(payload.shippingEstimates)
     ? payload.shippingEstimates
     : [];
 
-  const rawPayload = {
+  const rawPayload = sanitizeForMediaStorageMode({
     ...payload,
+    images,
     normalizedAt: nowIso(),
     jobType: "SCAN_SUPPLIER",
     supplierKey,
     supplierProductId,
     sourceUrl,
     snapshotTs,
-  };
+  });
 
   await pool.query(
     `

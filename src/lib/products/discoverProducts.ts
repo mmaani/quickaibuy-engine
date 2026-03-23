@@ -30,6 +30,13 @@ export type ProductDiscoverResult = {
 
 const MARKETPLACES = ["amazon", "ebay", "temu", "aliexpress", "alibaba"];
 
+function isStubProductDiscoverEnabled(): boolean {
+  return (
+    process.env.ENABLE_STUB_PRODUCT_DISCOVER === "true" ||
+    process.env.NODE_ENV === "development"
+  );
+}
+
 function hashToInt(input: string): number {
   let h = 0;
   for (let i = 0; i < input.length; i += 1) {
@@ -80,6 +87,12 @@ export async function discoverProductsForCandidate(
   candidateId: string,
   options: ProductDiscoverOptions = {}
 ): Promise<ProductDiscoverResult> {
+  if (!isStubProductDiscoverEnabled()) {
+    throw new Error(
+      "Stub product discovery is disabled. Set ENABLE_STUB_PRODUCT_DISCOVER=true only for controlled development/testing."
+    );
+  }
+
   const row = await getTrendCandidate(candidateId);
 
   if (!row) {

@@ -7,6 +7,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  if (
+    process.env.ENABLE_STUB_PRODUCT_DISCOVER !== "true" &&
+    process.env.NODE_ENV !== "development"
+  ) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "stub product discovery disabled",
+      },
+      { status: 403 }
+    );
+  }
+
   const body: Record<string, unknown> = await req.json().catch(() => ({}));
   const candidateId = String(body.candidateId ?? "").trim();
 

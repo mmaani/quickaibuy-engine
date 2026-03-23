@@ -31,6 +31,10 @@ loadEnvFile(".env.development.local");
 loadEnvFile(".env");
 loadEnvFile(".env.development");
 
+if (!("ENABLE_STUB_PRODUCT_DISCOVER" in process.env)) {
+  process.env.ENABLE_STUB_PRODUCT_DISCOVER = "true";
+}
+
 const candidateId = process.argv[2];
 
 if (!candidateId) {
