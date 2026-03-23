@@ -1,4 +1,4 @@
-export type MediaStorageMode = "reference_only" | "cached_copy";
+export type MediaStorageMode = "reference_only";
 
 const DEFAULT_MEDIA_STORAGE_MODE: MediaStorageMode = "reference_only";
 const MEDIA_LIKE_KEY_RE = /(image|img|photo|picture|gallery|thumb|thumbnail|video|media|asset|file)/i;
@@ -74,18 +74,16 @@ export function getMediaStorageMode(): MediaStorageMode {
     .trim()
     .toLowerCase();
 
-  if (raw === "cached_copy") {
-    return "cached_copy";
+  if (raw && raw !== "reference_only") {
+    throw new Error(
+      `Unsupported MEDIA_STORAGE_MODE '${raw}'. Only 'reference_only' is supported in this runtime.`
+    );
   }
 
   return "reference_only";
 }
 
 export function sanitizeForMediaStorageMode<T>(value: T): T {
-  const mode = getMediaStorageMode();
-  if (mode === "cached_copy") {
-    return value;
-  }
-
+  getMediaStorageMode();
   return sanitizeUnknown(value, []) as T;
 }

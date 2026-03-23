@@ -64,7 +64,15 @@ async function ebayRequest<T>(url: string, init: RequestInit, context: string): 
   });
 
   const text = await response.text();
-  const parsed = text ? (JSON.parse(text) as unknown) : {};
+  let parsed: unknown = {};
+
+  if (text) {
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      parsed = { rawText: text };
+    }
+  }
 
   if (!response.ok) {
     throw new Error(`eBay ${context} failed: ${response.status} ${text.slice(0, 500)}`);

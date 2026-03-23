@@ -326,6 +326,7 @@ export function sanitizeEbayPayload(payload: unknown): Record<string, unknown> {
     supplierProductId: stringOrNull(source.supplierProductId),
     supplierWarehouseCountry:
       stringOrNull(source.supplierWarehouseCountry) ?? stringOrNull(source.shipFromCountry),
+    shipFromCountry: stringOrNull(source.shipFromCountry),
     supplierImageUrl: stringOrNull(source.supplierImageUrl),
     supplierImages: stringArray(source.supplierImages),
   };
