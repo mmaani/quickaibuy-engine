@@ -1,30 +1,40 @@
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { db } from "@/lib/db";
-import { handleMarketplaceScanJob } from "@/lib/jobs/marketplaceScan";
-import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
-import { runSupplierDiscover } from "@/lib/jobs/supplierDiscover";
+import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
+import { enqueueProductMatch } from "@/lib/jobs/enqueueProductMatch";
+import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { enqueueInventoryRiskScan } from "@/lib/jobs/enqueueInventoryRiskScan";
+import { enqueueProfitEval } from "@/lib/jobs/enqueueProfitEval";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
 import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
-import { runProfitEngine } from "@/lib/profit/profitEngine";
 
 export async function runControlQuickAction(action: string, actorId: string): Promise<string> {
   let message = "Action completed.";
 
   if (action === "supplier") {
-    const result = await runSupplierDiscover(10);
-    message = `Supplier discover inserted ${result.insertedCount} rows.`;
+    const job = await enqueueSupplierDiscoverRefresh({
+      limitPerKeyword: 10,
+      idempotencySuffix: `control-${Date.now()}`,
+      reason: "control-action",
+    });
+    message = `Supplier discover enqueued (${String(job.id)}).`;
   } else if (action === "match") {
-    const result = await handleMatchProductsJob({ limit: 25 });
-    message = `Matching scanned ${result.scanned}; inserted ${result.inserted}, updated ${result.updated} (total upserts ${result.inserted + result.updated}).`;
+    const job = await enqueueProductMatch({
+      marketplaceLimit: 25,
+    });
+    message = `Product match enqueued (${String(job.id)}).`;
   } else if (action === "scan") {
-    const result = await handleMarketplaceScanJob({ limit: 25, platform: "ebay" });
-    message = `Marketplace scan (eBay) scanned ${result.scanned} rows.`;
+    const job = await enqueueMarketplacePriceScan({ limit: 25, platform: "ebay" });
+    message = `Marketplace scan enqueued (${String(job.id)}).`;
   } else if (action === "profit") {
-    const result = await runProfitEngine({ limit: 50 });
-    message = `Profit engine scanned ${result.scanned}; upserted ${result.insertedOrUpdated}; skipped ${result.skipped}; stale deleted ${result.staleDeleted}.`;
+    const job = await enqueueProfitEval({
+      limit: 50,
+      idempotencySuffix: `control-${Date.now()}`,
+      triggerSource: "manual",
+    });
+    message = `Profit evaluation enqueued (${String(job.id)}).`;
   } else if (action === "prepare") {
     const result = await prepareListingPreviews({ limit: 25, marketplace: "ebay" });
     message = `Previews created ${result.created}, updated ${result.updated}, skipped ${result.skipped}.`;

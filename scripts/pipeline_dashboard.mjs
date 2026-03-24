@@ -25,6 +25,13 @@ async function main() {
   stats.push(await scalar(client, "matches", `select count(*)::int as count from matches`));
   stats.push(await scalar(client, "profitable_candidates", `select count(*)::int as count from profitable_candidates`));
   stats.push(await scalar(client, "active_matches", `select count(*)::int as count from matches where status = 'ACTIVE'`));
+  stats.push(
+    await scalar(
+      client,
+      "jobs_worker_runs_24h",
+      `select count(*)::int as count from worker_runs where worker = 'jobs.worker' and started_at >= now() - interval '24 hours'`
+    )
+  );
 
   console.log(JSON.stringify(stats, null, 2));
   await client.end();

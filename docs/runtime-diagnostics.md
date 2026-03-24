@@ -51,6 +51,12 @@ pnpm worker:engine:prod
 - `pnpm worker:engine:dev`: engine/runtime worker boot path with `.env.local`; not the generic queue consumer.
 - `pnpm worker:engine:prod`: same engine/runtime worker boot path with `.env.vercel`; not the generic queue consumer.
 
+Canonical upstream runtime truth for dashboard/control is:
+- queue: `JOBS_QUEUE_NAME` with namespace `BULL_PREFIX`
+- consumer: `src/workers/jobs.worker.ts`
+- durable run evidence: `worker_runs` (worker = `jobs.worker`)
+- queued-job evidence: `jobs` ledger
+
 `pnpm worker:engine` is an alias for `pnpm worker:engine:dev`.
 
 ## Which worker should I run?
@@ -93,6 +99,18 @@ Check inventory risk recurring schedule state:
 
 ```bash
 pnpm check:inventory-risk-schedule
+```
+
+Check upstream recurring schedules (trend/supplier/marketplace/match/profit):
+
+```bash
+pnpm check:upstream-schedules
+```
+
+Check worker-run truth for upstream stages:
+
+```bash
+pnpm check:worker-run-truth
 ```
 
 Manual on-demand inventory risk scan trigger:
@@ -152,3 +170,13 @@ Operator verification steps:
 2. Run `pnpm check:inventory-risk-schedule`.
 3. Confirm exactly one `INVENTORY_RISK_SCAN` repeatable entry exists with `every` = `21600000` ms.
 4. Optionally run `pnpm enqueue:inventory-risk-scan` and verify queue activity in the same check output.
+
+## Upstream Recurring Cadence (v1)
+
+- `trend:expand:refresh` every 6h
+- `supplier:discover` every 6h
+- `SCAN_MARKETPLACE_PRICE` every 4h
+- `MATCH_PRODUCT` every 4h
+- `EVAL_PROFIT` every 4h
+
+Registration point: `pnpm worker:jobs` boot path ensures these schedules idempotently and removes stale/duplicate repeatables for the same stage prefix.

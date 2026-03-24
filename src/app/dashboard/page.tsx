@@ -178,6 +178,18 @@ function StageCard({ stage }: { stage: StageStatus }) {
             <span>Last successful run</span>
             <span className="text-right text-white/85">{formatCompactDateTime(stage.lastSuccessfulRunTs)}</span>
           </div>
+          {stage.scheduleActive != null ? (
+            <div className="flex items-center justify-between gap-4 border-b border-white/6 pb-2">
+              <span>Schedule</span>
+              <span className="text-right text-white/85">{stage.scheduleActive ? "active" : "missing"}</span>
+            </div>
+          ) : null}
+          {stage.latestFailedRunTs ? (
+            <div className="flex items-center justify-between gap-4 border-b border-white/6 pb-2">
+              <span>Last failed run</span>
+              <span className="text-right text-white/85">{formatCompactDateTime(stage.latestFailedRunTs)}</span>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between gap-4">
             <span>Window</span>
             <span className="text-right text-white/85">{stage.thresholdHours}h policy</span>

@@ -14,6 +14,7 @@ import { pool } from "../lib/db";
 import { runOrderSyncWorker } from "./orderSync.worker";
 import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
+import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSchedules";
 import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
@@ -31,6 +32,21 @@ void ensureInventoryRiskScanSchedule({
       error: error instanceof Error ? error.message : String(error),
     });
   });
+
+void ensureUpstreamRecurringSchedules()
+  .then((result) => {
+    console.log("[jobs.worker] upstream recurring schedules ensured", result);
+  })
+  .catch((error) => {
+    console.error("[jobs.worker] failed to ensure upstream recurring schedules", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+async function skipIfSameJobActive(jobName: string, currentJobId: string) {
+  const activeJobs = await jobsQueue.getActive(0, 50);
+  return activeJobs.some((activeJob) => activeJob.name === jobName && String(activeJob.id) !== currentJobId);
+}
 
 async function logWorkerRun(args: {
   status: "STARTED" | "SUCCEEDED" | "FAILED";
@@ -148,6 +164,136 @@ export const jobsWorker = new Worker(
         return output;
       }
 
+      case JOB_NAMES.TREND_INGEST: {
+        const signalValue = String(job.data?.signalValue ?? "").trim();
+        if (!signalValue) {
+          throw new Error("trend:ingest missing signalValue");
+        }
+
+        const region = String(job.data?.region ?? "global").trim() || "global";
+        const signalType = String(job.data?.signalType ?? "keyword").trim() || "keyword";
+        const source = String(job.data?.source ?? "manual").trim() || "manual";
+        const score = Number(job.data?.score ?? 0.5);
+        const rawPayload = job.data?.rawPayload ?? {};
+
+        const result = await pool.query(
+          `
+            insert into trend_signals (source, signal_type, signal_value, region, score, raw_payload, captured_ts)
+            values ($1, $2, $3, $4, $5, $6::jsonb, now())
+            returning id
+          `,
+          [source, signalType, signalValue, region, score, JSON.stringify(rawPayload)]
+        );
+
+        const trendSignalId = String(result.rows[0]?.id ?? "");
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.TREND_INGEST,
+          entityType: "TREND_SIGNAL",
+          entityId: trendSignalId || signalValue,
+          eventType: "INGESTED",
+          details: {
+            source: "trend-ingest",
+            jobId: String(job.id ?? ""),
+            signalType,
+            signalValue,
+            region,
+            triggerSource: String(job.data?.triggerSource ?? "manual"),
+          },
+        });
+
+        if (trendSignalId) {
+          const nextJob = await jobsQueue.add(
+            JOB_NAMES.TREND_EXPAND,
+            { trendSignalId, triggerSource: "follow-up" },
+            {
+              jobId: buildFollowUpJobId({
+                jobName: JOB_NAMES.TREND_EXPAND,
+                sourceJobId: String(job.id ?? idempotencyKey),
+                limit: 1,
+              }),
+              removeOnComplete: 1000,
+              removeOnFail: 5000,
+            }
+          );
+
+          await markJobQueued({
+            jobType: JOB_NAMES.TREND_EXPAND,
+            idempotencyKey: String(nextJob.id),
+            payload: { trendSignalId, triggerSource: "follow-up" },
+            attempt: 0,
+            maxAttempts: 1,
+          });
+        }
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return {
+          ok: true,
+          trendSignalId,
+          signalValue,
+        };
+      }
+
+      case JOB_NAMES.TREND_EXPAND_REFRESH: {
+        const shouldSkip = await skipIfSameJobActive(job.name, String(job.id ?? idempotencyKey));
+        if (shouldSkip) {
+          const output = { ok: true, skipped: true, reason: "trend expand refresh already active" };
+          await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+          await logWorkerRun({
+            status: "SUCCEEDED",
+            jobName: job.name,
+            jobId: idempotencyKey,
+            durationMs: Date.now() - startedAtMs,
+          });
+          return output;
+        }
+
+        const limit = Math.max(1, Number(job.data?.limit ?? 25));
+        const signals = await pool.query(
+          `
+            select ts.id
+            from trend_signals ts
+            order by ts.captured_ts desc nulls last
+            limit $1
+          `,
+          [limit]
+        );
+
+        let expanded = 0;
+        let failed = 0;
+
+        for (const row of signals.rows as Array<{ id: string }>) {
+          try {
+            await expandTrendSignal(String(row.id));
+            expanded += 1;
+          } catch {
+            failed += 1;
+          }
+        }
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return {
+          ok: true,
+          scanned: signals.rows.length,
+          expanded,
+          failed,
+        };
+      }
+
       case JOB_NAMES.PRODUCT_DISCOVER: {
         const candidateId = String(job.data?.candidateId ?? "").trim();
 
@@ -197,6 +343,21 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.SUPPLIER_DISCOVER: {
+        const triggerSource = String(job.data?.triggerSource ?? "manual");
+        if (triggerSource === "schedule") {
+          const shouldSkip = await skipIfSameJobActive(job.name, String(job.id ?? idempotencyKey));
+          if (shouldSkip) {
+            const output = { ok: true, skipped: true, reason: "supplier discover already active" };
+            await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+            await logWorkerRun({
+              status: "SUCCEEDED",
+              jobName: job.name,
+              jobId: idempotencyKey,
+              durationMs: Date.now() - startedAtMs,
+            });
+            return output;
+          }
+        }
         const limitPerKeyword = Number(job.data?.limitPerKeyword ?? 20);
         const result = await runSupplierDiscover(limitPerKeyword);
 
@@ -239,6 +400,21 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.SCAN_MARKETPLACE_PRICE: {
+        const triggerSource = String(job.data?.triggerSource ?? "manual");
+        if (triggerSource === "schedule") {
+          const shouldSkip = await skipIfSameJobActive(job.name, String(job.id ?? idempotencyKey));
+          if (shouldSkip) {
+            const output = { ok: true, skipped: true, reason: "marketplace scan already active" };
+            await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+            await logWorkerRun({
+              status: "SUCCEEDED",
+              jobName: job.name,
+              jobId: idempotencyKey,
+              durationMs: Date.now() - startedAtMs,
+            });
+            return output;
+          }
+        }
         const result = await handleMarketplaceScanJob({
           limit: Number(job.data?.limit ?? 100),
           productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
@@ -311,6 +487,21 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.MATCH_PRODUCT: {
+        const triggerSource = String(job.data?.triggerSource ?? "manual");
+        if (triggerSource === "schedule") {
+          const shouldSkip = await skipIfSameJobActive(job.name, String(job.id ?? idempotencyKey));
+          if (shouldSkip) {
+            const output = { ok: true, skipped: true, reason: "matching already active" };
+            await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+            await logWorkerRun({
+              status: "SUCCEEDED",
+              jobName: job.name,
+              jobId: idempotencyKey,
+              durationMs: Date.now() - startedAtMs,
+            });
+            return output;
+          }
+        }
         const result = await handleMatchProductsJob({
           limit: Number(job.data?.limit ?? 50),
           productRawId: job.data?.productRawId ? String(job.data.productRawId).trim() : undefined,
@@ -375,6 +566,21 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.EVAL_PROFIT: {
+        const triggerSource = String(job.data?.triggerSource ?? "manual");
+        if (triggerSource === "schedule") {
+          const shouldSkip = await skipIfSameJobActive(job.name, String(job.id ?? idempotencyKey));
+          if (shouldSkip) {
+            const output = { ok: true, skipped: true, reason: "profit eval already active" };
+            await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+            await logWorkerRun({
+              status: "SUCCEEDED",
+              jobName: job.name,
+              jobId: idempotencyKey,
+              durationMs: Date.now() - startedAtMs,
+            });
+            return output;
+          }
+        }
         const result = await runProfitEngine({
           limit: Number(job.data?.limit ?? 50),
         });

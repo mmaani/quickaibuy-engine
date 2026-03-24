@@ -10,7 +10,9 @@ export const BULL_PREFIX = namespace.bullPrefix;
 export const QUEUE_NAMESPACE_DIAGNOSTICS = getQueueNamespaceDiagnostics();
 
 export const JOB_NAMES = {
+  TREND_INGEST: "trend:ingest",
   TREND_EXPAND: "trend:expand",
+  TREND_EXPAND_REFRESH: "trend:expand:refresh",
   PRODUCT_DISCOVER: "product:discover",
   SUPPLIER_DISCOVER: "supplier:discover",
   LISTING_PREPARE: "listing:prepare",

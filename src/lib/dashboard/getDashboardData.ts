@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { JOB_NAMES, LEGACY_JOB_NAMES } from "@/lib/jobNames";
+import { jobsQueue } from "@/lib/bull";
+import { JOB_NAMES } from "@/lib/jobNames";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 
 type Row = Record<string, unknown>;
@@ -18,6 +19,9 @@ export type StageStatus = {
   totalRows: number | null;
   freshRows: number | null;
   staleRows: number | null;
+  latestFailedRunTs?: string | null;
+  scheduleActive?: boolean;
+  dominantBlocker?: string;
   detail: string;
 };
 
@@ -211,12 +215,25 @@ async function getRedisHealth(): Promise<{ status: HealthState; detail?: string 
 }
 
 async function getLatestSuccessfulJobTs(jobTypes: string[]): Promise<string | null> {
-  if (!(await tableExists("jobs")) || jobTypes.length === 0) return null;
+  if (!(await tableExists("worker_runs")) || jobTypes.length === 0) return null;
   const rows = await runQuery(`
-    select max(coalesce(finished_ts, started_ts, scheduled_ts)) as ts
-    from jobs
+    select max(coalesce(finished_at, started_at)) as ts
+    from worker_runs
     where upper(coalesce(status, '')) = 'SUCCEEDED'
-      and job_type in (${sqlStringList(jobTypes)})
+      and worker = 'jobs.worker'
+      and job_name in (${sqlStringList(jobTypes)})
+  `);
+  return toStr(rows[0]?.ts);
+}
+
+async function getLatestFailedJobTs(jobTypes: string[]): Promise<string | null> {
+  if (!(await tableExists("worker_runs")) || jobTypes.length === 0) return null;
+  const rows = await runQuery(`
+    select max(coalesce(finished_at, started_at)) as ts
+    from worker_runs
+    where upper(coalesce(status, '')) = 'FAILED'
+      and worker = 'jobs.worker'
+      and job_name in (${sqlStringList(jobTypes)})
   `);
   return toStr(rows[0]?.ts);
 }
@@ -330,6 +347,12 @@ export async function getDashboardData(): Promise<DashboardData> {
     marketplaceJobTs,
     matchJobTs,
     profitJobTs,
+    trendFailedJobTs,
+    supplierFailedJobTs,
+    marketplaceFailedJobTs,
+    matchFailedJobTs,
+    profitFailedJobTs,
+    repeatableJobs,
   ] = await Promise.all([
     getDbHealth().catch((error) => ({
       status: "error" as const,
@@ -688,10 +711,29 @@ export async function getDashboardData(): Promise<DashboardData> {
     `).catch(() => []),
     getLatestSuccessfulJobTs([JOB_NAMES.TREND_EXPAND]),
     getLatestSuccessfulJobTs([JOB_NAMES.SUPPLIER_DISCOVER]),
-    getLatestSuccessfulJobTs([JOB_NAMES.SCAN_MARKETPLACE_PRICE, LEGACY_JOB_NAMES.SCAN_MARKETPLACE_PRICE]),
-    getLatestSuccessfulJobTs([JOB_NAMES.MATCH_PRODUCT, LEGACY_JOB_NAMES.MATCH_PRODUCT, LEGACY_JOB_NAMES.PRODUCT_MATCH]),
+    getLatestSuccessfulJobTs([JOB_NAMES.SCAN_MARKETPLACE_PRICE]),
+    getLatestSuccessfulJobTs([JOB_NAMES.MATCH_PRODUCT]),
     getLatestSuccessfulJobTs([JOB_NAMES.EVAL_PROFIT]),
+    getLatestFailedJobTs([JOB_NAMES.TREND_EXPAND, JOB_NAMES.TREND_EXPAND_REFRESH, JOB_NAMES.TREND_INGEST]),
+    getLatestFailedJobTs([JOB_NAMES.SUPPLIER_DISCOVER]),
+    getLatestFailedJobTs([JOB_NAMES.SCAN_MARKETPLACE_PRICE]),
+    getLatestFailedJobTs([JOB_NAMES.MATCH_PRODUCT]),
+    getLatestFailedJobTs([JOB_NAMES.EVAL_PROFIT]),
+    jobsQueue.getRepeatableJobs(0, 500).catch(() => []),
   ]);
+
+  const hasRepeatable = (jobName: string, idPrefix: string) =>
+    repeatableJobs.some(
+      (entry) =>
+        entry.name === jobName &&
+        (String(entry.id ?? "").startsWith(idPrefix) || String(entry.key ?? "").includes(idPrefix))
+    );
+
+  const trendScheduleActive = hasRepeatable(JOB_NAMES.TREND_EXPAND_REFRESH, "trend-expand-refresh-");
+  const supplierScheduleActive = hasRepeatable(JOB_NAMES.SUPPLIER_DISCOVER, "supplier-discover-");
+  const marketplaceScheduleActive = hasRepeatable(JOB_NAMES.SCAN_MARKETPLACE_PRICE, "marketplace-scan-");
+  const matchScheduleActive = hasRepeatable(JOB_NAMES.MATCH_PRODUCT, "match-product-");
+  const profitScheduleActive = hasRepeatable(JOB_NAMES.EVAL_PROFIT, "eval-profit-");
 
   const trendSummary = trendSummaryRow as Row;
   const trendCandidatesSummary = trendCandidatesSummaryRow as Row;
@@ -843,6 +885,89 @@ export async function getDashboardData(): Promise<DashboardData> {
       detailUnknown: "Listing readiness data is unavailable.",
     }),
   ];
+
+  for (const stage of stages) {
+    if (stage.key === "trend") {
+      stage.latestFailedRunTs = trendFailedJobTs;
+      stage.scheduleActive = trendScheduleActive;
+      stage.dominantBlocker = !trendScheduleActive
+        ? "missing schedule"
+        : !trendJobTs
+          ? "missing worker evidence"
+          : stage.state !== "fresh"
+            ? "stale upstream data"
+            : "none";
+      stage.detail = `${stage.detail} ${
+        stage.dominantBlocker === "none"
+          ? "Automation is scheduled and has worker evidence."
+          : `Dominant blocker: ${stage.dominantBlocker}.`
+      }`;
+    }
+    if (stage.key === "supplier") {
+      stage.latestFailedRunTs = supplierFailedJobTs;
+      stage.scheduleActive = supplierScheduleActive;
+      stage.dominantBlocker = !supplierScheduleActive
+        ? "missing schedule"
+        : !supplierJobTs
+          ? "missing worker evidence"
+          : stage.state !== "fresh"
+            ? "stale upstream data"
+            : "none";
+      stage.detail = `${stage.detail} ${
+        stage.dominantBlocker === "none"
+          ? "Automation is scheduled and has worker evidence."
+          : `Dominant blocker: ${stage.dominantBlocker}.`
+      }`;
+    }
+    if (stage.key === "marketplace") {
+      stage.latestFailedRunTs = marketplaceFailedJobTs;
+      stage.scheduleActive = marketplaceScheduleActive;
+      stage.dominantBlocker = !marketplaceScheduleActive
+        ? "missing schedule"
+        : !marketplaceJobTs
+          ? "missing worker evidence"
+          : stage.state !== "fresh"
+            ? "stale upstream data"
+            : "none";
+      stage.detail = `${stage.detail} ${
+        stage.dominantBlocker === "none"
+          ? "Automation is scheduled and has worker evidence."
+          : `Dominant blocker: ${stage.dominantBlocker}.`
+      }`;
+    }
+    if (stage.key === "matching") {
+      stage.latestFailedRunTs = matchFailedJobTs;
+      stage.scheduleActive = matchScheduleActive;
+      stage.dominantBlocker = !matchScheduleActive
+        ? "missing schedule"
+        : !matchJobTs
+          ? "missing worker evidence"
+          : stage.state !== "fresh"
+            ? "stale upstream data"
+            : "none";
+      stage.detail = `${stage.detail} ${
+        stage.dominantBlocker === "none"
+          ? "Automation is scheduled and has worker evidence."
+          : `Dominant blocker: ${stage.dominantBlocker}.`
+      }`;
+    }
+    if (stage.key === "profitability") {
+      stage.latestFailedRunTs = profitFailedJobTs;
+      stage.scheduleActive = profitScheduleActive;
+      stage.dominantBlocker = !profitScheduleActive
+        ? "missing schedule"
+        : !profitJobTs
+          ? "missing worker evidence"
+          : stage.state !== "fresh"
+            ? "blocked downstream freshness"
+            : "none";
+      stage.detail = `${stage.detail} ${
+        stage.dominantBlocker === "none"
+          ? "Automation is scheduled and has worker evidence."
+          : `Dominant blocker: ${stage.dominantBlocker}.`
+      }`;
+    }
+  }
 
   const alerts: DashboardData["alerts"] = [];
   if (marketplaceFresh === 0) {

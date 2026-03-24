@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
-import { runProfitEngine } from "@/lib/profit/profitEngine";
+import { enqueueProfitEval } from "@/lib/jobs/enqueueProfitEval";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 
 export const runtime = "nodejs";
@@ -20,8 +20,10 @@ export async function POST(request: Request) {
   const { searchParams } = new URL(request.url);
   const limit = clampInt(body.limit ?? searchParams.get("limit"), 25, 1, 300);
 
-  const result = await runProfitEngine({
+  const job = await enqueueProfitEval({
     limit,
+    idempotencySuffix: `manual-${Date.now()}`,
+    triggerSource: "manual",
   });
 
   await writeAuditLog({
@@ -35,7 +37,10 @@ export async function POST(request: Request) {
       input: {
         limit,
       },
-      result,
+      enqueuedJob: {
+        id: String(job.id),
+        name: job.name,
+      },
     },
   });
 
@@ -43,7 +48,8 @@ export async function POST(request: Request) {
     {
       ok: true,
       stage: "profit-engine",
-      result,
+      enqueued: true,
+      jobId: String(job.id),
     },
     {
       headers: {
