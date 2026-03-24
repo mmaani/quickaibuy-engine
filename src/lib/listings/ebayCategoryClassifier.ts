@@ -26,25 +26,32 @@ const CATEGORY_CONFIDENCE_THRESHOLD = 0.75;
 const SAFE_HOME_DECOR_OTHER_CATEGORY_ID = "10034";
 const LIGHTING_OTHER_CATEGORY_ID = "3201";
 const CAR_ACCESSORIES_CATEGORY_ID = "6028";
+const DESK_DECOR_CATEGORY_ID = SAFE_HOME_DECOR_OTHER_CATEGORY_ID;
 
 const RULES: CategoryRule[] = [
   {
     label: "lighting-other",
     categoryId: LIGHTING_OTHER_CATEGORY_ID,
     categoryName: "Home & Garden > Lamps, Lighting & Ceiling Fans > Other Lighting & Ceiling Fans",
-    keywords: ["light", "lamp", "rgb"],
+    keywords: ["light", "lamp", "night light", "bedside", "ambient", "crystal", "acrylic"],
   },
   {
     label: "car-accessories",
     categoryId: CAR_ACCESSORIES_CATEGORY_ID,
     categoryName: "eBay Motors > Parts & Accessories",
-    keywords: ["car"],
+    keywords: ["car", "mount", "phone mount", "holder"],
+  },
+  {
+    label: "desk-decor-safe",
+    categoryId: DESK_DECOR_CATEGORY_ID,
+    categoryName: "Home & Garden > Home Decor > Other Home Decor",
+    keywords: ["desk", "decor", "fan", "organizer"],
   },
   {
     label: "safe-home-decor-other",
     categoryId: SAFE_HOME_DECOR_OTHER_CATEGORY_ID,
     categoryName: "Home & Garden > Home Decor > Other Home Decor",
-    keywords: ["speaker", "bluetooth"],
+    keywords: ["gift", "home decor", "speaker", "bluetooth"],
   },
 ];
 

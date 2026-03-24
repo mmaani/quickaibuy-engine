@@ -1,5 +1,10 @@
 import { db } from "@/lib/db";
 import { productsRaw, marketplacePrices, matches } from "@/lib/db/schema";
+import {
+  evaluateMatchAcceptance,
+  evaluateProductPipelinePolicy,
+  normalizeSupplierQuality,
+} from "@/lib/products/pipelinePolicy";
 import { and, desc, eq, sql } from "drizzle-orm";
 
 const STOPWORDS = new Set([
@@ -126,10 +131,14 @@ type CandidateRow = {
   supplierKey: string | null;
   supplierProductId: string | null;
   supplierTitle: string | null;
+  supplierImages: unknown;
+  supplierPrice: string | null;
+  supplierRawPayload: unknown;
   marketplaceKey: string | null;
   marketplaceListingId: string | null;
   matchedTitle: string | null;
   finalMatchScore: string | null;
+  marketplacePrice: string | null;
 };
 
 type RankedCandidate = CandidateRow & {
@@ -141,7 +150,7 @@ type RankedCandidate = CandidateRow & {
 };
 
 function chooseBestCandidate(rows: CandidateRow[]): RankedCandidate | null {
-  const minConfidence = Number(process.env.MATCH_MIN_CONFIDENCE || "0.45");
+  const minConfidence = Number(process.env.MATCH_MIN_CONFIDENCE || "0.65");
   const minMarketplaceScore = Number(process.env.MATCH_MIN_MARKETPLACE_SCORE || "0.42");
   const minOverlap = Number(process.env.MATCH_MIN_OVERLAP || "2");
 
@@ -162,6 +171,52 @@ function chooseBestCandidate(rows: CandidateRow[]): RankedCandidate | null {
     if (scored.rawScore < minMarketplaceScore) continue;
     if (scored.overlap < minOverlap) continue;
     if (scored.confidence < minConfidence) continue;
+
+    const supplierImages = Array.isArray(row.supplierImages)
+      ? row.supplierImages.filter((value): value is string => typeof value === "string")
+      : [];
+    const pipeline = evaluateProductPipelinePolicy({
+      title: supplierTitle,
+      marketplaceTitle: matchedTitle,
+      supplierTitle,
+      imageUrl: supplierImages[0] ?? null,
+      additionalImageCount: Math.max(0, supplierImages.length - 1),
+      supplierQuality:
+        row.supplierRawPayload &&
+        typeof row.supplierRawPayload === "object" &&
+        !Array.isArray(row.supplierRawPayload)
+          ? normalizeSupplierQuality(
+              String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
+            )
+          : null,
+      telemetrySignals:
+        row.supplierRawPayload &&
+        typeof row.supplierRawPayload === "object" &&
+        !Array.isArray(row.supplierRawPayload) &&
+        Array.isArray((row.supplierRawPayload as Record<string, unknown>).telemetrySignals)
+          ? ((row.supplierRawPayload as Record<string, unknown>).telemetrySignals as string[])
+          : [],
+      supplierPrice: row.supplierPrice != null ? Number(row.supplierPrice) : null,
+      marketplacePrice: row.marketplacePrice != null ? Number(row.marketplacePrice) : null,
+      matchConfidence: scored.confidence,
+    });
+    const supplierPrice = row.supplierPrice != null ? Number(row.supplierPrice) : null;
+    const marketplacePrice = row.marketplacePrice != null ? Number(row.marketplacePrice) : null;
+    const priceAlignmentStrong =
+      supplierPrice != null &&
+      marketplacePrice != null &&
+      supplierPrice > 0 &&
+      marketplacePrice >= supplierPrice * 1.5 &&
+      marketplacePrice <= supplierPrice * 5;
+    const matchDecision = evaluateMatchAcceptance({
+      confidence: scored.confidence,
+      titleSimilarityStrong: scored.rescored >= 0.68 || scored.overlap >= 3,
+      priceAlignmentStrong,
+      strongMedia: pipeline.strongMedia,
+      simpleLowRisk: pipeline.simpleLowRisk,
+    });
+
+    if (!matchDecision.accepted) continue;
 
     const candidate: RankedCandidate = {
       ...row,
@@ -201,10 +256,14 @@ export async function runEbayMatches(input?: {
           supplierKey: productsRaw.supplierKey,
           supplierProductId: productsRaw.supplierProductId,
           supplierTitle: productsRaw.title,
+          supplierImages: productsRaw.images,
+          supplierPrice: productsRaw.priceMin,
+          supplierRawPayload: productsRaw.rawPayload,
           marketplaceKey: marketplacePrices.marketplaceKey,
           marketplaceListingId: marketplacePrices.marketplaceListingId,
           matchedTitle: marketplacePrices.matchedTitle,
           finalMatchScore: marketplacePrices.finalMatchScore,
+          marketplacePrice: marketplacePrices.price,
         })
         .from(marketplacePrices)
         .innerJoin(productsRaw, eq(marketplacePrices.productRawId, productsRaw.id))
@@ -221,10 +280,14 @@ export async function runEbayMatches(input?: {
           supplierKey: productsRaw.supplierKey,
           supplierProductId: productsRaw.supplierProductId,
           supplierTitle: productsRaw.title,
+          supplierImages: productsRaw.images,
+          supplierPrice: productsRaw.priceMin,
+          supplierRawPayload: productsRaw.rawPayload,
           marketplaceKey: marketplacePrices.marketplaceKey,
           marketplaceListingId: marketplacePrices.marketplaceListingId,
           matchedTitle: marketplacePrices.matchedTitle,
           finalMatchScore: marketplacePrices.finalMatchScore,
+          marketplacePrice: marketplacePrices.price,
         })
         .from(marketplacePrices)
         .innerJoin(productsRaw, eq(marketplacePrices.productRawId, productsRaw.id))
@@ -279,6 +342,47 @@ export async function runEbayMatches(input?: {
     const supplierKey = String(best.supplierKey || "").toLowerCase();
     const supplierProductId = String(best.supplierProductId || "");
     const matchedTitle = String(best.matchedTitle || "");
+    const supplierImages = Array.isArray(best.supplierImages)
+      ? best.supplierImages.filter((value): value is string => typeof value === "string")
+      : [];
+    const pipeline = evaluateProductPipelinePolicy({
+      title: String(best.supplierTitle || ""),
+      marketplaceTitle: matchedTitle,
+      supplierTitle: String(best.supplierTitle || ""),
+      imageUrl: supplierImages[0] ?? null,
+      additionalImageCount: Math.max(0, supplierImages.length - 1),
+      supplierQuality:
+        best.supplierRawPayload &&
+        typeof best.supplierRawPayload === "object" &&
+        !Array.isArray(best.supplierRawPayload)
+          ? normalizeSupplierQuality(
+              String((best.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
+            )
+          : null,
+      telemetrySignals:
+        best.supplierRawPayload &&
+        typeof best.supplierRawPayload === "object" &&
+        !Array.isArray(best.supplierRawPayload) &&
+        Array.isArray((best.supplierRawPayload as Record<string, unknown>).telemetrySignals)
+          ? ((best.supplierRawPayload as Record<string, unknown>).telemetrySignals as string[])
+          : [],
+      supplierPrice: best.supplierPrice != null ? Number(best.supplierPrice) : null,
+      marketplacePrice: best.marketplacePrice != null ? Number(best.marketplacePrice) : null,
+      matchConfidence: best.confidence,
+    });
+    const priceAlignmentStrong =
+      best.supplierPrice != null &&
+      best.marketplacePrice != null &&
+      Number(best.supplierPrice) > 0 &&
+      Number(best.marketplacePrice) >= Number(best.supplierPrice) * 1.5 &&
+      Number(best.marketplacePrice) <= Number(best.supplierPrice) * 5;
+    const matchDecision = evaluateMatchAcceptance({
+      confidence: best.confidence,
+      titleSimilarityStrong: best.rescored >= 0.68 || best.overlap >= 3,
+      priceAlignmentStrong,
+      strongMedia: pipeline.strongMedia,
+      simpleLowRisk: pipeline.simpleLowRisk,
+    });
 
     const evidence = {
       supplierTitle: String(best.supplierTitle || ""),
@@ -293,6 +397,8 @@ export async function runEbayMatches(input?: {
       minMarketplaceScore,
       minOverlap,
       selectionMode: "best_per_supplier_product",
+      pipelinePolicy: pipeline,
+      matchDecision,
     };
 
     await db

@@ -47,6 +47,31 @@ const STOPWORDS = new Set([
   "on",
 ]);
 
+function preferredPhrase(source: string): string[] {
+  const normalized = source.toLowerCase();
+  if (
+    normalized.includes("night light") ||
+    normalized.includes("ambient") ||
+    normalized.includes("bedside") ||
+    normalized.includes("lamp")
+  ) {
+    return ["Ambient", "Night", "Light", "Home", "Decor"];
+  }
+  if (normalized.includes("crystal") || normalized.includes("acrylic")) {
+    return ["Decorative", "Lamp", "Home", "Decor", "Gift"];
+  }
+  if (normalized.includes("magnetic") && normalized.includes("car")) {
+    return ["Magnetic", "Car", "Phone", "Mount", "Holder"];
+  }
+  if (normalized.includes("fan")) {
+    return ["Mini", "Portable", "Fan", "Desk", "Cooling"];
+  }
+  if (normalized.includes("desk")) {
+    return ["Desk", "Decor", "Organizer", "Gift"];
+  }
+  return ["Home", "Desk", "Decor", "Gift"];
+}
+
 function cleanTitle(input: string): string {
   return input
     .replace(/\s+/g, " ")
@@ -92,12 +117,23 @@ export function optimizeListingTitle(input: OptimizeListingTitleInput): string {
     .map(titleCase);
 
   const preferredCore = dedupePreserveOrder(baseWords).slice(0, 5);
-  const marketingWords = ["Home", "Desk", "Decor", "Gift"];
+  const marketingWords = preferredPhrase(source);
   const composed = dedupePreserveOrder([...preferredCore, ...marketingWords]);
 
   let optimized = composed.join(" ").trim();
   if (!optimized) {
     optimized = "Home Desk Decor Gift";
+  }
+
+  if (optimized.length < 45) {
+    const extended = dedupePreserveOrder([
+      ...composed,
+      "Modern",
+      "Stylish",
+      "Room",
+      "Accessory",
+    ]);
+    optimized = extended.join(" ").trim();
   }
 
   while (optimized.length > TITLE_LIMIT && composed.length > 1) {

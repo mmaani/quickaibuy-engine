@@ -73,7 +73,8 @@
 │   ├── 20260311c_supplier_orders_manual_workflow_fields.sql
 │   ├── 20260311d_supplier_orders_add_tracking_carrier.sql
 │   ├── 20260311e_supplier_orders_tracking_sync_fields.sql
-│   └── 20260311f_add_manual_overrides.sql
+│   ├── 20260311f_add_manual_overrides.sql
+│   └── 20260322_add_seller_account_metrics.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -122,7 +123,6 @@
 │   ├── quickaibuy-logo.svg
 │   ├── vercel.svg
 │   └── window.svg
-├── quickaibuy-auto-listing-expanded.zip
 ├── repo_tree.txt
 ├── review_files
 │   ├── db.ts
@@ -132,6 +132,7 @@
 │   └── trendMarketplaceScanner.ts
 ├── scripts
 │   ├── README.md
+│   ├── apply_sql_file.ts
 │   ├── approve_profitable_candidate.ts
 │   ├── approve_single_candidate_ready.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
@@ -169,6 +170,7 @@
 │   ├── check_order_automation_runtime_ready.ts
 │   ├── check_order_automation_schema.ts
 │   ├── check_order_operator_mappings.ts
+│   ├── check_orders_table.mjs
 │   ├── check_price_guard.ts
 │   ├── check_products_raw_titles.mjs
 │   ├── check_profit_breakdown.ts
@@ -192,6 +194,7 @@
 │   ├── check_trend_signals.mjs
 │   ├── check_upstash_isolation.ts
 │   ├── check_vercel_env_access.ts
+│   ├── clear_success_publish_error.ts
 │   ├── compare_local_and_vercel_env.mjs
 │   ├── confirm_env_local.sh
 │   ├── db_inspect.mjs
@@ -237,6 +240,7 @@
 │   ├── peek-products-raw.mjs
 │   ├── pipeline_dashboard.mjs
 │   ├── preflight_runtime_dependencies.ts
+│   ├── prepare_controlled_cj_candidate_ready.ts
 │   ├── prepare_one_ready_to_publish.ts
 │   ├── probe_runtime.ts
 │   ├── promote_listing_previews_ready.ts
@@ -291,6 +295,7 @@
 │   ├── run_trend_candidates_index_migration.sh
 │   ├── run_trend_candidates_migration.sh
 │   ├── run_worker_engine_with_preflight.ts
+│   ├── select_sellable_products.ts
 │   ├── show_db_index.sh
 │   ├── sql
 │   │   ├── listings_allow_listed_status.sql
@@ -302,6 +307,7 @@
 │   ├── test_ebay_search.sh
 │   ├── test_ebay_token.sh
 │   ├── test_ebay_tracking_sync.ts
+│   ├── test_hardening_regressions.ts
 │   ├── test_paused_listing_lifecycle_guardrails.ts
 │   ├── test_product_discover.mjs
 │   ├── test_product_matcher.mjs
@@ -442,6 +448,7 @@
 │   │   │   ├── enqueueProductMatch.ts
 │   │   │   ├── enqueueSupplierDiscover.ts
 │   │   │   ├── enqueueTrendExpand.ts
+│   │   │   ├── followUpJobIds.ts
 │   │   │   ├── jobLedger.ts
 │   │   │   ├── jobNames.ts
 │   │   │   ├── marketplaceScan.ts
@@ -454,11 +461,16 @@
 │   │   │   ├── build_listing_preview.ts
 │   │   │   ├── checkDailyListingCap.ts
 │   │   │   ├── duplicateProtection.ts
+│   │   │   ├── ebayCategoryClassifier.ts
 │   │   │   ├── enqueueReadyToPublishListings.ts
+│   │   │   ├── generateListingDescription.ts
 │   │   │   ├── getApprovedListingsQueueData.ts
 │   │   │   ├── getListingExecutionCandidates.ts
 │   │   │   ├── idempotency.ts
+│   │   │   ├── listingThroughputController.ts
 │   │   │   ├── markListingReadyToPublish.ts
+│   │   │   ├── media.ts
+│   │   │   ├── optimizeListingTitle.ts
 │   │   │   ├── prepareListingPreviews.ts
 │   │   │   ├── publishIdempotency.ts
 │   │   │   ├── publishRateLimiter.ts
@@ -482,6 +494,8 @@
 │   │   │   └── ebayMatchEngine.ts
 │   │   ├── matching
 │   │   │   └── productMatcher.ts
+│   │   ├── media
+│   │   │   └── storage.ts
 │   │   ├── orders
 │   │   │   ├── ebayFetchOrders.ts
 │   │   │   ├── getAdminOrdersPageData.ts
@@ -499,7 +513,9 @@
 │   │   │   └── updateOrderStatus.ts
 │   │   ├── products
 │   │   │   ├── discoverProducts.ts
+│   │   │   ├── pipelinePolicy.ts
 │   │   │   ├── refreshSingleSupplierProduct.ts
+│   │   │   ├── sellabilityScore.ts
 │   │   │   ├── supplierAvailability.ts
 │   │   │   ├── supplierQuality.ts
 │   │   │   ├── supplierSnapshots.ts
@@ -550,4 +566,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-82 directories, 469 files
+83 directories, 484 files

@@ -5,6 +5,7 @@ import { listings, marketplacePrices, matches, productsRaw, profitableCandidates
 import { buildListingPreview } from "./build_listing_preview";
 import { buildListingPreviewIdempotencyKey } from "./idempotency";
 import { CATEGORY_CONFIDENCE_THRESHOLD, classifyEbayCategory } from "./ebayCategoryClassifier";
+import { markListingReadyToPublish } from "./markListingReadyToPublish";
 import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
@@ -27,6 +28,8 @@ type PrepareListingPreviewCounters = {
   scanned: number;
   created: number;
   updated: number;
+  ready: number;
+  reconciled: number;
   skipped: number;
   failed: number;
 };
@@ -146,6 +149,54 @@ function dedupeRows(rows: CandidatePreviewSourceRow[]): CandidatePreviewSourceRo
   );
 }
 
+async function blockCandidateForManualReview(input: {
+  candidateId: string;
+  actorType: "WORKER" | "ADMIN";
+  actorId: string;
+  eventType: string;
+  marketplaceKey: ListingPreviewMarketplace;
+  idempotencyKey: string;
+  blockReason: string;
+  details: Record<string, unknown>;
+}) {
+  await db.execute(sql`
+    UPDATE profitable_candidates
+    SET
+      decision_status = 'MANUAL_REVIEW',
+      listing_eligible = FALSE,
+      listing_block_reason = ${input.blockReason},
+      listing_eligible_ts = NOW()
+    WHERE id = ${input.candidateId}
+  `);
+
+  await db.execute(sql`
+    UPDATE listings
+    SET
+      status = 'PREVIEW',
+      updated_at = NOW(),
+      response = COALESCE(response, '{}'::jsonb) || jsonb_build_object(
+        'autoDemotedFromReady', true,
+        'autoDemoteReason', ${input.blockReason}
+      )
+    WHERE candidate_id = ${input.candidateId}
+      AND status = 'READY_TO_PUBLISH'
+  `);
+
+  await writeAuditLog({
+    actorType: input.actorType,
+    actorId: input.actorId,
+    entityType: "PROFITABLE_CANDIDATE",
+    entityId: input.candidateId,
+    eventType: input.eventType,
+    details: {
+      candidateId: input.candidateId,
+      marketplaceKey: input.marketplaceKey,
+      idempotencyKey: input.idempotencyKey,
+      ...input.details,
+    },
+  });
+}
+
 async function fetchApprovedCandidateRows(selection: CandidateSelection): Promise<CandidatePreviewSourceRow[]> {
   const baseQuery = db
     .select({
@@ -209,12 +260,54 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
   return dedupeRows(rows as CandidatePreviewSourceRow[]);
 }
 
+async function reconcileIneligibleReadyListings(context: ProcessingContext): Promise<number> {
+  const result = await db.execute<{ id: string; candidateId: string }>(sql`
+    UPDATE listings l
+    SET
+      status = 'PREVIEW',
+      updated_at = NOW(),
+      response = COALESCE(l.response, '{}'::jsonb) || jsonb_build_object(
+        'autoDemotedFromReady', true,
+        'autoDemoteReason', 'candidate no longer APPROVED/listing_eligible'
+      )
+    FROM profitable_candidates pc
+    WHERE l.candidate_id = pc.id
+      AND l.marketplace_key = ${context.marketplace}
+      AND l.status = 'READY_TO_PUBLISH'
+      AND (
+        upper(coalesce(pc.decision_status, '')) <> 'APPROVED'
+        OR coalesce(pc.listing_eligible, false) = false
+      )
+    RETURNING l.id AS id, l.candidate_id AS "candidateId"
+  `);
+
+  for (const row of result.rows ?? []) {
+    await writeAuditLog({
+      actorType: context.actorType,
+      actorId: context.actorId,
+      entityType: "LISTING",
+      entityId: String(row.id),
+      eventType: "LISTING_AUTO_DEMOTED_INELIGIBLE_READY",
+      details: {
+        listingId: String(row.id),
+        candidateId: String(row.candidateId),
+        marketplaceKey: context.marketplace,
+        source: context.source,
+      },
+    });
+  }
+
+  return (result.rows ?? []).length;
+}
+
 async function processCandidatePreviewRows(
   rows: CandidatePreviewSourceRow[],
   context: ProcessingContext
-): Promise<Pick<PrepareListingPreviewResult, "created" | "updated" | "skipped" | "failed" | "scanned">> {
+): Promise<Pick<PrepareListingPreviewResult, "created" | "updated" | "ready" | "skipped" | "failed" | "scanned">> {
   let created = 0;
   let updated = 0;
+  let ready = 0;
+  const reconciled = await reconcileIneligibleReadyListings(context);
   let skipped = 0;
   let failed = 0;
 
@@ -235,10 +328,13 @@ async function processCandidatePreviewRows(
       .limit(1);
 
     const existingPreview =
-      existingListing.length && existingListing[0].status === "PREVIEW" ? existingListing : [];
+      existingListing.length &&
+      ["PREVIEW", "READY_TO_PUBLISH"].includes(existingListing[0].status)
+        ? existingListing
+        : [];
     const existingLivePath =
       existingListing.length &&
-      ["READY_TO_PUBLISH", "PUBLISH_IN_PROGRESS", "ACTIVE"].includes(existingListing[0].status)
+      ["PUBLISH_IN_PROGRESS", "ACTIVE"].includes(existingListing[0].status)
         ? existingListing
         : [];
 
@@ -304,27 +400,15 @@ async function processCandidatePreviewRows(
       failed++;
       const reason = categoryClassification?.reason ?? "category classification unavailable";
       const blockReason = `CATEGORY_CONFIDENCE_TOO_LOW: ${reason}`;
-
-      await db.execute(sql`
-        UPDATE profitable_candidates
-        SET
-          decision_status = 'MANUAL_REVIEW',
-          listing_eligible = FALSE,
-          listing_block_reason = ${blockReason},
-          listing_eligible_ts = NOW()
-        WHERE id = ${row.candidateId}
-      `);
-
-      await writeAuditLog({
+      await blockCandidateForManualReview({
+        candidateId: row.candidateId,
         actorType: context.actorType,
         actorId: context.actorId,
-        entityType: "PROFITABLE_CANDIDATE",
-        entityId: row.candidateId,
         eventType: "LISTING_CATEGORY_MANUAL_REVIEW_REQUIRED",
+        marketplaceKey: context.marketplace,
+        idempotencyKey,
+        blockReason,
         details: {
-          candidateId: row.candidateId,
-          marketplaceKey: context.marketplace,
-          idempotencyKey,
           categoryConfidence: categoryClassification?.confidence ?? null,
           categoryThreshold: CATEGORY_CONFIDENCE_THRESHOLD,
           categoryId: categoryClassification?.categoryId ?? null,
@@ -365,6 +449,10 @@ async function processCandidatePreviewRows(
 
     if (context.marketplace === "ebay") {
       const response = (preview.response ?? {}) as Record<string, unknown>;
+      const payload = preview.payload as Record<string, unknown>;
+      payload.categoryId = categoryClassification?.categoryId ?? null;
+      payload.categoryConfidence = categoryClassification?.confidence ?? null;
+      payload.categoryRuleLabel = categoryClassification?.ruleLabel ?? null;
       preview.response = {
         ...response,
         categoryId: categoryClassification?.categoryId ?? null,
@@ -376,16 +464,15 @@ async function processCandidatePreviewRows(
     const validation = validateListingPreview(preview);
     if (!validation.ok) {
       failed++;
-      await writeAuditLog({
+      await blockCandidateForManualReview({
+        candidateId: row.candidateId,
         actorType: context.actorType,
         actorId: context.actorId,
-        entityType: "PROFITABLE_CANDIDATE",
-        entityId: row.candidateId,
         eventType: "LISTING_PREVIEW_FAILED_VALIDATION",
+        marketplaceKey: context.marketplace,
+        idempotencyKey,
+        blockReason: `LISTING_QUALITY_GATE_FAILED: ${validation.errors.join("; ")}`,
         details: {
-          candidateId: row.candidateId,
-          marketplaceKey: context.marketplace,
-          idempotencyKey,
           errors: validation.errors,
           source: context.source,
         },
@@ -426,6 +513,7 @@ async function processCandidatePreviewRows(
 
     const payloadJson = preview.payload;
     const responseJson = preview.response ?? null;
+    let listingId: string;
 
     if (existingListing.length && (context.forceRefresh || existingListing[0].status !== "PREVIEW")) {
       await db
@@ -443,11 +531,12 @@ async function processCandidatePreviewRows(
         .where(eq(listings.id, existingListing[0].id));
 
       updated++;
+      listingId = existingListing[0].id;
       await writeAuditLog({
         actorType: context.actorType,
         actorId: context.actorId,
         entityType: "LISTING",
-        entityId: existingListing[0].id,
+        entityId: listingId,
         eventType: "LISTING_PREVIEW_REFRESHED",
         details: {
           candidateId: row.candidateId,
@@ -457,44 +546,70 @@ async function processCandidatePreviewRows(
           source: context.source,
         },
       });
-      continue;
+    } else {
+      const inserted = await db
+        .insert(listings)
+        .values({
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          status: "PREVIEW",
+          title: preview.title,
+          price: String(preview.price),
+          quantity: preview.quantity,
+          payload: payloadJson,
+          response: responseJson,
+          idempotencyKey,
+        })
+        .returning({ id: listings.id });
+
+      created++;
+      listingId = inserted[0].id;
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_PREVIEW_CREATED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          source: context.source,
+        },
+      });
     }
 
-    const inserted = await db
-      .insert(listings)
-      .values({
-        candidateId: row.candidateId,
-        marketplaceKey: context.marketplace,
-        status: "PREVIEW",
-        title: preview.title,
-        price: String(preview.price),
-        quantity: preview.quantity,
-        payload: payloadJson,
-        response: responseJson,
-        idempotencyKey,
-      })
-      .returning({ id: listings.id });
-
-    created++;
-    await writeAuditLog({
-      actorType: context.actorType,
+    const readyResult = await markListingReadyToPublish({
+      listingId,
       actorId: context.actorId,
-      entityType: "LISTING",
-      entityId: inserted[0].id,
-      eventType: "LISTING_PREVIEW_CREATED",
-      details: {
-        candidateId: row.candidateId,
-        marketplaceKey: context.marketplace,
-        idempotencyKey,
-        source: context.source,
-      },
+      actorType: context.actorType,
     });
+    if (readyResult.ok) {
+      ready++;
+    } else if (readyResult.reason) {
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_AUTO_READY_SKIPPED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          reason: readyResult.reason,
+          source: context.source,
+        },
+      });
+    }
   }
 
   return {
     scanned: rows.length,
     created,
     updated,
+    ready,
+    reconciled,
     skipped,
     failed,
   };

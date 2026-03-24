@@ -73,6 +73,8 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       roiPct: input.roiPct,
     },
     categoryId: input.categoryId ?? null,
+    categoryConfidence: null,
+    categoryRuleLabel: null,
   };
 
   return {

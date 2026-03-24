@@ -392,10 +392,46 @@ export const jobsWorker = new Worker(
           },
         });
 
+        const nextJob = await jobsQueue.add(
+          JOB_NAMES.LISTING_PREPARE,
+          {
+            limit: Number(job.data?.limit ?? 20),
+            marketplace: "ebay",
+            forceRefresh: true,
+          },
+          {
+            jobId: buildFollowUpJobId({
+              jobName: JOB_NAMES.LISTING_PREPARE,
+              sourceJobId: String(job.id ?? idempotencyKey),
+              limit: Number(job.data?.limit ?? 20),
+            }),
+            removeOnComplete: 1000,
+            removeOnFail: 5000,
+          }
+        );
+
+        await markJobQueued({
+          jobType: JOB_NAMES.LISTING_PREPARE,
+          idempotencyKey: String(nextJob.id),
+          payload: {
+            limit: Number(job.data?.limit ?? 20),
+            marketplace: "ebay",
+            forceRefresh: true,
+          },
+          attempt: 0,
+          maxAttempts: 1,
+        });
+
         console.log("[jobs.worker] completed job", {
           id: job.id,
           name: job.name,
           result,
+        });
+
+        console.log("[jobs.worker] enqueued follow-up", {
+          fromJob: job.name,
+          nextJobName: JOB_NAMES.LISTING_PREPARE,
+          nextJobId: nextJob.id,
         });
 
         await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });

@@ -60,6 +60,48 @@ type CjWrappedResponse<T> = {
   data?: T;
   message?: string;
   success?: boolean;
+  result?: boolean;
+};
+
+type CjAuthResponse = {
+  accessToken?: string;
+  access_token?: string;
+};
+
+type CjSearchProduct = {
+  id?: string;
+  nameEn?: string;
+  bigImage?: string;
+  sellPrice?: string | number;
+  discountPrice?: string | number;
+  listedNum?: number | string;
+  categoryId?: string;
+  threeCategoryName?: string;
+  twoCategoryName?: string;
+  oneCategoryName?: string;
+  isVideo?: number | string;
+  videoList?: string[];
+  supplierName?: string;
+  warehouseInventoryNum?: number | string;
+  totalVerifiedInventory?: number | string;
+  totalUnVerifiedInventory?: number | string;
+  verifiedWarehouse?: number | string;
+  deliveryCycle?: string;
+  description?: string;
+  saleStatus?: string | number;
+  authorityStatus?: string | number;
+  hasCECertification?: number | string;
+  customization?: number | string;
+  isPersonalized?: number | string;
+  variantKeyEn?: string;
+};
+
+type CjSearchResponse = {
+  content?: Array<{
+    productList?: CjSearchProduct[];
+    keyWord?: string;
+    relatedCategoryList?: Array<{ categoryId?: string; categoryName?: string }>;
+  }>;
 };
 
 export type CjDirectProductResult = {
@@ -71,6 +113,14 @@ export type CjDirectProductResult = {
   detailCacheUrl: string;
   inventoryCacheUrl: string;
 };
+
+type CjAccessTokenState = {
+  token: string;
+  expiresAtMs: number;
+};
+
+const CJ_API_BASE_URL = "https://developers.cjdropshipping.com/api2.0/v1";
+let cjAccessTokenState: CjAccessTokenState | null = null;
 
 function toNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -224,6 +274,227 @@ async function fetchJson<T>(url: string): Promise<T> {
   }
 
   return (await res.json()) as T;
+}
+
+async function getCjAccessToken(): Promise<string | null> {
+  const now = Date.now();
+  if (cjAccessTokenState && cjAccessTokenState.expiresAtMs > now + 60_000) {
+    return cjAccessTokenState.token;
+  }
+
+  const apiKey = String(process.env.CJ_API_KEY ?? "").trim();
+  if (!apiKey) return null;
+
+  const res = await fetch(`${CJ_API_BASE_URL}/authentication/getAccessToken`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "User-Agent":
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    },
+    body: JSON.stringify({ apiKey }),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    throw new Error(`CJ auth failed: ${res.status}`);
+  }
+
+  const wrapped = (await res.json()) as CjWrappedResponse<CjAuthResponse>;
+  const token =
+    toNonEmptyString(wrapped.data?.accessToken) ?? toNonEmptyString(wrapped.data?.access_token);
+  if (!token) {
+    throw new Error(`CJ auth missing access token: ${wrapped.message ?? "unknown error"}`);
+  }
+
+  cjAccessTokenState = {
+    token,
+    expiresAtMs: now + 14 * 24 * 60 * 60 * 1000,
+  };
+
+  return token;
+}
+
+function parseDeliveryCycleDays(value: unknown): { minDays: number | null; maxDays: number | null } {
+  const raw = String(value ?? "").trim();
+  const matches = Array.from(raw.matchAll(/\d+/g)).map((match) => Number(match[0]));
+  if (!matches.length) return { minDays: null, maxDays: null };
+  return {
+    minDays: Math.min(...matches),
+    maxDays: Math.max(...matches),
+  };
+}
+
+function buildCjShippingEstimates(product: CjSearchProduct) {
+  const cycle = parseDeliveryCycleDays(product.deliveryCycle);
+  if (cycle.minDays == null && cycle.maxDays == null) return [];
+
+  return [
+    {
+      label: "CJ estimated delivery",
+      cost: null,
+      currency: "USD",
+      etaMinDays: cycle.minDays,
+      etaMaxDays: cycle.maxDays,
+    },
+  ];
+}
+
+function buildCjSourceUrl(productId: string): string {
+  return `https://www.cjdropshipping.com/product/-p-${productId}.html`;
+}
+
+function normalizeCjSearchVideoUrls(product: CjSearchProduct): string[] {
+  return Array.from(new Set((Array.isArray(product.videoList) ? product.videoList : []).filter(Boolean))).slice(
+    0,
+    5
+  );
+}
+
+function normalizeCjSearchVariants(product: CjSearchProduct): ProductVariant[] {
+  return String(product.variantKeyEn ?? "")
+    .split(/[;,/|]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 10)
+    .map((value) => ({ name: "option", value }));
+}
+
+function toAvailabilitySignal(product: CjSearchProduct): {
+  signal: "IN_STOCK" | "LOW_STOCK" | "OUT_OF_STOCK" | "UNKNOWN";
+  confidence: number;
+} {
+  const totalVerified = toFiniteNumber(product.totalVerifiedInventory);
+  const totalInventory = toFiniteNumber(product.warehouseInventoryNum) ?? totalVerified;
+  const saleStatus = String(product.saleStatus ?? "").trim();
+  const authorityStatus = String(product.authorityStatus ?? "").trim();
+
+  if (saleStatus && saleStatus !== "3") {
+    return { signal: "OUT_OF_STOCK", confidence: 0.95 };
+  }
+  if (authorityStatus && authorityStatus !== "1") {
+    return { signal: "OUT_OF_STOCK", confidence: 0.9 };
+  }
+  if (totalInventory == null) {
+    return { signal: "UNKNOWN", confidence: 0.35 };
+  }
+  if (totalInventory <= 0) return { signal: "OUT_OF_STOCK", confidence: 0.95 };
+  if (totalInventory < 10) return { signal: "LOW_STOCK", confidence: 0.85 };
+  return { signal: "IN_STOCK", confidence: 0.95 };
+}
+
+function mapSearchProductToSupplierProduct(product: CjSearchProduct, keyword: string): SupplierProduct | null {
+  const supplierProductId = toNonEmptyString(product.id);
+  if (!supplierProductId) return null;
+
+  const title = toNonEmptyString(product.nameEn);
+  const primaryImage = toNonEmptyString(product.bigImage);
+  const availability = toAvailabilitySignal(product);
+  const videos = normalizeCjSearchVideoUrls(product);
+  const price = toPriceString(
+    toFiniteNumber(product.discountPrice) ?? toFiniteNumber(product.sellPrice)
+  );
+  const shippingEstimates = buildCjShippingEstimates(product);
+
+  return {
+    title,
+    price,
+    currency: "USD",
+    images: primaryImage ? [primaryImage] : [],
+    variants: normalizeCjSearchVariants(product),
+    sourceUrl: buildCjSourceUrl(supplierProductId),
+    supplierProductId,
+    shippingEstimates,
+    platform: "CJ Dropshipping",
+    keyword,
+    snapshotTs: new Date().toISOString(),
+    availabilitySignal: availability.signal,
+    availabilityConfidence: availability.confidence,
+    snapshotQuality: primaryImage ? "HIGH" : "LOW",
+    telemetrySignals: primaryImage ? ["parsed"] : ["parsed", "low_quality"],
+    raw: {
+      provider: "cj-list-v2",
+      parseMode: "api",
+      crawlStatus: "PARSED",
+      listingValidity: "VALID",
+      keyword,
+      title,
+      sourceUrl: buildCjSourceUrl(supplierProductId),
+      supplierProductId,
+      productId: supplierProductId,
+      price,
+      currency: "USD",
+      categoryId: product.categoryId ?? null,
+      categoryName: product.threeCategoryName ?? null,
+      categoryPath: [product.oneCategoryName, product.twoCategoryName, product.threeCategoryName].filter(Boolean),
+      description: toNonEmptyString(product.description),
+      deliveryCycle: toNonEmptyString(product.deliveryCycle),
+      inventoryBadge: toFiniteNumber(product.warehouseInventoryNum),
+      listedNum: toFiniteNumber(product.listedNum),
+      verifiedWarehouse: toFiniteNumber(product.verifiedWarehouse),
+      totalVerifiedInventory: toFiniteNumber(product.totalVerifiedInventory),
+      totalUnVerifiedInventory: toFiniteNumber(product.totalUnVerifiedInventory),
+      warehouseInventoryNum: toFiniteNumber(product.warehouseInventoryNum),
+      saleStatus: product.saleStatus ?? null,
+      authorityStatus: product.authorityStatus ?? null,
+      supplierName: toNonEmptyString(product.supplierName),
+      hasCECertification: toFiniteNumber(product.hasCECertification),
+      customization: toFiniteNumber(product.customization),
+      isPersonalized: toFiniteNumber(product.isPersonalized),
+      variantKeyEn: toNonEmptyString(product.variantKeyEn),
+      availabilitySignal: availability.signal,
+      availabilityConfidence: availability.confidence,
+      availabilityEvidencePresent: toFiniteNumber(product.warehouseInventoryNum) != null,
+      availabilityEvidenceQuality: "HIGH",
+      videos,
+      telemetrySignals: primaryImage ? ["parsed"] : ["parsed", "low_quality"],
+    },
+  };
+}
+
+export async function searchCjByKeyword(keyword: string, limit = 20): Promise<SupplierProduct[]> {
+  const trimmedKeyword = String(keyword ?? "").trim();
+  if (!trimmedKeyword) return [];
+
+  const accessToken = await getCjAccessToken();
+  if (!accessToken) return [];
+
+  const pageSize = Math.max(1, Math.min(Number(limit) || 20, 100));
+  const url = new URL(`${CJ_API_BASE_URL}/product/listV2`);
+  url.searchParams.set("page", "1");
+  url.searchParams.set("size", String(pageSize));
+  url.searchParams.set("keyWord", trimmedKeyword);
+  url.searchParams.set("countryCode", String(process.env.CJ_DISCOVER_COUNTRY_CODE ?? "US").trim() || "US");
+  url.searchParams.set("verifiedWarehouse", "1");
+  url.searchParams.set("startWarehouseInventory", String(process.env.CJ_DISCOVER_MIN_INVENTORY ?? "10"));
+  url.searchParams.set("orderBy", "4");
+  url.searchParams.set("sort", "desc");
+  url.searchParams.set("features", "enable_description,enable_category,enable_video");
+
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      "CJ-Access-Token": accessToken,
+      Accept: "application/json",
+      "User-Agent":
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    throw new Error(`CJ search failed: ${res.status} ${trimmedKeyword}`);
+  }
+
+  const wrapped = (await res.json()) as CjWrappedResponse<CjSearchResponse>;
+  const content = Array.isArray(wrapped.data?.content) ? wrapped.data.content : [];
+  const products = content.flatMap((entry) => (Array.isArray(entry.productList) ? entry.productList : []));
+
+  return products
+    .map((product) => mapSearchProductToSupplierProduct(product, trimmedKeyword))
+    .filter((product): product is SupplierProduct => product != null)
+    .slice(0, pageSize);
 }
 
 export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectProductResult> {

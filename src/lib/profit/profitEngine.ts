@@ -2,6 +2,13 @@ import { db } from "@/lib/db";
 import { getProductsRawLatestOrderBySql, getProductsRawTimestampExprSql } from "@/lib/db/productsRaw";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { extractAvailabilityFromRawPayload, normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
+import {
+  evaluateProductPipelinePolicy,
+  PRODUCT_PIPELINE_MARGIN_MIN,
+  PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
+  PRODUCT_PIPELINE_ROI_MIN,
+  normalizeSupplierQuality,
+} from "@/lib/products/pipelinePolicy";
 import { sql } from "drizzle-orm";
 import { calculateRealProfit } from "./realProfitCalculator";
 import { getPriceGuardThresholds } from "./priceGuardConfig";
@@ -23,11 +30,15 @@ type ProfitRow = {
   supplierSnapshotId: string | null;
   marketPriceSnapshotId: string | null;
   supplierPriceMin: string | null;
+  supplierTitle: string | null;
+  supplierImages: unknown;
+  supplierShippingEstimates: unknown;
   supplierSnapshotTs: Date | string | null;
   supplierAvailabilityStatus: string | null;
   supplierRawPayload: unknown;
   marketPrice: string | null;
   shippingPrice: string | null;
+  marketplaceTitle: string | null;
   marketSnapshotTs: Date | string | null;
 };
 
@@ -69,8 +80,18 @@ export async function runProfitEngine(input?: {
   marketplaceListingId?: string;
 }) {
   const limit = Number(input?.limit ?? 50);
-  const minRoiPct = Number(process.env.MIN_ROI_PCT || "15");
-  const minMatchConfidence = Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.50");
+  const minRoiPct = Math.max(
+    Number(process.env.MIN_ROI_PCT || String(PRODUCT_PIPELINE_ROI_MIN)),
+    PRODUCT_PIPELINE_ROI_MIN
+  );
+  const minMarginPct = Math.max(
+    Number(process.env.PROFIT_MIN_MARGIN_PCT || String(PRODUCT_PIPELINE_MARGIN_MIN)),
+    PRODUCT_PIPELINE_MARGIN_MIN
+  );
+  const minMatchConfidence = Math.max(
+    Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || String(PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN)),
+    PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN
+  );
   const maxMarketplaceSnapshotAgeHours = getPriceGuardThresholds().maxMarketplaceSnapshotAgeHours;
 
   const supplierKeyFilter =
@@ -141,6 +162,9 @@ export async function runProfitEngine(input?: {
         pr.id,
         pr.supplier_key,
         pr.supplier_product_id,
+        pr.title,
+        pr.images,
+        pr.shipping_estimates,
         pr.price_min,
         ${productsRawSnapshotTsSql} AS snapshot_ts,
         pr.availability_status,
@@ -164,6 +188,7 @@ export async function runProfitEngine(input?: {
           ELSE LOWER(mp.marketplace_key)
         END AS marketplace_key_norm,
         mp.marketplace_listing_id,
+        mp.matched_title,
         mp.price,
         mp.shipping_price,
         mp.snapshot_ts,
@@ -202,11 +227,15 @@ export async function runProfitEngine(input?: {
       lp.id AS "supplierSnapshotId",
       lmp.id AS "marketPriceSnapshotId",
       lp.price_min AS "supplierPriceMin",
+      lp.title AS "supplierTitle",
+      lp.images AS "supplierImages",
+      lp.shipping_estimates AS "supplierShippingEstimates",
       lp.snapshot_ts AS "supplierSnapshotTs",
       lp.availability_status AS "supplierAvailabilityStatus",
       lp.raw_payload AS "supplierRawPayload",
       lmp.price AS "marketPrice",
       lmp.shipping_price AS "shippingPrice",
+      lmp.matched_title AS "marketplaceTitle",
       lmp.snapshot_ts AS "marketSnapshotTs"
     FROM ranked_matches rm
     INNER JOIN latest_products lp
@@ -254,8 +283,9 @@ export async function runProfitEngine(input?: {
     });
 
     const roiPct = economics.roiPct;
+    const marginPct = economics.marginPct;
 
-    if (roiPct < minRoiPct) {
+    if (roiPct < minRoiPct || marginPct < minMarginPct) {
       skipped++;
       continue;
     }
@@ -366,32 +396,9 @@ export async function runProfitEngine(input?: {
     const availabilityUnsafe = availabilitySignal === "OUT_OF_STOCK";
     const availabilityManualReview =
       availabilitySignal === "UNKNOWN" || availabilitySignal === "LOW_STOCK";
-
-    const decisionStatus = staleMarketplaceSnapshot || supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
-      ? "MANUAL_REVIEW"
-      : (existing?.decisionStatus ?? "PENDING");
-    const listingEligible =
-      staleMarketplaceSnapshot || supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
-        ? false
-        : Boolean(existing?.listingEligible ?? false);
-    const listingBlockReason = staleMarketplaceSnapshot
-      ? `marketplace snapshot age ${marketplaceSnapshotAgeHours}h exceeds ${maxMarketplaceSnapshotAgeHours}h`
-      : supplierDriftExceeded
-      ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
-      : availabilityUnsafe
-        ? "supplier availability indicates out of stock"
-        : availabilityManualReview
-          ? `supplier availability requires manual review (${availabilitySignal})`
-      : (existing?.listingBlockReason ?? null);
-    const riskFlagsSql = staleMarketplaceSnapshot
-      ? sql`ARRAY['STALE_MARKETPLACE_SNAPSHOT']::text[]`
-      : supplierDriftExceeded
-      ? sql`ARRAY['SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT']::text[]`
-      : availabilityUnsafe
-        ? sql`ARRAY['SUPPLIER_OUT_OF_STOCK']::text[]`
-        : availabilityManualReview
-          ? sql`ARRAY['SUPPLIER_AVAILABILITY_UNKNOWN']::text[]`
-      : sql`ARRAY[]::text[]`;
+    const supplierImages = Array.isArray(row.supplierImages)
+      ? row.supplierImages.filter((value): value is string => typeof value === "string")
+      : [];
 
     const economics = calculateRealProfit({
       marketplaceKey,
@@ -406,6 +413,82 @@ export async function runProfitEngine(input?: {
     const estimatedProfit = economics.estimatedProfitUsd;
     const marginPct = economics.marginPct;
     const roiPct = economics.roiPct;
+    const telemetrySignals =
+      row.supplierRawPayload &&
+      typeof row.supplierRawPayload === "object" &&
+      !Array.isArray(row.supplierRawPayload) &&
+      Array.isArray((row.supplierRawPayload as Record<string, unknown>).telemetrySignals)
+        ? ((row.supplierRawPayload as Record<string, unknown>).telemetrySignals as string[])
+        : [];
+    const pipeline = evaluateProductPipelinePolicy({
+      title: row.supplierTitle,
+      marketplaceTitle: row.marketplaceTitle,
+      supplierTitle: row.supplierTitle,
+      imageUrl: supplierImages[0] ?? null,
+      additionalImageCount: Math.max(0, supplierImages.length - 1),
+      supplierQuality:
+        row.supplierRawPayload &&
+        typeof row.supplierRawPayload === "object" &&
+        !Array.isArray(row.supplierRawPayload)
+          ? normalizeSupplierQuality(
+              String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
+            )
+          : null,
+      telemetrySignals,
+      availabilitySignal,
+      availabilityConfidence: availability.confidence ?? null,
+      shippingEstimates: row.supplierShippingEstimates,
+      supplierPrice: supplierCost,
+      marketplacePrice: marketPrice,
+      matchConfidence,
+      marginPct,
+      roiPct,
+    });
+    const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
+    const automationSafe =
+      !staleMarketplaceSnapshot &&
+      !supplierDriftExceeded &&
+      !availabilityUnsafe &&
+      !availabilityManualReview &&
+      !marginOrRoiFailed &&
+      pipeline.eligible;
+    const decisionStatus =
+      staleMarketplaceSnapshot || supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
+        ? "MANUAL_REVIEW"
+        : marginOrRoiFailed || pipeline.manualReview
+          ? "MANUAL_REVIEW"
+          : automationSafe
+            ? "APPROVED"
+            : (existing?.decisionStatus ?? "PENDING");
+    const listingEligible = automationSafe;
+    const listingBlockReason = staleMarketplaceSnapshot
+      ? `marketplace snapshot age ${marketplaceSnapshotAgeHours}h exceeds ${maxMarketplaceSnapshotAgeHours}h`
+      : supplierDriftExceeded
+      ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
+      : availabilityUnsafe
+        ? "supplier availability indicates out of stock"
+        : availabilityManualReview
+          ? `supplier availability requires manual review (${availabilitySignal})`
+          : marginOrRoiFailed
+            ? `profit guard requires margin >= ${minMarginPct}% and roi >= ${minRoiPct}%`
+            : pipeline.manualReview
+              ? `pipeline policy requires manual review: ${pipeline.penalties.join(", ")}`
+              : null;
+    const riskFlags =
+      staleMarketplaceSnapshot
+        ? ["STALE_MARKETPLACE_SNAPSHOT"]
+        : supplierDriftExceeded
+          ? ["SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT"]
+          : availabilityUnsafe
+            ? ["SUPPLIER_OUT_OF_STOCK"]
+            : availabilityManualReview
+              ? ["SUPPLIER_AVAILABILITY_UNKNOWN"]
+              : marginOrRoiFailed
+                ? ["PROFIT_THRESHOLD_NOT_MET"]
+                : pipeline.flags;
+    const riskFlagsSql = riskFlags.length
+      ? sql`ARRAY[${sql.join(riskFlags.map((flag) => sql`${flag}`), sql`, `)}]::text[]`
+      : sql`ARRAY[]::text[]`;
 
     const estimatedFeesJson = {
       feePct: economics.assumptions.ebayFeeRatePct,
@@ -423,13 +506,18 @@ export async function runProfitEngine(input?: {
       country: economics.assumptions.country,
       economicsModel: "jordan_ebay_deterministic_v1",
       breakEvenPriceUsd: economics.breakEvenPriceUsd,
+      pipelinePolicy: pipeline,
     };
 
     const reason = staleMarketplaceSnapshot
       ? `marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} > ${maxMarketplaceSnapshotAgeHours} | roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
-      : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
+      : marginOrRoiFailed
+        ? `margin ${marginPct}% / roi ${roiPct}% below required margin ${minMarginPct}% roi ${minRoiPct}%`
+        : pipeline.manualReview
+          ? `pipeline manual review | score ${pipeline.score} | penalties ${pipeline.penalties.join(", ") || "none"}`
+          : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | pipeline_score ${pipeline.score} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
 
     await db.execute(sql`
       INSERT INTO profitable_candidates (
@@ -499,6 +587,7 @@ export async function runProfitEngine(input?: {
     skipped,
     staleDeleted,
     minRoiPct,
+    minMarginPct,
     minMatchConfidence,
   };
 }
