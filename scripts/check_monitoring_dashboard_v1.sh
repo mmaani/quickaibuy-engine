@@ -71,7 +71,7 @@ capture_http() {
 section "0) Basic repo checks"
 
 [[ -f package.json ]] || { fail "Run this from repo root"; exit 1; }
-[[ -f src/app/dashboard/page.tsx ]] || warn "Dashboard page not found at src/app/dashboard/page.tsx"
+[[ -f "src/app/(ops)/dashboard/page.tsx" ]] || warn "Dashboard page not found at src/app/(ops)/dashboard/page.tsx"
 [[ -f src/lib/dashboard/getDashboardData.ts ]] || warn "Dashboard data loader not found at src/lib/dashboard/getDashboardData.ts"
 
 have_cmd node || { fail "node not installed"; exit 1; }

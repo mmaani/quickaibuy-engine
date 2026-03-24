@@ -29,7 +29,7 @@ const checks = [
       'if (!listingEligible)',
       'const failClosed =',
       'LISTING_BLOCKED_SUPPLIER_DRIFT',
-      'duplicate live-path listing already exists for candidate',
+      'duplicate listing conflict detected',
       'status = ${LISTING_PUBLISH_ENTRY_STATUS}',
     ],
     description: 'READY_TO_PUBLISH promotion enforces approval, eligibility, fail-closed safety, and duplicate blocking',
@@ -44,7 +44,7 @@ const checks = [
     description: 'Execution queue only selects READY_TO_PUBLISH rows that are APPROVED + listing_eligible',
   },
   {
-    file: 'src/app/admin/listings/page.tsx',
+    file: 'src/app/(ops)/admin/listings/page.tsx',
     includes: [
       'if (!item.listingEligible) return "Candidate is not listing eligible.";',
       'if (item.duplicateDetected) return item.duplicateReason || "Duplicate listing conflict detected.";',
