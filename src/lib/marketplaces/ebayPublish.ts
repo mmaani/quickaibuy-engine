@@ -451,6 +451,8 @@ function sanitizeMedia(value: Record<string, unknown>): Record<string, unknown> 
         selectedImageUrls: stringArray(auditInput.selectedImageUrls),
         selectedImageKinds: stringArray(auditInput.selectedImageKinds),
         selectedImageSlots: stringArray(auditInput.selectedImageSlots),
+        imageHostingValidation:
+          objectOrNull(auditInput.imageHostingValidation) ?? null,
         videoDetected: Boolean(auditInput.videoDetected),
         videoAttached: Boolean(auditInput.videoAttached),
         videoSkipped: Boolean(auditInput.videoSkipped),
@@ -805,7 +807,28 @@ function buildDescription(payload: Record<string, unknown>, title: string): stri
   return lines.join("\n").slice(0, 4000);
 }
 
-function inferImageHostingMode(url: string): "external" | "self_hosted" | "eps" {
+type EbayImageHostingMode = "external" | "self_hosted" | "eps" | "invalid";
+type EbayImageHostingCode =
+  | "IMAGE_HOSTING_OK"
+  | "IMAGE_HOSTING_MIXED_BLOCKED"
+  | "IMAGE_HOSTING_INVALID_URL"
+  | "IMAGE_HOSTING_NONCANONICAL_SOURCE"
+  | "IMAGE_HOSTING_EMPTY_BLOCKED";
+
+type EbayImageHostingValidation = {
+  ok: boolean;
+  code: EbayImageHostingCode;
+  canonicalMode: "eps";
+  selectedUrls: string[];
+  selectedCount: number;
+  selectedMode: EbayImageHostingMode | null;
+  byMode: Record<EbayImageHostingMode, string[]>;
+  invalidUrls: string[];
+  mixedModesDetected: boolean;
+  reason: string;
+};
+
+function inferImageHostingMode(url: string): EbayImageHostingMode {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
@@ -816,7 +839,7 @@ function inferImageHostingMode(url: string): "external" | "self_hosted" | "eps" 
     if (host.endsWith("ebayimg.com")) return "eps";
     if (siteHost && host === siteHost) return "self_hosted";
   } catch {
-    return "external";
+    return "invalid";
   }
 
   return "external";
@@ -824,8 +847,9 @@ function inferImageHostingMode(url: string): "external" | "self_hosted" | "eps" 
 
 function extractImageUrls(payload: Record<string, unknown>): {
   urls: string[];
-  hostingMode: "external" | "self_hosted" | "eps" | null;
+  hostingMode: EbayImageHostingMode | null;
   mixedModesDropped: boolean;
+  byMode: Record<EbayImageHostingMode, string[]>;
 } {
   const images: string[] = [];
   const source = objectOrNull(payload.source) ?? {};
@@ -855,22 +879,111 @@ function extractImageUrls(payload: Record<string, unknown>): {
   }
 
   const deduped = [...new Set(images)];
-  const byMode = new Map<"external" | "self_hosted" | "eps", string[]>();
+  const byModeMap = new Map<EbayImageHostingMode, string[]>();
 
   for (const url of deduped) {
     const mode = inferImageHostingMode(url);
-    const current = byMode.get(mode) ?? [];
+    const current = byModeMap.get(mode) ?? [];
     current.push(url);
-    byMode.set(mode, current);
+    byModeMap.set(mode, current);
   }
 
-  const selectedMode = Array.from(byMode.entries()).sort((a, b) => b[1].length - a[1].length)[0]?.[0] ?? null;
-  const mixedModesDropped = byMode.size > 1;
+  const selectedMode =
+    Array.from(byModeMap.entries()).sort((a, b) => b[1].length - a[1].length)[0]?.[0] ?? null;
+  const mixedModesDropped = Array.from(byModeMap.keys()).filter((mode) => mode !== "invalid").length > 1;
+  const byMode: Record<EbayImageHostingMode, string[]> = {
+    eps: byModeMap.get("eps") ?? [],
+    self_hosted: byModeMap.get("self_hosted") ?? [],
+    external: byModeMap.get("external") ?? [],
+    invalid: byModeMap.get("invalid") ?? [],
+  };
 
   return {
-    urls: selectedMode ? (byMode.get(selectedMode) ?? []).slice(0, 24) : [],
+    urls: selectedMode ? (byModeMap.get(selectedMode) ?? []).slice(0, 24) : [],
     hostingMode: selectedMode,
     mixedModesDropped,
+    byMode,
+  };
+}
+
+export function validateEbayImageHosting(payload: Record<string, unknown>): EbayImageHostingValidation {
+  const imageSelection = extractImageUrls(payload);
+  const invalidUrls = imageSelection.byMode.invalid;
+  const nonInvalidModes = (["eps", "self_hosted", "external"] as const).filter(
+    (mode) => imageSelection.byMode[mode].length > 0
+  );
+
+  if (imageSelection.urls.length === 0) {
+    return {
+      ok: false,
+      code: "IMAGE_HOSTING_EMPTY_BLOCKED",
+      canonicalMode: "eps",
+      selectedUrls: [],
+      selectedCount: 0,
+      selectedMode: null,
+      byMode: imageSelection.byMode,
+      invalidUrls,
+      mixedModesDetected: false,
+      reason: "No outgoing listing images were available for eBay publish/revise.",
+    };
+  }
+
+  if (invalidUrls.length > 0) {
+    return {
+      ok: false,
+      code: "IMAGE_HOSTING_INVALID_URL",
+      canonicalMode: "eps",
+      selectedUrls: imageSelection.urls,
+      selectedCount: imageSelection.urls.length,
+      selectedMode: imageSelection.hostingMode,
+      byMode: imageSelection.byMode,
+      invalidUrls,
+      mixedModesDetected: nonInvalidModes.length > 1,
+      reason: "One or more outgoing listing image URLs are invalid or unclassifiable.",
+    };
+  }
+
+  if (nonInvalidModes.length > 1) {
+    return {
+      ok: false,
+      code: "IMAGE_HOSTING_MIXED_BLOCKED",
+      canonicalMode: "eps",
+      selectedUrls: imageSelection.urls,
+      selectedCount: imageSelection.urls.length,
+      selectedMode: imageSelection.hostingMode,
+      byMode: imageSelection.byMode,
+      invalidUrls,
+      mixedModesDetected: true,
+      reason: "Outgoing listing image URLs mix EPS-hosted and non-EPS hosting classes.",
+    };
+  }
+
+  if (imageSelection.hostingMode !== "eps") {
+    return {
+      ok: false,
+      code: "IMAGE_HOSTING_NONCANONICAL_SOURCE",
+      canonicalMode: "eps",
+      selectedUrls: imageSelection.urls,
+      selectedCount: imageSelection.urls.length,
+      selectedMode: imageSelection.hostingMode,
+      byMode: imageSelection.byMode,
+      invalidUrls,
+      mixedModesDetected: false,
+      reason: "Outgoing listing image URLs are not EPS-hosted. QuickAIBuy v1 requires EPS-only final eBay image payloads.",
+    };
+  }
+
+  return {
+    ok: true,
+    code: "IMAGE_HOSTING_OK",
+    canonicalMode: "eps",
+    selectedUrls: imageSelection.urls,
+    selectedCount: imageSelection.urls.length,
+    selectedMode: imageSelection.hostingMode,
+    byMode: imageSelection.byMode,
+    invalidUrls,
+    mixedModesDetected: false,
+    reason: "Outgoing listing image URLs are EPS-only and valid for eBay publish/revise.",
   };
 }
 
@@ -1276,27 +1389,17 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
   }
 
   const inventoryItemKey = safeSku(`qab-${listing.id}`);
-  const imageSelection = extractImageUrls(payload);
+  const imageHostingValidation = validateEbayImageHosting(payload);
   const videoDecision = extractVideoDecision(payload);
   const description = buildDescription(payload, title);
   const categoryId = resolveCategoryId(payload, config);
 
-  if (imageSelection.urls.length === 0) {
+  if (!imageHostingValidation.ok) {
     return {
       success: false,
       externalListingId: null,
-      raw: { payload, imageSelection },
-      errorMessage: "eBay live publish requires EPS-hosted images; no publishable EPS images were available.",
-    };
-  }
-
-  if (imageSelection.hostingMode !== "eps") {
-    return {
-      success: false,
-      externalListingId: null,
-      raw: { payload, imageSelection },
-      errorMessage:
-        "eBay live publish requires EPS-hosted images only. External or self-hosted image URLs are blocked.",
+      raw: { payload, imageHostingValidation },
+      errorMessage: `${imageHostingValidation.code}: ${imageHostingValidation.reason}`,
     };
   }
 
@@ -1318,9 +1421,10 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
     mediaAudit: {
       storageMode: mediaStorageMode,
       mediaHydratedFromCandidate,
-      imageCountSelected: imageSelection.urls.length,
-      imageHostingMode: imageSelection.hostingMode,
-      mixedImageHostingModesDropped: imageSelection.mixedModesDropped,
+      imageCountSelected: imageHostingValidation.selectedCount,
+      imageHostingMode: imageHostingValidation.selectedMode,
+      mixedImageHostingModesDropped: imageHostingValidation.mixedModesDetected,
+      imageHostingValidation,
       videoDetected: videoDecision.detected,
       videoAttached: videoDecision.attached,
       videoSkipped: videoDecision.skipped,
@@ -1353,7 +1457,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
           product: {
             title,
             description,
-            imageUrls: imageSelection.urls,
+            imageUrls: imageHostingValidation.selectedUrls,
             aspects: {
               Brand: [stringOrNull(payload.brand) ?? "Unbranded"],
               MPN: [stringOrNull(payload.mpn) ?? "Does Not Apply"],
