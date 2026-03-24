@@ -499,6 +499,12 @@ export async function getDashboardData(): Promise<DashboardData> {
           pc.estimated_profit,
           pc.margin_pct,
           pc.roi_pct,
+          exists (
+            select 1
+            from listings l
+            where l.candidate_id = pc.id
+              and upper(coalesce(l.status, '')) = 'ACTIVE'
+          ) as has_active_listing,
           ps.snapshot_ts as supplier_snapshot_ts,
           mp.snapshot_ts as marketplace_snapshot_ts,
           case
@@ -522,6 +528,13 @@ export async function getDashboardData(): Promise<DashboardData> {
             then 'availability'
             when coalesce(nullif(pc.estimated_fees ->> 'matchConfidence', ''), '0')::numeric < 0.60
             then 'low_confidence'
+            when exists (
+              select 1
+              from listings l
+              where l.candidate_id = pc.id
+                and upper(coalesce(l.status, '')) = 'ACTIVE'
+            )
+            then 'already_live'
             when upper(coalesce(pc.decision_status, '')) = 'MANUAL_REVIEW'
               or upper(coalesce(pc.reason, '')) like '%PIPELINE MANUAL REVIEW%'
               or coalesce(pc.listing_eligible, false) = false
@@ -539,12 +552,15 @@ export async function getDashboardData(): Promise<DashboardData> {
         count(*) filter (where decision_status = 'MANUAL_REVIEW')::int as manual_review,
         count(*) filter (where decision_status = 'REJECTED')::int as rejected,
         count(*) filter (where decision_status in ('PENDING', 'PENDING_REVIEW', 'RECHECK'))::int as pending,
+        count(*) filter (where is_fresh)::int as fresh_candidates,
         count(*) filter (where is_fresh and listing_eligible and decision_status = 'APPROVED')::int as actionable_fresh,
         count(*) filter (where is_fresh and decision_status = 'APPROVED')::int as approved_fresh,
+        count(*) filter (where is_fresh and has_active_listing)::int as fresh_live,
         count(*) filter (where decision_status = 'MANUAL_REVIEW' and blocker_category = 'stale_snapshot')::int as manual_review_due_to_stale,
         count(*) filter (where blocker_category = 'stale_snapshot')::int as blocked_by_stale_snapshot,
         count(*) filter (where blocker_category = 'low_confidence')::int as blocked_by_low_confidence,
         count(*) filter (where blocker_category = 'availability')::int as blocked_by_availability,
+        count(*) filter (where blocker_category = 'already_live')::int as blocked_by_already_live,
         count(*) filter (where blocker_category = 'policy_or_manual_review')::int as blocked_by_policy_or_manual_review,
         max(calc_ts) as latest_calc_ts
       from candidate_truth
@@ -794,15 +810,18 @@ export async function getDashboardData(): Promise<DashboardData> {
   const manualReview = toNum(profitabilitySummary.manual_review);
   const rejected = toNum(profitabilitySummary.rejected);
   const pending = toNum(profitabilitySummary.pending);
+  const freshCandidates = toNum(profitabilitySummary.fresh_candidates);
   const actionableFresh = toNum(profitabilitySummary.actionable_fresh);
   const approvedFresh = toNum(profitabilitySummary.approved_fresh);
+  const freshLive = toNum(profitabilitySummary.fresh_live);
   const manualReviewDueToStale = toNum(profitabilitySummary.manual_review_due_to_stale);
   const blockedByStaleSnapshot = toNum(profitabilitySummary.blocked_by_stale_snapshot);
   const blockedByLowConfidence = toNum(profitabilitySummary.blocked_by_low_confidence);
   const blockedByAvailability = toNum(profitabilitySummary.blocked_by_availability);
+  const blockedByAlreadyLive = toNum(profitabilitySummary.blocked_by_already_live);
   const blockedByPolicyOrManualReview = toNum(profitabilitySummary.blocked_by_policy_or_manual_review);
   const latestCalcTs = toStr(profitabilitySummary.latest_calc_ts);
-  const staleCandidates = Math.max(0, totalCandidates - actionableFresh);
+  const staleCandidates = Math.max(0, totalCandidates - freshCandidates);
 
   const readyToPublish = toNum(listingsSummary.ready_to_publish);
   const preview = toNum(listingsSummary.preview);
@@ -882,13 +901,16 @@ export async function getDashboardData(): Promise<DashboardData> {
       lastDataTs: latestCalcTs,
       lastSuccessfulRunTs: profitJobTs,
       totalRows: totalCandidates,
-      freshRows: actionableFresh,
+      freshRows: freshCandidates,
       staleRows: staleCandidates,
-      detailFresh: `${actionableFresh}/${totalCandidates} profitable candidates are fresh and actionable.`,
+      detailFresh:
+        freshCandidates === totalCandidates
+          ? `${freshCandidates}/${totalCandidates} profitable candidates have fresh profitability inputs. ${actionableFresh} are actionable and ${freshLive} are already ACTIVE listings.`
+          : `${freshCandidates}/${totalCandidates} profitable candidates have fresh profitability inputs. ${actionableFresh} are actionable and ${freshLive} are already ACTIVE listings.`,
       detailStale:
-        actionableFresh === 0
-          ? `No profitable candidates are both fresh and actionable.`
-          : `${staleCandidates} profitable candidates are stale or blocked.`,
+        freshCandidates === 0
+          ? `No profitable candidates currently have fresh supplier, marketplace, and profitability inputs.`
+          : `${staleCandidates} profitable candidates still rely on stale upstream inputs.`,
       detailUnknown: "Profitability freshness is unavailable.",
     }),
     buildStageStatus({
@@ -981,9 +1003,13 @@ export async function getDashboardData(): Promise<DashboardData> {
         ? "missing schedule"
         : !profitJobTs
           ? "missing worker evidence"
-          : stage.state !== "fresh"
+          : stage.state === "fresh"
+            ? "none"
+          : blockedByStaleSnapshot > 0
             ? "blocked downstream freshness"
-            : "none";
+          : blockedByAlreadyLive === totalCandidates && totalCandidates > 0
+              ? "already live inventory"
+              : "policy/manual review";
       stage.detail = `${stage.detail} ${
         stage.dominantBlocker === "none"
           ? "Automation is scheduled and has worker evidence."
@@ -1092,10 +1118,10 @@ export async function getDashboardData(): Promise<DashboardData> {
       key: "profitable_candidates",
       label: "eBay profitable candidates",
       totalRows: totalCandidates,
-      freshRows: actionableFresh,
+      freshRows: freshCandidates,
       staleRows: staleCandidates,
       freshnessWindow: `${profitabilityWindowHours}h`,
-      scope: "Fresh rows require fresh supplier + marketplace snapshots and current calc_ts.",
+      scope: "Fresh rows require fresh supplier + marketplace snapshots and current calc_ts; actionability is tracked separately.",
     },
   ];
 

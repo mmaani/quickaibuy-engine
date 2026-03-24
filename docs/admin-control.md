@@ -32,3 +32,8 @@ Canonical procedures remain documented in `docs/operator-runbook.md`.
 
 - Control quick actions for supplier scan/match/profit now enqueue onto `JOBS_QUEUE_NAME`.
 - Worker execution truth must be observed in `worker_runs` (`worker = jobs.worker`), not inferred from static row timestamps.
+- Monitoring Dashboard freshness cards separate freshness from actionability:
+  - supplier and marketplace stages reflect current snapshot freshness coverage
+  - profitability reflects whether profitable candidates have fresh supplier/marketplace/calc inputs
+  - `actionableFreshCandidates` remains a separate headline metric and can be `0` even when profitability freshness is healthy, for example when candidates are already covered by `ACTIVE` listings
+- Historical superseded snapshots should be removed only through audited cleanup scripts under `scripts/sql/`; do not manually delete current canonical rows from the dashboard symptoms alone.
