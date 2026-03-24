@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
+import { validateEbayImageHosting } from "@/lib/marketplaces/ebayPublish";
 import {
   LISTING_ACTIVE_PATH_STATUSES,
   LISTING_PREVIEW_STATUS,
@@ -40,6 +41,41 @@ function normalizeActorType(value?: string): "ADMIN" | "WORKER" | "SYSTEM" {
 // Supplier snapshot older than 48h triggers refresh enqueue and blocks readiness.
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 
+export function validateListingReadyImageState(
+  payload: Record<string, unknown> | null,
+  response: Record<string, unknown> | null
+): { ok: boolean; reason: string } {
+  if (!payload) {
+    return {
+      ok: false,
+      reason: "listing payload missing",
+    };
+  }
+
+  const imageHostingValidation = validateEbayImageHosting(payload);
+  const imageNormalization =
+    response && typeof response.imageNormalization === "object" && response.imageNormalization
+      ? (response.imageNormalization as Record<string, unknown>)
+      : null;
+  const imageNormalizationOk =
+    imageNormalization?.ok === true &&
+    String(imageNormalization.code ?? "").trim() !== "IMAGE_NORMALIZATION_PENDING";
+
+  if (!imageNormalizationOk || !imageHostingValidation.ok) {
+    return {
+      ok: false,
+      reason:
+        String(imageNormalization?.blockingReason ?? "").trim() ||
+        `${imageHostingValidation.code}: ${imageHostingValidation.reason}`,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: "EPS-normalized eBay image set is ready for READY_TO_PUBLISH promotion.",
+  };
+}
+
 export async function markListingReadyToPublish(
   input: MarkListingReadyInput
 ): Promise<MarkListingReadyResult> {
@@ -52,6 +88,8 @@ export async function markListingReadyToPublish(
       l.candidate_id AS "candidateId",
       l.marketplace_key AS "marketplaceKey",
       l.status,
+      l.payload,
+      l.response,
       l.title AS "listingTitle",
       pc.supplier_key AS "supplierKey",
       pc.supplier_product_id AS "supplierProductId",
@@ -76,6 +114,14 @@ export async function markListingReadyToPublish(
   const candidateId = String(row.candidateId ?? "");
   const marketplaceKey = String(row.marketplaceKey ?? "");
   const previousStatus = String(row.status ?? "");
+  const payload =
+    row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+      ? (row.payload as Record<string, unknown>)
+      : null;
+  const response =
+    row.response && typeof row.response === "object" && !Array.isArray(row.response)
+      ? (row.response as Record<string, unknown>)
+      : null;
   const listingTitle = String(row.listingTitle ?? "").trim() || null;
   const supplierKey = String(row.supplierKey ?? "").trim() || null;
   const supplierProductId = String(row.supplierProductId ?? "").trim() || null;
@@ -127,6 +173,18 @@ export async function markListingReadyToPublish(
       marketplaceKey,
       previousStatus,
       reason: "candidate is not listing eligible",
+    };
+  }
+
+  const imageState = validateListingReadyImageState(payload, response);
+  if (!imageState.ok) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: imageState.reason,
     };
   }
 

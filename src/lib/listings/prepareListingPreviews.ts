@@ -10,6 +10,7 @@ import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
 } from "./duplicateProtection";
+import { normalizeEbayListingImages } from "./normalizeEbayImages";
 import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
 
@@ -516,6 +517,21 @@ async function processCandidatePreviewRows(
       continue;
     }
 
+    let normalizationResult:
+      | Awaited<ReturnType<typeof normalizeEbayListingImages>>
+      | null = null;
+    if (context.marketplace === "ebay") {
+      normalizationResult = await normalizeEbayListingImages({
+        payload: preview.payload as Record<string, unknown>,
+        response:
+          preview.response && typeof preview.response === "object" && !Array.isArray(preview.response)
+            ? (preview.response as Record<string, unknown>)
+            : null,
+      });
+      preview.payload = normalizationResult.payload;
+      preview.response = normalizationResult.response ?? undefined;
+    }
+
     const payloadJson = preview.payload;
     const responseJson = preview.response ?? null;
     let listingId: string;
@@ -582,6 +598,47 @@ async function processCandidatePreviewRows(
           source: context.source,
         },
       });
+    }
+
+    if (normalizationResult) {
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: normalizationResult.ok
+          ? "LISTING_IMAGE_NORMALIZATION_OK"
+          : "LISTING_IMAGE_NORMALIZATION_FAILED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          source: context.source,
+          imageNormalization: normalizationResult.diagnostics,
+        },
+      });
+    }
+
+    if (normalizationResult && !normalizationResult.ok) {
+      failed++;
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_AUTO_READY_SKIPPED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          reason:
+            normalizationResult.diagnostics.blockingReason ??
+            normalizationResult.diagnostics.code,
+          source: context.source,
+          imageNormalization: normalizationResult.diagnostics,
+        },
+      });
+      continue;
     }
 
     const readyResult = await markListingReadyToPublish({

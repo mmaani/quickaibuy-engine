@@ -1,5 +1,6 @@
 import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
+import { classifyHostedImage } from "@/lib/marketplaces/ebayImageHosting";
 import { db } from "@/lib/db";
 import { buildListingPreviewMedia } from "@/lib/listings/media";
 import type { ListingPreviewInput } from "@/lib/listings/types";
@@ -451,6 +452,8 @@ function sanitizeMedia(value: Record<string, unknown>): Record<string, unknown> 
         selectedImageUrls: stringArray(auditInput.selectedImageUrls),
         selectedImageKinds: stringArray(auditInput.selectedImageKinds),
         selectedImageSlots: stringArray(auditInput.selectedImageSlots),
+        imageNormalization:
+          objectOrNull(auditInput.imageNormalization) ?? null,
         imageHostingValidation:
           objectOrNull(auditInput.imageHostingValidation) ?? null,
         videoDetected: Boolean(auditInput.videoDetected),
@@ -828,23 +831,6 @@ type EbayImageHostingValidation = {
   reason: string;
 };
 
-function inferImageHostingMode(url: string): EbayImageHostingMode {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    const siteHost = stringOrNull(process.env.WEBSITE_URL)
-      ? new URL(process.env.WEBSITE_URL as string).hostname.toLowerCase()
-      : null;
-
-    if (host.endsWith("ebayimg.com")) return "eps";
-    if (siteHost && host === siteHost) return "self_hosted";
-  } catch {
-    return "invalid";
-  }
-
-  return "external";
-}
-
 function extractImageUrls(payload: Record<string, unknown>): {
   urls: string[];
   hostingMode: EbayImageHostingMode | null;
@@ -870,19 +856,20 @@ function extractImageUrls(payload: Record<string, unknown>): {
     if (url) images.push(url);
   }
 
-  for (const url of supplierImages) {
-    images.push(url);
-  }
-
-  if (images.length === 0 && supplierImage) {
-    images.push(supplierImage);
+  if (images.length === 0) {
+    for (const url of supplierImages) {
+      images.push(url);
+    }
+    if (images.length === 0 && supplierImage) {
+      images.push(supplierImage);
+    }
   }
 
   const deduped = [...new Set(images)];
   const byModeMap = new Map<EbayImageHostingMode, string[]>();
 
   for (const url of deduped) {
-    const mode = inferImageHostingMode(url);
+    const mode = classifyHostedImage(url);
     const current = byModeMap.get(mode) ?? [];
     current.push(url);
     byModeMap.set(mode, current);

@@ -190,6 +190,31 @@ export const sellerAccountMetrics = pgTable(
   })
 );
 
+export const ebayImageNormalizations = pgTable(
+  "ebay_image_normalizations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceUrl: text("source_url").notNull(),
+    sourceHash: text("source_hash"),
+    epsUrl: text("eps_url"),
+    provider: text("provider").notNull(),
+    status: text("status").notNull(),
+    failureCode: text("failure_code"),
+    failureReason: text("failure_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    ebayImageNormalizationsSourceProviderUnique: uniqueIndex(
+      "ebay_image_normalizations_source_provider_unique"
+    ).on(t.sourceUrl, t.provider),
+    ebayImageNormalizationsStatusIdx: index("ebay_image_normalizations_status_idx").on(
+      t.status,
+      t.updatedAt
+    ),
+  })
+);
+
 export const auditLog = pgTable("audit_log", {
   id: uuid("id").defaultRandom().primaryKey(),
   eventTs: timestamp("event_ts").notNull().defaultNow(),

@@ -231,6 +231,7 @@ function evaluatePreviewReadiness(row: ListingQueueRow): {
   const price = toNumber(row.listing_price);
   const quantity = toNumber(row.listing_quantity);
   const payload = asObject(row.listing_payload);
+  const response = asObject(row.listing_response);
 
   if (!title) missing.push("title");
   if (!(price && price > 0)) missing.push("price");
@@ -243,6 +244,12 @@ function evaluatePreviewReadiness(row: ListingQueueRow): {
       missing.push("payload.shipFromCountry");
     } else if (!/^[A-Z]{2}$/.test(shipFromCountry)) {
       missing.push("payload.shipFromCountry (ISO-3166 alpha-2 required)");
+    }
+    const imageNormalization = asObject(response?.imageNormalization);
+    if (imageNormalization?.ok !== true) {
+      const code = String(imageNormalization?.code ?? "IMAGE_NORMALIZATION_PENDING").trim();
+      const reason = String(imageNormalization?.blockingReason ?? "").trim();
+      missing.push(reason ? `${code}: ${reason}` : code);
     }
   }
 

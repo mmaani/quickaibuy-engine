@@ -79,10 +79,34 @@ Multi-part items:
 
 ## Hosting Rules
 
-Preview generation may still use reference-only image URLs, but eBay live publish is fail-closed:
-- final publish payload must use EPS-hosted images only
+Preview generation may still begin with reference-only supplier URLs, but the canonical v1 readiness path is now:
+- ranked final image selection first
+- EPS normalization second
+- `READY_TO_PUBLISH` only after the final ordered set is EPS-only
+- live publish/revise still re-validates EPS-only as the final boundary guard
+
+QuickAIBuy v1 therefore enforces:
+- final publish/revise payloads must use EPS-hosted images only
 - mixed hosting modes are not allowed
 - external and self-hosted image URLs are blocked at publish time
+- source supplier image URLs remain provenance only and are not treated as final outgoing listing pictures once normalized
+
+## EPS Normalization
+
+QuickAIBuy normalizes only the final ranked image set, not every discovered supplier image.
+
+Normalization requirements:
+- source URLs must be valid HTTPS
+- duplicate source URLs are removed before upload
+- slot order is preserved exactly through normalization
+- likely sub-500px images are blocked when the URL metadata makes that inferable
+- repeated preview refreshes reuse cached EPS results when the source URL is unchanged
+
+Operational note:
+- QuickAIBuy v1 now defaults to the eBay Media API for image normalization from URL
+- Trading `UploadSiteHostedPictures` remains temporary fallback-only behind explicit config
+- `UploadSiteHostedPictures` is deprecated and scheduled for decommission on September 30, 2026
+- the abstraction is intentionally narrow so Trading can be removed without rewriting the rest of listing readiness
 
 ## Assumptions
 

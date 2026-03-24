@@ -34,6 +34,8 @@ export type ListingPreviewMediaAudit = {
   selectedImageUrls: string[];
   selectedImageKinds?: string[];
   selectedImageSlots?: string[];
+  imageNormalization?: Record<string, unknown> | null;
+  imageHostingValidation?: Record<string, unknown> | null;
   videoDetected: boolean;
   videoAttached: boolean;
   videoSkipped: boolean;
