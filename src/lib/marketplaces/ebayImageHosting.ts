@@ -335,6 +335,99 @@ function createMediaApiUrlProvider(): EbayImageHostingProvider {
   };
 }
 
+function inferMimeType(url: string, contentType: string | null): string {
+  const normalized = stringOrNull(contentType)?.toLowerCase();
+  if (normalized && /(image\/jpeg|image\/jpg|image\/png|image\/webp|image\/gif|image\/bmp)/.test(normalized)) {
+    return normalized;
+  }
+  const lower = url.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  return "image/jpeg";
+}
+
+function inferFilename(url: string, mimeType: string): string {
+  try {
+    const parsed = new URL(url);
+    const base = parsed.pathname.split("/").pop()?.trim() || "image";
+    if (/\.[a-z0-9]{2,5}$/i.test(base)) return base;
+  } catch {
+    // fall through
+  }
+  if (mimeType === "image/png") return "image.png";
+  if (mimeType === "image/webp") return "image.webp";
+  if (mimeType === "image/gif") return "image.gif";
+  if (mimeType === "image/bmp") return "image.bmp";
+  return "image.jpg";
+}
+
+function createMediaApiFileProvider(): EbayImageHostingProvider {
+  return {
+    name: "media_api_file",
+    async normalizeImageFromUrl(input) {
+      const canonical = canonicalizeEbayImageSourceUrl(input.sourceUrl);
+      if (!canonical) {
+        throw new Error("IMAGE_NORMALIZATION_INVALID_SOURCE: source image URL must be HTTPS.");
+      }
+
+      const sourceResponse = await fetch(canonical, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!sourceResponse.ok) {
+        throw new Error(`Media API createImageFromFile source fetch failed: ${sourceResponse.status}`);
+      }
+
+      const sourceBytes = await sourceResponse.arrayBuffer();
+      if (!sourceBytes.byteLength) {
+        throw new Error("Media API createImageFromFile source fetch returned empty body.");
+      }
+
+      const mimeType = inferMimeType(canonical, sourceResponse.headers.get("content-type"));
+      const filename = inferFilename(canonical, mimeType);
+      const token = await getImageHostingAccessToken();
+      const form = new FormData();
+      form.append("file", new Blob([sourceBytes], { type: mimeType }), filename);
+
+      const res = await fetch(`${getApiRoot()}/commerce/media/v1_beta/image/create_image_from_file`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          "Content-Language": "en-US",
+        },
+        body: form,
+        cache: "no-store",
+      });
+
+      const bodyText = await readApiBody(res);
+      let parsed: unknown = bodyText;
+      try {
+        parsed = JSON.parse(bodyText);
+      } catch {
+        // keep raw text
+      }
+
+      if (!res.ok) {
+        throw new Error(`Media API createImageFromFile failed: ${res.status} ${bodyText.slice(0, 300)}`);
+      }
+
+      const epsUrl = inferMediaApiImageUrl(parsed);
+      if (!epsUrl || classifyHostedImage(epsUrl) !== "eps") {
+        throw new Error("Media API createImageFromFile did not return a usable EPS-hosted image URL.");
+      }
+
+      return {
+        epsUrl,
+        provider: "media_api_file",
+        raw: parsed,
+      };
+    },
+  };
+}
+
 function createUploadSiteHostedPicturesProvider(): EbayImageHostingProvider {
   return {
     name: "trading_upload_site_hosted_pictures",
@@ -351,7 +444,7 @@ function createUploadSiteHostedPicturesProvider(): EbayImageHostingProvider {
   <PictureSet>Supersize</PictureSet>
 </UploadSiteHostedPicturesRequest>`;
 
-      const res = await fetch(`${getApiRoot()}/ws/api.dll`, {
+      const res = await fetch(`https://api.ebay.com/ws/api.dll`, {
         method: "POST",
         headers: {
           "Content-Type": "text/xml",
@@ -404,6 +497,7 @@ function resolveProviderPriority(
   }
 
   const media = behavior ? createMockProvider("media_api_url", behavior) : createMediaApiUrlProvider();
+  const mediaFile = behavior ? createMockProvider("media_api_file", behavior) : createMediaApiFileProvider();
   const trading = behavior
     ? createMockProvider("trading_upload_site_hosted_pictures", behavior)
     : createUploadSiteHostedPicturesProvider();
@@ -412,7 +506,7 @@ function resolveProviderPriority(
     return [trading];
   }
 
-  return config.allowTradingFallback ? [media, trading] : [media];
+  return config.allowTradingFallback ? [media, mediaFile, trading] : [media, mediaFile];
 }
 
 function inferAttemptCode(provider: EbayImageHostingProviderName, ok: boolean): EbayImageNormalizationCode {

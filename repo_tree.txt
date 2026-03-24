@@ -28,8 +28,10 @@
 │   ├── architecture.md
 │   ├── code-review-2026-03-13.md
 │   ├── database-migrations.md
+│   ├── ebay-image-policy.md
 │   ├── ebay-live-publish.md
 │   ├── operator-runbook.md
+│   ├── ops-ebay-image-hosting.md
 │   ├── order-automation-rollout.md
 │   ├── order-automation-validation.md
 │   ├── order-purchase-safety-scope.md
@@ -74,7 +76,8 @@
 │   ├── 20260311d_supplier_orders_add_tracking_carrier.sql
 │   ├── 20260311e_supplier_orders_tracking_sync_fields.sql
 │   ├── 20260311f_add_manual_overrides.sql
-│   └── 20260322_add_seller_account_metrics.sql
+│   ├── 20260322_add_seller_account_metrics.sql
+│   └── 20260324_add_ebay_image_normalizations.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -317,6 +320,7 @@
 │   ├── update_repo_tree.mjs
 │   ├── validate_inventory_risk_scenarios.ts
 │   ├── validate_listing_schema_alignment.mjs
+│   ├── validate_live_media_api_cutover.ts
 │   ├── verify_profit_pipeline.ts
 │   ├── watch_repo_tree.mjs
 │   └── workers
@@ -470,6 +474,7 @@
 │   │   │   ├── listingThroughputController.ts
 │   │   │   ├── markListingReadyToPublish.ts
 │   │   │   ├── media.ts
+│   │   │   ├── normalizeEbayImages.ts
 │   │   │   ├── optimizeListingTitle.ts
 │   │   │   ├── prepareListingPreviews.ts
 │   │   │   ├── publishIdempotency.ts
@@ -486,6 +491,7 @@
 │   │   │   ├── ebay
 │   │   │   │   └── normalizeWarehouseCountry.ts
 │   │   │   ├── ebay.ts
+│   │   │   ├── ebayImageHosting.ts
 │   │   │   ├── ebayPublish.ts
 │   │   │   ├── match.ts
 │   │   │   ├── normalizeMarketplaceKey.ts
@@ -566,4 +572,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-83 directories, 484 files
+83 directories, 490 files
