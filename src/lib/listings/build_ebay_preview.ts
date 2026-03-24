@@ -91,6 +91,13 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       categoryId: input.categoryId ?? null,
       description,
       imagesSelected: media.audit.imageSelectedCount,
+      imageOrder: media.images.map((image) => ({
+        rank: image.rank,
+        kind: image.kind,
+        source: image.source,
+        hostingMode: image.hostingMode,
+        url: image.url,
+      })),
       mediaStorageMode,
       videoDetected: media.audit.videoDetected,
       videoAttached: media.audit.videoAttached,

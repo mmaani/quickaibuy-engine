@@ -32,6 +32,8 @@ export type ListingPreviewMediaAudit = {
   imageHostingMode: ListingPreviewMediaHostingMode | null;
   mixedImageHostingModesDropped: boolean;
   selectedImageUrls: string[];
+  selectedImageKinds?: string[];
+  selectedImageSlots?: string[];
   videoDetected: boolean;
   videoAttached: boolean;
   videoSkipped: boolean;

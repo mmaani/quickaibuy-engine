@@ -449,6 +449,8 @@ function sanitizeMedia(value: Record<string, unknown>): Record<string, unknown> 
         imageHostingMode: stringOrNull(auditInput.imageHostingMode),
         mixedImageHostingModesDropped: Boolean(auditInput.mixedImageHostingModesDropped),
         selectedImageUrls: stringArray(auditInput.selectedImageUrls),
+        selectedImageKinds: stringArray(auditInput.selectedImageKinds),
+        selectedImageSlots: stringArray(auditInput.selectedImageSlots),
         videoDetected: Boolean(auditInput.videoDetected),
         videoAttached: Boolean(auditInput.videoAttached),
         videoSkipped: Boolean(auditInput.videoSkipped),
