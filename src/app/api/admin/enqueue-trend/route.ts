@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
-import { getQueue } from "@/lib/queue/bullmq";
-import { db } from "@/lib/db";
-import { jobs } from "@/lib/db/schema";
+import { jobsQueue } from "@/lib/bull";
+import { JOB_NAMES } from "@/lib/jobNames";
+import { markJobQueued } from "@/lib/jobs/jobLedger";
 import type { TrendIngestJob } from "@/lib/jobs/types";
 
 export const runtime = "nodejs";
@@ -31,36 +31,28 @@ export async function POST(req: Request) {
     payload.region ?? "global"
   }`;
 
-  await db
-    .insert(jobs)
-    .values({
-      jobType: "trend:ingest",
-      idempotencyKey,
-      payload,
-      status: "QUEUED",
-      attempt: 0,
-      maxAttempts: 3,
-      scheduledTs: new Date(),
-      startedTs: null,
-      finishedTs: null,
-      lastError: null,
-    })
-    .onConflictDoUpdate({
-      target: [jobs.jobType, jobs.idempotencyKey],
-      set: {
-        payload,
-        status: "QUEUED",
-        attempt: 0,
-        maxAttempts: 3,
-        scheduledTs: new Date(),
-        startedTs: null,
-        finishedTs: null,
-        lastError: null,
+  const job = await jobsQueue.add(
+    JOB_NAMES.TREND_INGEST,
+    { ...payload, triggerSource: "manual" },
+    {
+      jobId: idempotencyKey,
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 2000,
       },
-    });
+      removeOnComplete: 1000,
+      removeOnFail: 5000,
+    }
+  );
 
-  const q = getQueue("trend-ingest");
-  await q.add("trend:ingest", payload, { jobId: idempotencyKey });
+  await markJobQueued({
+    jobType: JOB_NAMES.TREND_INGEST,
+    idempotencyKey: String(job.id),
+    payload: { ...payload, triggerSource: "manual" },
+    attempt: 0,
+    maxAttempts: 3,
+  });
 
-  return NextResponse.json({ ok: true, jobId: idempotencyKey });
+  return NextResponse.json({ ok: true, jobId: String(job.id) });
 }

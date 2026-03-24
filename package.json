@@ -36,6 +36,8 @@
     "check:migration-ledger": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_migration_ledger.ts",
     "diag:queue-namespace": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/queue_namespace_diagnostics.ts",
     "check:inventory-risk-schedule": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_inventory_risk_schedule.ts",
+    "check:upstream-schedules": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_upstream_schedules.ts",
+    "check:worker-run-truth": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_worker_run_truth.ts",
     "check:schema-drift": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_schema_drift.ts"
   },
   "dependencies": {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
-import { runSupplierDiscover } from "@/lib/jobs/supplierDiscover";
+import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 
 export const runtime = "nodejs";
@@ -25,7 +25,11 @@ export async function POST(request: Request) {
     50
   );
 
-  const result = await runSupplierDiscover(limitPerKeyword);
+  const job = await enqueueSupplierDiscoverRefresh({
+    limitPerKeyword,
+    idempotencySuffix: `manual-${Date.now()}`,
+    reason: "manual-api-trigger",
+  });
 
   await writeAuditLog({
     actorType: "ADMIN",
@@ -38,11 +42,9 @@ export async function POST(request: Request) {
       input: {
         limitPerKeyword,
       },
-      result: {
-        processedCandidates: result.processedCandidates,
-        insertedCount: result.insertedCount,
-        keywordsCount: result.keywords.length,
-        sources: result.sources,
+      enqueuedJob: {
+        id: String(job.id),
+        name: job.name,
       },
     },
   });
@@ -51,7 +53,8 @@ export async function POST(request: Request) {
     {
       ok: true,
       stage: "supplier-discover",
-      result,
+      enqueued: true,
+      jobId: String(job.id),
     },
     {
       headers: {

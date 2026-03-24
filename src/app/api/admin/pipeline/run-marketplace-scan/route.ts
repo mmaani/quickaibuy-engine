@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
-import { handleMarketplaceScanJob } from "@/lib/jobs/marketplaceScan";
+import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 
 export const runtime = "nodejs";
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await handleMarketplaceScanJob({
+  const job = await enqueueMarketplacePriceScan({
     limit,
     productRawId,
     platform,
@@ -48,7 +48,10 @@ export async function POST(request: Request) {
         productRawId: productRawId ?? null,
         platform,
       },
-      result,
+      enqueuedJob: {
+        id: String(job.id),
+        name: job.name,
+      },
     },
   });
 
@@ -56,7 +59,8 @@ export async function POST(request: Request) {
     {
       ok: true,
       stage: "marketplace-scan",
-      result,
+      enqueued: true,
+      jobId: String(job.id),
     },
     {
       headers: {

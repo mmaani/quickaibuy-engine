@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
-import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
+import { enqueueProductMatch } from "@/lib/jobs/enqueueProductMatch";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 
 export const runtime = "nodejs";
@@ -19,11 +19,9 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const { searchParams } = new URL(request.url);
   const limit = clampInt(body.limit ?? searchParams.get("limit"), 25, 1, 200);
-  const productRawId = String(body.productRawId ?? searchParams.get("productRawId") ?? "").trim() || undefined;
 
-  const result = await handleMatchProductsJob({
-    limit,
-    productRawId,
+  const job = await enqueueProductMatch({
+    marketplaceLimit: limit,
   });
 
   await writeAuditLog({
@@ -36,9 +34,11 @@ export async function POST(request: Request) {
       source: "api/admin/pipeline/run-match-products",
       input: {
         limit,
-        productRawId: productRawId ?? null,
       },
-      result,
+      enqueuedJob: {
+        id: String(job.id),
+        name: job.name,
+      },
     },
   });
 
@@ -46,7 +46,8 @@ export async function POST(request: Request) {
     {
       ok: true,
       stage: "match-products",
-      result,
+      enqueued: true,
+      jobId: String(job.id),
     },
     {
       headers: {
