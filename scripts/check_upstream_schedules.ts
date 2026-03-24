@@ -17,21 +17,29 @@ async function main() {
     prefix: BULL_PREFIX,
   });
 
-  const repeatables = await queue.getRepeatableJobs(0, 500);
+  const [repeatables, schedulers] = await Promise.all([
+    queue.getRepeatableJobs(0, 500),
+    queue.getJobSchedulers(0, 500),
+  ]);
   const summary = EXPECTED.map((item) => {
-    const matching = repeatables.filter(
+    const matchingRepeatables = repeatables.filter(
       (entry) =>
         entry.name === item.jobName &&
-        Number(entry.every ?? 0) === item.everyMs &&
-        (String(entry.id ?? "").startsWith(item.idPrefix) || String(entry.key ?? "").includes(item.idPrefix))
+        Number(entry.every ?? 0) === item.everyMs
     );
+    const matchingSchedulers = schedulers.filter(
+      (entry) =>
+        entry.name === item.jobName &&
+        Number(entry.every ?? 0) === item.everyMs
+    );
+    const allMatches = [...matchingSchedulers, ...matchingRepeatables];
     return {
       stage: item.stage,
       jobName: item.jobName,
       expectedEveryMs: item.everyMs,
-      matchedEntries: matching.length,
-      active: matching.length > 0,
-      nextRun: matching[0]?.next ? new Date(Number(matching[0].next)).toISOString() : null,
+      matchedEntries: allMatches.length,
+      active: allMatches.length > 0,
+      nextRun: allMatches[0]?.next ? new Date(Number(allMatches[0].next)).toISOString() : null,
     };
   });
 
@@ -43,4 +51,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

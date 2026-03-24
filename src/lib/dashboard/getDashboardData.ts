@@ -8,6 +8,7 @@ type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
 type FreshnessState = "fresh" | "warning" | "stale" | "unknown";
 type AlertTone = "info" | "warning" | "error";
+type QueueScheduleEntry = { name?: string; id?: string | null; key?: string; every?: number | null; next?: number | null };
 
 export type StageStatus = {
   key: string;
@@ -352,7 +353,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     marketplaceFailedJobTs,
     matchFailedJobTs,
     profitFailedJobTs,
-    repeatableJobs,
+    scheduleVisibility,
   ] = await Promise.all([
     getDbHealth().catch((error) => ({
       status: "error" as const,
@@ -719,21 +720,43 @@ export async function getDashboardData(): Promise<DashboardData> {
     getLatestFailedJobTs([JOB_NAMES.SCAN_MARKETPLACE_PRICE]),
     getLatestFailedJobTs([JOB_NAMES.MATCH_PRODUCT]),
     getLatestFailedJobTs([JOB_NAMES.EVAL_PROFIT]),
-    jobsQueue.getRepeatableJobs(0, 500).catch(() => []),
+    Promise.all([
+      jobsQueue.getRepeatableJobs(0, 500).catch(() => []),
+      jobsQueue.getJobSchedulers(0, 500).catch(() => []),
+    ]),
   ]);
 
-  const hasRepeatable = (jobName: string, idPrefix: string) =>
+  const [repeatableJobs, jobSchedulers] = scheduleVisibility as [QueueScheduleEntry[], QueueScheduleEntry[]];
+
+  const hasRepeatable = (jobName: string, everyMs: number) =>
     repeatableJobs.some(
       (entry) =>
         entry.name === jobName &&
-        (String(entry.id ?? "").startsWith(idPrefix) || String(entry.key ?? "").includes(idPrefix))
+        Number(entry.every ?? 0) === everyMs
     );
 
-  const trendScheduleActive = hasRepeatable(JOB_NAMES.TREND_EXPAND_REFRESH, "trend-expand-refresh-");
-  const supplierScheduleActive = hasRepeatable(JOB_NAMES.SUPPLIER_DISCOVER, "supplier-discover-");
-  const marketplaceScheduleActive = hasRepeatable(JOB_NAMES.SCAN_MARKETPLACE_PRICE, "marketplace-scan-");
-  const matchScheduleActive = hasRepeatable(JOB_NAMES.MATCH_PRODUCT, "match-product-");
-  const profitScheduleActive = hasRepeatable(JOB_NAMES.EVAL_PROFIT, "eval-profit-");
+  const hasScheduler = (jobName: string, everyMs: number) =>
+    jobSchedulers.some(
+      (entry) =>
+        entry.name === jobName &&
+        Number(entry.every ?? 0) === everyMs
+    );
+
+  const trendScheduleActive =
+    hasRepeatable(JOB_NAMES.TREND_EXPAND_REFRESH, 21600000) ||
+    hasScheduler(JOB_NAMES.TREND_EXPAND_REFRESH, 21600000);
+  const supplierScheduleActive =
+    hasRepeatable(JOB_NAMES.SUPPLIER_DISCOVER, 21600000) ||
+    hasScheduler(JOB_NAMES.SUPPLIER_DISCOVER, 21600000);
+  const marketplaceScheduleActive =
+    hasRepeatable(JOB_NAMES.SCAN_MARKETPLACE_PRICE, 14400000) ||
+    hasScheduler(JOB_NAMES.SCAN_MARKETPLACE_PRICE, 14400000);
+  const matchScheduleActive =
+    hasRepeatable(JOB_NAMES.MATCH_PRODUCT, 14400000) ||
+    hasScheduler(JOB_NAMES.MATCH_PRODUCT, 14400000);
+  const profitScheduleActive =
+    hasRepeatable(JOB_NAMES.EVAL_PROFIT, 14400000) ||
+    hasScheduler(JOB_NAMES.EVAL_PROFIT, 14400000);
 
   const trendSummary = trendSummaryRow as Row;
   const trendCandidatesSummary = trendCandidatesSummaryRow as Row;

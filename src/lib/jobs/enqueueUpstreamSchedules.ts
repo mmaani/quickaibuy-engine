@@ -15,6 +15,14 @@ type RepeatableEntry = {
   next?: number | null;
 };
 
+type SchedulerEntry = {
+  key?: string;
+  name?: string;
+  id?: string | null;
+  every?: number | null;
+  next?: number | null;
+};
+
 type StageSchedule = {
   stage: "trend" | "supplier" | "marketplace" | "matching" | "profit";
   jobName: string;
@@ -67,6 +75,18 @@ function isDesiredEntry(entry: RepeatableEntry, schedule: StageSchedule): boolea
   return (
     entry.name === schedule.jobName &&
     Number(entry.every ?? 0) === schedule.everyMs &&
+    (
+      String(entry.id ?? "") === schedule.jobId ||
+      String(entry.key ?? "").includes(schedule.jobId) ||
+      Boolean(entry.key)
+    )
+  );
+}
+
+function isDesiredScheduler(entry: SchedulerEntry, schedule: StageSchedule): boolean {
+  return (
+    entry.name === schedule.jobName &&
+    Number(entry.every ?? 0) === schedule.everyMs &&
     (String(entry.id ?? "") === schedule.jobId || String(entry.key ?? "").includes(schedule.jobId))
   );
 }
@@ -82,22 +102,26 @@ function targetsStage(entry: RepeatableEntry, schedule: StageSchedule): boolean 
     String(entry.id ?? "").startsWith(stageIdPrefix) ||
     String(entry.id ?? "") === schedule.jobId ||
     String(entry.key ?? "").includes(stageIdPrefix) ||
-    String(entry.key ?? "").includes(schedule.jobId)
+    String(entry.key ?? "").includes(schedule.jobId) ||
+    Number(entry.every ?? 0) === schedule.everyMs
   );
 }
 
 export async function ensureUpstreamRecurringSchedules() {
   const repeatableJobs = (await jobsQueue.getRepeatableJobs(0, 1000)) as RepeatableEntry[];
+  const schedulers = (await jobsQueue.getJobSchedulers(0, 1000)) as SchedulerEntry[];
   let removedCount = 0;
   let createdCount = 0;
 
   for (const schedule of UPSTREAM_STAGE_SCHEDULES) {
-    let desiredSeen = false;
+    let desiredSeen =
+      schedulers.some((entry) => isDesiredScheduler(entry, schedule)) ||
+      repeatableJobs.some((entry) => isDesiredEntry(entry, schedule));
 
     for (const entry of repeatableJobs) {
       if (!targetsStage(entry, schedule)) continue;
 
-      if (!desiredSeen && isDesiredEntry(entry, schedule)) {
+      if (isDesiredEntry(entry, schedule)) {
         desiredSeen = true;
         continue;
       }
@@ -126,10 +150,14 @@ export async function ensureUpstreamRecurringSchedules() {
     }
   }
 
-  const snapshot = (await jobsQueue.getRepeatableJobs(0, 1000)) as RepeatableEntry[];
+  const [repeatableSnapshot, schedulerSnapshot] = await Promise.all([
+    jobsQueue.getRepeatableJobs(0, 1000) as Promise<RepeatableEntry[]>,
+    jobsQueue.getJobSchedulers(0, 1000) as Promise<SchedulerEntry[]>,
+  ]);
   const schedules = UPSTREAM_STAGE_SCHEDULES.map((schedule) => {
-    const matching = snapshot.filter((entry) => isDesiredEntry(entry, schedule));
-    const nextRunMs = matching
+    const matchingRepeatables = repeatableSnapshot.filter((entry) => isDesiredEntry(entry, schedule));
+    const matchingSchedulers = schedulerSnapshot.filter((entry) => isDesiredScheduler(entry, schedule));
+    const nextRunMs = [...matchingSchedulers, ...matchingRepeatables]
       .map((entry) => Number(entry.next ?? NaN))
       .filter((value) => Number.isFinite(value) && value > 0)
       .sort((a, b) => a - b)[0];
@@ -139,8 +167,8 @@ export async function ensureUpstreamRecurringSchedules() {
       jobName: schedule.jobName,
       jobId: schedule.jobId,
       everyMs: schedule.everyMs,
-      active: matching.length > 0,
-      matchedEntries: matching.length,
+      active: matchingSchedulers.length > 0 || matchingRepeatables.length > 0,
+      matchedEntries: matchingSchedulers.length + matchingRepeatables.length,
       nextRun: Number.isFinite(nextRunMs) ? new Date(nextRunMs).toISOString() : null,
     };
   });
@@ -151,4 +179,3 @@ export async function ensureUpstreamRecurringSchedules() {
     schedules,
   };
 }
-
