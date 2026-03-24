@@ -85,6 +85,10 @@ type MockProviderBehavior = {
   tradingShouldFail?: boolean;
 };
 
+type NormalizeImageOptions = {
+  skipCache?: boolean;
+};
+
 const EBAY_SELL_INVENTORY_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory";
 const DEFAULT_COMPATIBILITY_LEVEL = "1231";
 const DEFAULT_SITE_ID = "0";
@@ -170,7 +174,7 @@ export function getEbayImageHostingConfig(): ImageHostingConfig {
   }
 
   const allowTradingFallback =
-    String(process.env.EBAY_IMAGE_PROVIDER_ALLOW_TRADING_FALLBACK ?? "true").toLowerCase() === "true";
+    String(process.env.EBAY_IMAGE_PROVIDER_ALLOW_TRADING_FALLBACK ?? "false").toLowerCase() === "true";
 
   return {
     defaultProvider,
@@ -263,6 +267,42 @@ function inferMediaApiImageUrl(body: unknown): string | null {
   );
 }
 
+function inferMediaApiImageId(locationHeader: string | null): string | null {
+  const location = stringOrNull(locationHeader);
+  if (!location) return null;
+  try {
+    const parsed = new URL(location);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1]?.trim();
+    return last || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getMediaApiImageUrl(token: string, imageId: string): Promise<string | null> {
+  const res = await fetch(`${getApiRoot()}/commerce/media/v1_beta/image/${encodeURIComponent(imageId)}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Language": "en-US",
+    },
+    cache: "no-store",
+  });
+  const bodyText = await readApiBody(res);
+  if (!res.ok) {
+    throw new Error(`Media API getImage failed: ${res.status} ${bodyText.slice(0, 300)}`);
+  }
+  let parsed: unknown = bodyText;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
+  return inferMediaApiImageUrl(parsed);
+}
+
 function createMockProvider(name: EbayImageHostingProviderName, behavior?: MockProviderBehavior): EbayImageHostingProvider {
   const shouldFail =
     (name === "media_api_url" && behavior?.mediaApiShouldFail) ||
@@ -305,7 +345,7 @@ function createMediaApiUrlProvider(): EbayImageHostingProvider {
           "Content-Type": "application/json",
           "Content-Language": "en-US",
         },
-        body: JSON.stringify({ url: canonical }),
+        body: JSON.stringify({ imageUrl: canonical }),
         cache: "no-store",
       });
 
@@ -321,7 +361,10 @@ function createMediaApiUrlProvider(): EbayImageHostingProvider {
         throw new Error(`Media API createImageFromUrl failed: ${res.status} ${bodyText.slice(0, 300)}`);
       }
 
-      const epsUrl = inferMediaApiImageUrl(parsed);
+      const locationImageId = inferMediaApiImageId(res.headers.get("location"));
+      const epsUrl =
+        inferMediaApiImageUrl(parsed) ??
+        (locationImageId ? await getMediaApiImageUrl(token, locationImageId) : null);
       if (!epsUrl || classifyHostedImage(epsUrl) !== "eps") {
         throw new Error("Media API did not return a usable EPS-hosted image URL.");
       }
@@ -389,7 +432,7 @@ function createMediaApiFileProvider(): EbayImageHostingProvider {
       const filename = inferFilename(canonical, mimeType);
       const token = await getImageHostingAccessToken();
       const form = new FormData();
-      form.append("file", new Blob([sourceBytes], { type: mimeType }), filename);
+      form.append("image", new Blob([sourceBytes], { type: mimeType }), filename);
 
       const res = await fetch(`${getApiRoot()}/commerce/media/v1_beta/image/create_image_from_file`, {
         method: "POST",
@@ -414,7 +457,10 @@ function createMediaApiFileProvider(): EbayImageHostingProvider {
         throw new Error(`Media API createImageFromFile failed: ${res.status} ${bodyText.slice(0, 300)}`);
       }
 
-      const epsUrl = inferMediaApiImageUrl(parsed);
+      const locationImageId = inferMediaApiImageId(res.headers.get("location"));
+      const epsUrl =
+        inferMediaApiImageUrl(parsed) ??
+        (locationImageId ? await getMediaApiImageUrl(token, locationImageId) : null);
       if (!epsUrl || classifyHostedImage(epsUrl) !== "eps") {
         throw new Error("Media API createImageFromFile did not return a usable EPS-hosted image URL.");
       }
@@ -507,6 +553,19 @@ function resolveProviderPriority(
   }
 
   return config.allowTradingFallback ? [media, mediaFile, trading] : [media, mediaFile];
+}
+
+export function getNamedEbayImageHostingProvider(
+  name: EbayImageHostingProviderName,
+  mockBehavior?: MockProviderBehavior
+): EbayImageHostingProvider {
+  if (mockBehavior) {
+    return createMockProvider(name, mockBehavior);
+  }
+  if (name === "media_api_url") return createMediaApiUrlProvider();
+  if (name === "media_api_file") return createMediaApiFileProvider();
+  if (name === "trading_upload_site_hosted_pictures") return createUploadSiteHostedPicturesProvider();
+  return createMockProvider("mock_eps");
 }
 
 function inferAttemptCode(provider: EbayImageHostingProviderName, ok: boolean): EbayImageNormalizationCode {
@@ -652,7 +711,8 @@ function buildFailureResult(input: {
 export async function normalizeImageFromUrl(
   sourceUrl: string,
   providerOverride?: EbayImageHostingProvider,
-  mockBehavior?: MockProviderBehavior
+  mockBehavior?: MockProviderBehavior,
+  options?: NormalizeImageOptions
 ): Promise<NormalizeHostedImageResult> {
   const config = getEbayImageHostingConfig();
   const canonical = canonicalizeEbayImageSourceUrl(sourceUrl);
@@ -717,7 +777,7 @@ export async function normalizeImageFromUrl(
     };
   }
 
-  const cached = await findCachedNormalizedImage(canonical);
+  const cached = options?.skipCache ? null : await findCachedNormalizedImage(canonical);
   if (cached?.status === "OK" && cached.epsUrl && classifyHostedImage(cached.epsUrl) === "eps") {
     return {
       ok: true,

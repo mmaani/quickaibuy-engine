@@ -116,6 +116,7 @@ async function main() {
 
   const {
     getEbayImageHostingConfig,
+    getNamedEbayImageHostingProvider,
     normalizeImageFromUrl,
   } = await import("@/lib/marketplaces/ebayImageHosting");
   const { normalizeEbayListingImages } = await import("@/lib/listings/normalizeEbayImages");
@@ -171,6 +172,18 @@ async function main() {
       throw new Error("listing payload does not contain source image URLs");
     }
 
+    const mediaApiUrlProof = await normalizeImageFromUrl(
+      firstSourceUrl,
+      getNamedEbayImageHostingProvider("media_api_url"),
+      undefined,
+      { skipCache: true }
+    );
+    const mediaApiFileProof = await normalizeImageFromUrl(
+      firstSourceUrl,
+      getNamedEbayImageHostingProvider("media_api_file"),
+      undefined,
+      { skipCache: true }
+    );
     const singleImageProof = await normalizeImageFromUrl(firstSourceUrl);
 
     const normalized = await normalizeEbayListingImages({
@@ -326,6 +339,8 @@ async function main() {
             providerUsed: normalized.diagnostics.providerUsed,
             mediaApiResultCode: normalized.diagnostics.mediaApiResultCode,
             tradingFallbackResultCode: normalized.diagnostics.tradingFallbackResultCode,
+            mediaApiUrlProof,
+            mediaApiFileProof,
             firstSourceImageProof: singleImageProof,
             finalEpsUrls: Array.isArray(normalized.payload.images)
               ? normalized.payload.images.slice(0, 5)
