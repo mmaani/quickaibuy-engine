@@ -197,6 +197,7 @@
 │   ├── check_trend_signals.mjs
 │   ├── check_upstash_isolation.ts
 │   ├── check_vercel_env_access.ts
+│   ├── cleanup_trading_image_cache.ts
 │   ├── clear_success_publish_error.ts
 │   ├── compare_local_and_vercel_env.mjs
 │   ├── confirm_env_local.sh
@@ -572,4 +573,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-83 directories, 490 files
+83 directories, 491 files
