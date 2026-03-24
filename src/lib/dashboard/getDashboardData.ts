@@ -517,14 +517,11 @@ export async function getDashboardData(): Promise<DashboardData> {
           case
             when upper(coalesce(pc.listing_block_reason, '')) like '%STALE_MARKETPLACE%'
               or upper(coalesce(pc.listing_block_reason, '')) like '%STALE_SUPPLIER%'
-              or upper(coalesce(pc.reason, '')) like '%MARKETPLACE_SNAPSHOT_AGE_HOURS%'
-              or upper(coalesce(pc.reason, '')) like '%SUPPLIER_SNAPSHOT_AGE_HOURS%'
               or mp.snapshot_ts < now() - interval '${marketplaceWindowHours} hours'
               or ps.snapshot_ts < now() - interval '${supplierWindowHours} hours'
             then 'stale_snapshot'
             when upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_OUT_OF_STOCK%'
               or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY%'
-              or upper(coalesce(pc.reason, '')) like '%AVAILABILITY_SIGNAL%'
             then 'availability'
             when coalesce(nullif(pc.estimated_fees ->> 'matchConfidence', ''), '0')::numeric < 0.60
             then 'low_confidence'
@@ -580,14 +577,11 @@ export async function getDashboardData(): Promise<DashboardData> {
           case
             when upper(coalesce(pc.listing_block_reason, '')) like '%STALE_MARKETPLACE%'
               or upper(coalesce(pc.listing_block_reason, '')) like '%STALE_SUPPLIER%'
-              or upper(coalesce(pc.reason, '')) like '%MARKETPLACE_SNAPSHOT_AGE_HOURS%'
-              or upper(coalesce(pc.reason, '')) like '%SUPPLIER_SNAPSHOT_AGE_HOURS%'
               or mp.snapshot_ts < now() - interval '${marketplaceWindowHours} hours'
               or ps.snapshot_ts < now() - interval '${supplierWindowHours} hours'
             then 'stale_snapshot'
             when upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_OUT_OF_STOCK%'
               or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY%'
-              or upper(coalesce(pc.reason, '')) like '%AVAILABILITY_SIGNAL%'
             then 'availability'
             when coalesce(nullif(pc.estimated_fees ->> 'matchConfidence', ''), '0')::numeric < 0.60
             then 'low_confidence'
