@@ -119,6 +119,14 @@ export type DashboardData = {
     publishFailed: number;
     latestListingTs: string | null;
   };
+  leadPipeline: {
+    total: number;
+    newLeads: number;
+    contacted: number;
+    qualified: number;
+    latestLeadTs: string | null;
+    recentLeads: Row[];
+  };
   diagnostics: {
     recentJobs: Row[];
     recentWorkerRuns: Row[];
@@ -340,6 +348,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     profitabilityBlockBreakdown,
     topOpportunities,
     listingsSummaryRow,
+    leadSummaryRow,
+    recentLeads,
     recentJobs,
     recentWorkerRuns,
     recentAuditEvents,
@@ -680,6 +690,42 @@ export async function getDashboardData(): Promise<DashboardData> {
       from listings
       where lower(coalesce(marketplace_key, '')) = 'ebay'
     `).then((rows) => rows[0] ?? {}).catch(() => ({})),
+    tableExists("lead_submissions")
+      .then((exists) =>
+        exists
+          ? runQuery(`
+              select
+                count(*)::int as total,
+                count(*) filter (where upper(coalesce(status, '')) = 'NEW')::int as new_leads,
+                count(*) filter (where upper(coalesce(status, '')) = 'CONTACTED')::int as contacted,
+                count(*) filter (where upper(coalesce(status, '')) = 'QUALIFIED')::int as qualified,
+                max(created_at) as latest_lead_ts
+              from lead_submissions
+            `).then((rows) => rows[0] ?? {})
+          : {}
+      )
+      .catch(() => ({})),
+    tableExists("lead_submissions")
+      .then((exists) =>
+        exists
+          ? runQuery(`
+              select
+                id,
+                full_name,
+                company,
+                email,
+                interest,
+                status,
+                email_notification_status,
+                whatsapp_notification_status,
+                created_at
+              from lead_submissions
+              order by created_at desc nulls last, id desc
+              limit 8
+            `)
+          : []
+      )
+      .catch(() => []),
     runQuery(`
       select job_type, status, attempt, max_attempts, scheduled_ts, started_ts, finished_ts
       from jobs
@@ -775,6 +821,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   const matchingSummary = matchingSummaryRow as Row;
   const profitabilitySummary = profitabilitySummaryRow as Row;
   const listingsSummary = listingsSummaryRow as Row;
+  const leadSummary = leadSummaryRow as Row;
 
   const trendTotal = toNum(trendSummary.total_signals);
   const trendFresh = toNum(trendSummary.fresh_signals);
@@ -822,6 +869,11 @@ export async function getDashboardData(): Promise<DashboardData> {
   const active = toNum(listingsSummary.active);
   const publishFailed = toNum(listingsSummary.publish_failed);
   const latestListingTs = toStr(listingsSummary.latest_listing_ts);
+  const totalLeads = toNum(leadSummary.total);
+  const newLeads = toNum(leadSummary.new_leads);
+  const contactedLeads = toNum(leadSummary.contacted);
+  const qualifiedLeads = toNum(leadSummary.qualified);
+  const latestLeadTs = toStr(leadSummary.latest_lead_ts);
 
   const stages: StageStatus[] = [
     buildStageStatus({
@@ -1203,6 +1255,14 @@ export async function getDashboardData(): Promise<DashboardData> {
       active,
       publishFailed,
       latestListingTs,
+    },
+    leadPipeline: {
+      total: totalLeads,
+      newLeads,
+      contacted: contactedLeads,
+      qualified: qualifiedLeads,
+      latestLeadTs,
+      recentLeads,
     },
     diagnostics: {
       recentJobs,

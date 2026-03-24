@@ -226,6 +226,33 @@ export const auditLog = pgTable("audit_log", {
   details: jsonb("details").$type<unknown>(),
 });
 
+export const leadSubmissions = pgTable(
+  "lead_submissions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    fullName: text("full_name").notNull(),
+    company: text("company"),
+    email: text("email").notNull(),
+    interest: text("interest").notNull(),
+    message: text("message").notNull(),
+    sourcePage: text("source_page").notNull().default("/"),
+    status: text("status").notNull().default("NEW"),
+    emailNotificationStatus: text("email_notification_status").notNull().default("PENDING"),
+    whatsappNotificationStatus: text("whatsapp_notification_status").notNull().default("PENDING"),
+    emailNotificationError: text("email_notification_error"),
+    whatsappNotificationError: text("whatsapp_notification_error"),
+    notifiedAt: timestamp("notified_at"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    leadSubmissionsCreatedIdx: index("lead_submissions_created_idx").on(t.createdAt),
+    leadSubmissionsStatusIdx: index("lead_submissions_status_idx").on(t.status, t.createdAt),
+    leadSubmissionsEmailIdx: index("lead_submissions_email_idx").on(t.email),
+  })
+);
+
 export const jobs = pgTable(
   "jobs",
   {

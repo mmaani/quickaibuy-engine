@@ -596,6 +596,47 @@ export default async function DashboardPage() {
           </Section>
         </div>
 
+        <Section
+          eyebrow="Inbound Pipeline"
+          title="Lead Status"
+          description="Public-site inquiries now land in the database first so operator follow-up can be tracked alongside the rest of the workflow."
+        >
+          <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+              <div className="rounded-[1.7rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-5">
+                <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Lead Queue</div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
+                  <StatCard label="Total Leads" value={data.leadPipeline.total} />
+                  <StatCard label="New" value={data.leadPipeline.newLeads} tone={data.leadPipeline.newLeads > 0 ? "warning" : "ok"} />
+                  <StatCard label="Contacted" value={data.leadPipeline.contacted} tone={data.leadPipeline.contacted > 0 ? "ok" : "default"} />
+                  <StatCard label="Qualified" value={data.leadPipeline.qualified} tone={data.leadPipeline.qualified > 0 ? "ok" : "default"} />
+                </div>
+                <div className="mt-4 rounded-2xl border border-white/8 bg-white/[0.03] p-3 text-sm text-white/68">
+                  Latest lead: {formatCompactDateTime(data.leadPipeline.latestLeadTs)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[1.7rem] border border-white/10 bg-black/20 p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Recent Inquiries</div>
+                  <div className="mt-2 text-2xl font-semibold text-white">Stored For Follow-up</div>
+                </div>
+                <div className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${toneClass(data.leadPipeline.newLeads > 0 ? "warning" : "ok")}`}>
+                  {data.leadPipeline.newLeads > 0 ? "new follow-up needed" : "queue clear"}
+                </div>
+              </div>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-white/60">
+                Notification delivery stays visible beside each lead so operators can distinguish inbound demand from routing failures.
+              </p>
+              <div className="mt-5">
+                <DataTable rows={data.leadPipeline.recentLeads} empty="No lead submissions stored yet" />
+              </div>
+            </div>
+          </div>
+        </Section>
+
         <div className="grid gap-6 xl:grid-cols-2">
           <Section
             eyebrow="Trend + Supplier"

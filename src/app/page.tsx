@@ -10,6 +10,17 @@ type ContactForm = {
   message: string;
 };
 
+type SubmitState =
+  | { kind: "idle" }
+  | {
+      kind: "success";
+      message: string;
+      manualWhatsappUrl: string | null;
+      emailNotificationStatus: string;
+      whatsappNotificationStatus: string;
+    }
+  | { kind: "error"; message: string };
+
 const navItems = [
   { label: "Why Now", href: "#why-now" },
   { label: "Platform", href: "#platform" },
@@ -148,7 +159,7 @@ const faqItems = [
   },
   {
     q: "Does the contact form send to WhatsApp?",
-    a: "Yes. On submit, the form opens WhatsApp with a prefilled message to your current number, which is +962791752686.",
+    a: "Submissions are now stored in the database. Email and WhatsApp notifications are sent when notification webhooks are configured, and a direct WhatsApp fallback remains available.",
   },
 ];
 
@@ -252,7 +263,8 @@ function MobileMenu() {
 
 export default function Home() {
   const [form, setForm] = useState<ContactForm>(initialForm);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitState, setSubmitState] = useState<SubmitState>({ kind: "idle" });
+  const [submitting, setSubmitting] = useState(false);
 
   const whatsappUrl = useMemo(() => {
     const lines = [
@@ -266,11 +278,57 @@ export default function Home() {
     return `https://wa.me/962791752686?text=${encodeURIComponent(lines.join("\n"))}`;
   }, [form]);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSubmitted(true);
-    if (typeof window !== "undefined") {
-      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+    setSubmitting(true);
+    setSubmitState({ kind: "idle" });
+
+    try {
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          ...form,
+          sourcePage: "/",
+        }),
+      });
+
+      const result = (await response.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            manualWhatsappUrl?: string;
+            emailNotificationStatus?: string;
+            whatsappNotificationStatus?: string;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok || !result?.ok) {
+        setSubmitState({
+          kind: "error",
+          message: "We couldn't save your submission right now. Please try again or contact us directly on WhatsApp.",
+        });
+        return;
+      }
+
+      setSubmitState({
+        kind: "success",
+        message:
+          "Your submission was saved. We logged it for follow-up and attempted the configured email/WhatsApp notifications.",
+        manualWhatsappUrl: result.manualWhatsappUrl ?? whatsappUrl,
+        emailNotificationStatus: result.emailNotificationStatus ?? "skipped",
+        whatsappNotificationStatus: result.whatsappNotificationStatus ?? "skipped",
+      });
+      setForm(initialForm);
+    } catch {
+      setSubmitState({
+        kind: "error",
+        message: "We couldn't submit the form right now. Please try again or use the direct WhatsApp fallback.",
+      });
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -722,9 +780,9 @@ export default function Home() {
                 Start the conversation
               </h2>
               <p className="mt-5 text-pretty text-base leading-8 text-white/68 sm:text-lg">
-                For now, the form opens a prefilled WhatsApp message directly to your number.
-                Later, we can connect it to a proper backend, CRM, email routing, and your
-                admin operations stack.
+                Submissions are now stored in the database first, with email and WhatsApp
+                notifications available through configurable webhooks. The direct WhatsApp
+                fallback remains available for immediate outreach.
               </p>
 
               <div className="mt-8 space-y-4">
@@ -734,8 +792,8 @@ export default function Home() {
                 </div>
 
                 <div className="rounded-2xl border border-emerald-300/15 bg-emerald-300/8 p-5 text-sm leading-7 text-emerald-50/90">
-                  Best next upgrade: store submissions in a database, send notifications to email and WhatsApp,
-                  and connect lead status to the future dashboard.
+                  Lead submissions now have a canonical data path. The next operational step is
+                  tightening notification delivery and using lead status directly inside the operator dashboard.
                 </div>
               </div>
             </div>
@@ -804,23 +862,39 @@ export default function Home() {
               <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <button
                   type="submit"
+                  disabled={submitting}
                   className="inline-flex items-center justify-center rounded-2xl bg-white px-6 py-3.5 text-sm font-semibold text-slate-950 transition hover:bg-sky-50"
                 >
-                  Send via WhatsApp
+                  {submitting ? "Submitting..." : "Submit inquiry"}
                 </button>
 
                 <a
-                  href="tel:+962791752686"
+                  href={
+                    submitState.kind === "success" && submitState.manualWhatsappUrl
+                      ? submitState.manualWhatsappUrl
+                      : whatsappUrl
+                  }
                   className="text-sm font-medium text-sky-100 transition hover:text-white"
+                  target="_blank"
+                  rel="noreferrer"
                 >
-                  Or call directly
+                  Open WhatsApp fallback
                 </a>
               </div>
 
-              {submitted ? (
-                <p className="mt-4 text-sm text-emerald-200">
-                  Your message is opening in WhatsApp in a new tab.
-                </p>
+              {submitState.kind === "success" ? (
+                <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4 text-sm text-emerald-100">
+                  <div>{submitState.message}</div>
+                  <div className="mt-2 text-emerald-100/80">
+                    Email notification: {submitState.emailNotificationStatus}. WhatsApp notification:{" "}
+                    {submitState.whatsappNotificationStatus}.
+                  </div>
+                </div>
+              ) : null}
+              {submitState.kind === "error" ? (
+                <div className="mt-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-100">
+                  {submitState.message}
+                </div>
               ) : null}
             </form>
           </div>
@@ -856,15 +930,26 @@ export default function Home() {
 
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-white/78">
-                Operations
+                Other Ventures
               </h3>
               <div className="mt-4 flex flex-col gap-3">
-                <span className="text-sm text-white/58">
-                  QuickAIBuy repository scope is limited to marketplace automation and operator tooling.
-                </span>
-                <span className="text-sm text-sky-100">
-                  Project-isolated workflows only.
-                </span>
+                <a
+                  href="https://zomorodmedical.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm text-white/58 transition hover:text-white"
+                >
+                  Zomorod Medical Supplies
+                </a>
+                <a
+                  href="https://nivran.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm text-white/58 transition hover:text-white"
+                >
+                  NIVRAN Fragrance
+                </a>
+                <span className="text-sm text-sky-100">Contact: +962 79 175 2686</span>
               </div>
             </div>
           </div>
