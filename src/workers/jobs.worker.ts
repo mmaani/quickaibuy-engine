@@ -374,6 +374,7 @@ export const jobsWorker = new Worker(
             insertedCount: result.insertedCount,
             keywords: result.keywords,
             sources: result.sources,
+            sourceBreakdown: result.sourceBreakdown,
           },
         });
 

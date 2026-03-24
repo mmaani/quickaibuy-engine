@@ -180,3 +180,38 @@ Operator verification steps:
 - `EVAL_PROFIT` every 4h
 
 Registration point: `pnpm worker:jobs` boot path ensures these schedules idempotently and removes stale/duplicate repeatables for the same stage prefix.
+
+## Supplier Discovery Diagnostics
+
+Canonical supplier discovery runs through:
+
+- enqueue helper: `src/lib/jobs/enqueueSupplierDiscover.ts`
+- worker consumer: `src/workers/jobs.worker.ts`
+- runtime implementation: `src/lib/jobs/supplierDiscover.ts`
+- durable execution truth: `worker_runs`
+- source drop-off audit: latest `audit_log` row with `actor_id = 'supplier:discover'` and `event_type = 'SUPPLIER_PRODUCTS_DISCOVERED'`
+
+Each supplier discovery audit row now includes `details.sourceBreakdown` with per-source counters:
+
+- `fetched_count`
+- `parsed_count`
+- `normalized_count`
+- `valid_count`
+- `eligible_count`
+- `dedup_blocked_count`
+- `updated_existing_count`
+- `inserted_new_count`
+- `rejected_missing_required_fields_count`
+- `rejected_quality_count`
+- `rejected_price_count`
+- `rejected_availability_count`
+- `rejected_normalization_count`
+- `rejected_unknown_reason_count`
+- `top_rejection_reasons`
+
+Operational interpretation:
+
+- `eligible_count = 0` with `inserted_new_count > 0` means the source produced structurally valid parsed snapshots that were persisted for freshness, even though they were not commercially eligible.
+- `missing_title_or_source_url` dominating usually indicates blocked or degraded supplier fetch/parsing.
+- `shipping_or_availability_weak` dominating means the source returned parsed rows, but the commercial gate kept them fail-closed.
+- `updated_existing_count` staying `0` is expected today because canonical `products_raw` writes are insert-only; discovery currently improves freshness by persisting new snapshots, not by mutating old rows in place.
