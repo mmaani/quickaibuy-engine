@@ -1279,6 +1279,25 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
   const description = buildDescription(payload, title);
   const categoryId = resolveCategoryId(payload, config);
 
+  if (imageSelection.urls.length === 0) {
+    return {
+      success: false,
+      externalListingId: null,
+      raw: { payload, imageSelection },
+      errorMessage: "eBay live publish requires EPS-hosted images; no publishable EPS images were available.",
+    };
+  }
+
+  if (imageSelection.hostingMode !== "eps") {
+    return {
+      success: false,
+      externalListingId: null,
+      raw: { payload, imageSelection },
+      errorMessage:
+        "eBay live publish requires EPS-hosted images only. External or self-hosted image URLs are blocked.",
+    };
+  }
+
   const raw: Record<string, unknown> = {
     inventoryItemKey,
     shipFromCountry,
