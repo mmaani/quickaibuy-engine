@@ -65,7 +65,7 @@ async function findPreviewListingId(client: pg.Client, candidateId: string): Pro
       FROM listings l
       WHERE l.candidate_id = $1
         AND l.marketplace_key = 'ebay'
-        AND l.status = 'PREVIEW'
+        AND l.status IN ('PREVIEW', 'READY_TO_PUBLISH')
       ORDER BY l.updated_at DESC, l.created_at DESC
       LIMIT 1
     `,
@@ -73,7 +73,7 @@ async function findPreviewListingId(client: pg.Client, candidateId: string): Pro
   );
 
   if (!preview.rows.length) {
-    throw new Error(`no PREVIEW listing found for candidate ${candidateId} after prepare`);
+    throw new Error(`no PREVIEW or READY_TO_PUBLISH listing found for candidate ${candidateId} after prepare`);
   }
 
   return preview.rows[0].id;

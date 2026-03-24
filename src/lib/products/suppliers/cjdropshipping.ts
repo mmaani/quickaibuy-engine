@@ -258,6 +258,52 @@ export function parseCjProductIdFromUrl(sourceUrl: string): string | null {
   return match?.[1]?.toUpperCase() ?? null;
 }
 
+function titleCaseWord(word: string): string {
+  if (!word) return word;
+  return word[0].toUpperCase() + word.slice(1).toLowerCase();
+}
+
+function parseTitleFromCjSourceUrl(sourceUrl: string): string | null {
+  const raw = String(sourceUrl ?? "").trim();
+  if (!raw) return null;
+
+  try {
+    const pathname = new URL(raw).pathname;
+    const slugMatch = pathname.match(/\/product\/(.+)-p-[A-Z0-9-]{8,}\.html$/i);
+    const slug = slugMatch?.[1]?.trim();
+    if (!slug) return null;
+
+    const title = slug
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => titleCaseWord(part))
+      .join(" ");
+
+    return title || null;
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeCorruptedTitle(value: string | null): boolean {
+  const title = String(value ?? "").trim();
+  if (!title) return true;
+  if (title.length < 8) return true;
+  if (/\+/.test(title)) return true;
+
+  const words = title.split(/\s+/).filter(Boolean);
+  if (words.length === 1 && words[0].length >= 24) return true;
+
+  const hasLetters = /[a-z]/i.test(title);
+  const hasSpaces = /\s/.test(title);
+  if (hasLetters && !hasSpaces && title.length >= 24) return true;
+
+  return false;
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, {
     method: "GET",
@@ -541,7 +587,10 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
   const priceMin = toPriceString(variantPriceRange.min);
   const priceMax = toPriceString(variantPriceRange.max);
   const scanPrice = priceMax ?? priceMin;
-  const title = toNonEmptyString(detail.NAMEEN) ?? toNonEmptyString(detail.NAME);
+  const rawTitle = toNonEmptyString(detail.NAMEEN) ?? toNonEmptyString(detail.NAME);
+  const title = looksLikeCorruptedTitle(rawTitle)
+    ? parseTitleFromCjSourceUrl(sourceUrl) ?? rawTitle
+    : rawTitle;
 
   const product: SupplierProduct = {
     title,
@@ -570,6 +619,7 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       sourceType: "direct-product-page",
       supplierProductId,
       title,
+      rawTitle,
       price: scanPrice,
       priceMin,
       priceMax,
