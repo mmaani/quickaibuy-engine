@@ -303,7 +303,12 @@ async function reconcileIneligibleReadyListings(context: ProcessingContext): Pro
 async function processCandidatePreviewRows(
   rows: CandidatePreviewSourceRow[],
   context: ProcessingContext
-): Promise<Pick<PrepareListingPreviewResult, "created" | "updated" | "ready" | "skipped" | "failed" | "scanned">> {
+): Promise<
+  Pick<
+    PrepareListingPreviewResult,
+    "created" | "updated" | "ready" | "reconciled" | "skipped" | "failed" | "scanned"
+  >
+> {
   let created = 0;
   let updated = 0;
   let ready = 0;
