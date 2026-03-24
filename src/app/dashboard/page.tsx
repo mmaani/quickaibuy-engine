@@ -1,4 +1,5 @@
 import RefreshButton from "../_components/RefreshButton";
+import { AdminFooter, AdminTopBar } from "../_components/AdminChrome";
 import { getDashboardData, type StageStatus } from "@/lib/dashboard/getDashboardData";
 
 export const dynamic = "force-dynamic";
@@ -397,8 +398,10 @@ export default async function DashboardPage() {
   const marketplaceTone = data.headline.staleMarketplaceSnapshots > 0 ? "error" : "ok";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-app text-white">
-      <div className="pointer-events-none absolute inset-0">
+    <>
+      <AdminTopBar />
+      <main className="relative min-h-screen overflow-hidden bg-app text-white">
+        <div className="pointer-events-none absolute inset-0">
         <div className="hero-orb hero-orb-a" />
         <div className="hero-orb hero-orb-b" />
         <div className="hero-orb hero-orb-c" />
@@ -768,7 +771,9 @@ export default async function DashboardPage() {
             </div>
           </div>
         </Section>
-      </div>
-    </main>
+        </div>
+      </main>
+      <AdminFooter />
+    </>
   );
 }

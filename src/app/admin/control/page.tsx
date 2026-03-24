@@ -81,6 +81,18 @@ function DataTable({ rows, empty }: { rows: Array<Record<string, unknown>>; empt
   );
 }
 
+type SourceHealthCard = {
+  source: string;
+  status: "healthy" | "partial" | "blocked";
+  statusLabel: string;
+  reason: string;
+  viableCandidates: number;
+  fetched: number;
+  parsed: number;
+};
+
+const CANONICAL_SOURCES = ["cjdropshipping", "aliexpress", "alibaba", "temu"] as const;
+
 function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
@@ -124,6 +136,96 @@ function formatDateTime(value: string | null): string {
 function yesNoUnknown(value: boolean | null): string {
   if (value == null) return "Unknown";
   return value ? "Yes" : "No";
+}
+
+function toNum(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function canonicalSourceKey(value: unknown): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "cj dropshipping") return "cjdropshipping";
+  return normalized;
+}
+
+function buildSourceHealthCards(data: Awaited<ReturnType<typeof getControlPanelData>>): SourceHealthCard[] {
+  const cycleRows = new Map(
+    data.supplierDiscoveryHealth.latestCycleBreakdown.map((row) => [canonicalSourceKey(row.supplier_key), row])
+  );
+  const telemetryRows = new Map(
+    data.supplierDiscoveryHealth.parserTelemetry.map((row) => [canonicalSourceKey(row.supplierKey), row])
+  );
+  const contributions = new Map(
+    data.supplierDiscoveryHealth.candidateContributionBySupplier.map((row) => [
+      canonicalSourceKey(row.supplier_key),
+      toNum(row.listing_ready_candidates),
+    ])
+  );
+
+  return CANONICAL_SOURCES.map((source) => {
+    const cycleRow = cycleRows.get(source);
+    const telemetryRow = telemetryRows.get(source);
+    const fetched = toNum(cycleRow?.fetched_count);
+    const parsed = Math.max(toNum(cycleRow?.parsed_count), toNum(telemetryRow?.parsed));
+    const valid = toNum(cycleRow?.valid_count);
+    const eligible = toNum(cycleRow?.eligible_count);
+    const viableCandidates = contributions.get(source) ?? 0;
+    const rejectedQuality = Math.max(toNum(cycleRow?.rejected_quality_count), toNum(telemetryRow?.lowQuality));
+    const rejectedMissingFields = toNum(cycleRow?.rejected_missing_required_fields_count);
+    const challengePages = toNum(telemetryRow?.challenge);
+    const fallbackRows = toNum(telemetryRow?.fallback);
+    const topReasons = Array.isArray(cycleRow?.top_rejection_reasons)
+      ? cycleRow.top_rejection_reasons.map((value) => String(value)).filter(Boolean)
+      : [];
+
+    if (eligible > 0 || viableCandidates > 0) {
+      return {
+        source,
+        status: "healthy",
+        statusLabel: "Healthy",
+        reason: viableCandidates > 0 ? "Contributing actionable candidates." : "Parsed snapshots are usable downstream.",
+        viableCandidates,
+        fetched,
+        parsed,
+      };
+    }
+
+    if (parsed > 0 || valid > 0) {
+      return {
+        source,
+        status: "partial",
+        statusLabel: "Partial",
+        reason:
+          topReasons[0] ??
+          (fallbackRows > 0
+            ? "Parsed/fallback rows exist, but downstream quality is still not good enough."
+            : null) ??
+          (rejectedMissingFields > 0
+            ? "Parsed rows are missing required listing fields."
+            : "Rows parse, but quality or availability still blocks nomination."),
+        viableCandidates,
+        fetched,
+        parsed,
+      };
+    }
+
+    return {
+      source,
+      status: "blocked",
+      statusLabel: "Blocked",
+      reason:
+        topReasons[0] ??
+        (challengePages > 0
+          ? "Challenge-page responses are blocking actionable extraction."
+          : fallbackRows > 0 || rejectedQuality > 0
+            ? "Blocked by fallback or low-quality parsed content."
+            : "Scanned with no actionable parsed rows."),
+      viableCandidates,
+      fetched,
+      parsed,
+    };
+  });
 }
 
 function buildListingsRiskHref(riskFilter: string): string {
@@ -333,6 +435,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
       description: "Publishing, listing recovery, and order handling still require the existing operator-driven flow.",
     },
   ];
+  const sourceHealthCards = buildSourceHealthCards(data);
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -379,6 +482,44 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
         <Section title="Supplier Discovery Health">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
             Parser telemetry helps confirm whether supplier discovery is returning usable rows or falling back to sparse data.
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-4">
+            {sourceHealthCards.map((card) => (
+              <div key={card.source} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">{card.source}</div>
+                    <div className="mt-2 text-xl font-semibold text-white">{card.statusLabel}</div>
+                  </div>
+                  <span
+                    className={
+                      card.status === "healthy"
+                        ? "rounded-full border border-emerald-300/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-100"
+                        : card.status === "partial"
+                          ? "rounded-full border border-amber-300/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-100"
+                          : "rounded-full border border-rose-300/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-100"
+                    }
+                  >
+                    {card.status}
+                  </span>
+                </div>
+                <div className="mt-3 text-sm leading-6 text-white/70">{card.reason}</div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">Fetched</div>
+                    <div className="mt-1 font-semibold text-white">{card.fetched}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">Parsed</div>
+                    <div className="mt-1 font-semibold text-white">{card.parsed}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">Viable</div>
+                    <div className="mt-1 font-semibold text-white">{card.viableCandidates}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
@@ -433,6 +574,16 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 stub: row.stubQuality ?? "-",
               }))}
               empty="No supplier parser telemetry yet."
+            />
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <DataTable
+              rows={data.supplierDiscoveryHealth.latestCycleBreakdown}
+              empty="No supplier discovery source breakdown yet."
+            />
+            <DataTable
+              rows={data.supplierDiscoveryHealth.candidateContributionBySupplier}
+              empty="No supplier candidate contribution rows yet."
             />
           </div>
         </Section>

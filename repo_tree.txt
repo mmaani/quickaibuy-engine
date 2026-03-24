@@ -196,7 +196,9 @@
 │   ├── check_trend_candidates_for_signal.mjs
 │   ├── check_trend_signals.mjs
 │   ├── check_upstash_isolation.ts
+│   ├── check_upstream_schedules.ts
 │   ├── check_vercel_env_access.ts
+│   ├── check_worker_run_truth.ts
 │   ├── cleanup_trading_image_cache.ts
 │   ├── clear_success_publish_error.ts
 │   ├── compare_local_and_vercel_env.mjs
@@ -302,6 +304,10 @@
 │   ├── select_sellable_products.ts
 │   ├── show_db_index.sh
 │   ├── sql
+│   │   ├── 20260324_cleanup_orphan_seed_and_marketplace_rows.sql
+│   │   ├── 20260324_cleanup_outdated_operational_seed_data.sql
+│   │   ├── 20260324_cleanup_superseded_operational_rows.sql
+│   │   ├── 20260324_retire_unreferenced_stale_active_matches.sql
 │   │   ├── listings_allow_listed_status.sql
 │   │   ├── marketplace_prices_add_unique_index.sql
 │   │   ├── marketplace_prices_check_duplicates.sql
@@ -346,10 +352,12 @@
 ├── src
 │   ├── app
 │   │   ├── _components
+│   │   │   ├── AdminChrome.tsx
 │   │   │   └── RefreshButton.tsx
 │   │   ├── admin
 │   │   │   ├── control
 │   │   │   │   └── page.tsx
+│   │   │   ├── layout.tsx
 │   │   │   ├── listings
 │   │   │   │   └── page.tsx
 │   │   │   ├── orders
@@ -451,8 +459,10 @@
 │   │   │   ├── enqueueInventoryRiskScan.ts
 │   │   │   ├── enqueueMarketplacePriceScan.ts
 │   │   │   ├── enqueueProductMatch.ts
+│   │   │   ├── enqueueProfitEval.ts
 │   │   │   ├── enqueueSupplierDiscover.ts
 │   │   │   ├── enqueueTrendExpand.ts
+│   │   │   ├── enqueueUpstreamSchedules.ts
 │   │   │   ├── followUpJobIds.ts
 │   │   │   ├── jobLedger.ts
 │   │   │   ├── jobNames.ts
@@ -573,4 +583,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-83 directories, 491 files
+83 directories, 501 files

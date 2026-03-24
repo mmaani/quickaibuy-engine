@@ -86,6 +86,9 @@ export type ReviewListItem = {
   duplicateDetected: boolean;
   duplicateReason: string | null;
   duplicateListingIds: string[];
+  selectionMode: string | null;
+  selectionSummary: string | null;
+  consideredSources: string[];
 };
 
 type CandidateRow = {
@@ -129,6 +132,9 @@ type CandidateRow = {
   latest_supplier_availability_status?: string | null;
   latest_supplier_raw_payload?: unknown;
   listing_block_reason?: string | null;
+  selection_mode?: string | null;
+  selection_summary?: string | null;
+  considered_sources?: string[] | null;
 };
 
 type SupplierSnapshot = {
@@ -522,6 +528,9 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     duplicateDetected: Boolean(row.duplicate_detected),
     duplicateReason: row.duplicate_reason ?? null,
     duplicateListingIds: row.duplicate_conflict_listing_ids ?? [],
+    selectionMode: row.selection_mode ?? null,
+    selectionSummary: row.selection_summary ?? null,
+    consideredSources: row.considered_sources ?? [],
   };
 }
 
@@ -739,6 +748,13 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
         pc.reason,
         pc.estimated_shipping,
         pc.estimated_fees,
+        pc.estimated_fees ->> 'selectionMode' AS selection_mode,
+        pc.estimated_fees -> 'selectedSupplierOption' ->> 'selectionSummary' AS selection_summary,
+        ARRAY(
+          SELECT jsonb_array_elements_text(
+            COALESCE(pc.estimated_fees -> 'selectedSupplierOption' -> 'consideredSources', '[]'::jsonb)
+          )
+        ) AS considered_sources,
         pc.estimated_cogs,
         pc.risk_flags,
         pc.listing_block_reason,
@@ -1003,6 +1019,13 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
         pc.reason,
         pc.estimated_shipping,
         pc.estimated_fees,
+        pc.estimated_fees ->> 'selectionMode' AS selection_mode,
+        pc.estimated_fees -> 'selectedSupplierOption' ->> 'selectionSummary' AS selection_summary,
+        ARRAY(
+          SELECT jsonb_array_elements_text(
+            COALESCE(pc.estimated_fees -> 'selectedSupplierOption' -> 'consideredSources', '[]'::jsonb)
+          )
+        ) AS considered_sources,
         pc.estimated_cogs,
         pc.risk_flags,
         pc.listing_block_reason,

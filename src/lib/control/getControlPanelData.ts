@@ -27,6 +27,8 @@ export type ControlPanelData = {
   supplierDiscoveryHealth: {
     bySupplier: Row[];
     freshnessBySupplier: Row[];
+    latestCycleBreakdown: Row[];
+    candidateContributionBySupplier: Row[];
     parserTelemetry: Array<{
       supplierKey: string;
       parsed: number | null;
@@ -697,6 +699,46 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         order by supplier_key asc
       `)
       : [];
+
+  const latestSupplierCycleBreakdown = await runQuery(`
+    with latest as (
+      select details->'sourceBreakdown' as source_breakdown
+      from audit_log
+      where actor_id = 'supplier:discover'
+        and event_type = 'SUPPLIER_PRODUCTS_DISCOVERED'
+      order by event_ts desc nulls last
+      limit 1
+    )
+    select
+      entry->>'source' as supplier_key,
+      coalesce((entry->>'fetched_count')::int, 0) as fetched_count,
+      coalesce((entry->>'parsed_count')::int, 0) as parsed_count,
+      coalesce((entry->>'valid_count')::int, 0) as valid_count,
+      coalesce((entry->>'eligible_count')::int, 0) as eligible_count,
+      coalesce((entry->>'inserted_new_count')::int, 0) as inserted_new_count,
+      coalesce((entry->>'rejected_missing_required_fields_count')::int, 0) as rejected_missing_required_fields_count,
+      coalesce((entry->>'rejected_quality_count')::int, 0) as rejected_quality_count,
+      coalesce((entry->>'rejected_availability_count')::int, 0) as rejected_availability_count,
+      coalesce((entry->>'rejected_unknown_reason_count')::int, 0) as rejected_unknown_reason_count,
+      coalesce(entry->'top_rejection_reasons', '[]'::jsonb) as top_rejection_reasons
+    from latest
+    cross join lateral jsonb_array_elements(coalesce(source_breakdown, '[]'::jsonb)) as entry
+    order by supplier_key asc
+  `);
+
+  const candidateContributionBySupplier = profitableCandidatesExists
+    ? await runQuery(`
+      select
+        lower(coalesce(supplier_key, 'unknown')) as supplier_key,
+        count(*)::int as total_candidates,
+        count(*) filter (where decision_status = 'APPROVED')::int as approved_candidates,
+        count(*) filter (where listing_eligible = true)::int as listing_ready_candidates,
+        count(*) filter (where decision_status = 'MANUAL_REVIEW')::int as manual_review_candidates
+      from profitable_candidates
+      group by lower(coalesce(supplier_key, 'unknown'))
+      order by listing_ready_candidates desc, approved_candidates desc, total_candidates desc, supplier_key asc
+    `)
+    : [];
 
   const matchesHasStatus = matchesExists ? await columnExists("matches", "status") : false;
   const matchesHasConfidence = matchesExists ? await columnExists("matches", "confidence") : false;
@@ -1849,6 +1891,8 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     supplierDiscoveryHealth: {
       bySupplier: supplierDiscoveryHealthBySupplier,
       freshnessBySupplier: supplierDiscoveryFreshness,
+      latestCycleBreakdown: latestSupplierCycleBreakdown,
+      candidateContributionBySupplier: candidateContributionBySupplier,
       parserTelemetry: supplierParserTelemetry.map((row) => ({
         supplierKey: toStr(row.supplierKey) ?? "-",
         parsed: toNum(row.parsed),

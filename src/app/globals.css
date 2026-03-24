@@ -259,6 +259,127 @@ summary::-webkit-details-marker {
   animation-delay: 1.4s;
 }
 
+.admin-topbar-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding: 1rem 1rem 0;
+}
+
+.admin-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.5rem;
+  background: rgba(6, 20, 28, 0.84);
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(16px);
+}
+
+.admin-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.85rem;
+  color: inherit;
+}
+
+.admin-brand-title {
+  display: block;
+  font-family: var(--font-manrope), Arial, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #f4fdff;
+}
+
+.admin-brand-subtitle {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(244, 253, 255, 0.56);
+}
+
+.admin-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.admin-nav-link {
+  padding: 0.72rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 0.84rem;
+  font-weight: 600;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.admin-nav-link:hover {
+  border-color: rgba(109, 231, 214, 0.34);
+  background: rgba(109, 231, 214, 0.1);
+  color: #f0fdff;
+  transform: translateY(-1px);
+}
+
+.admin-nav-link-active {
+  border-color: rgba(109, 231, 214, 0.34);
+  background: linear-gradient(135deg, rgba(109, 231, 214, 0.18), rgba(242, 194, 103, 0.1));
+  color: #efffff;
+}
+
+.admin-footer {
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: 0 1rem 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 768px) {
+  .admin-topbar-wrap {
+    padding: 0.75rem 0.75rem 0;
+  }
+
+  .admin-topbar {
+    padding: 0.85rem;
+    border-radius: 1.25rem;
+  }
+
+  .admin-nav {
+    width: 100%;
+  }
+
+  .admin-nav-link {
+    flex: 1 1 calc(50% - 0.55rem);
+    text-align: center;
+  }
+
+  .admin-footer {
+    padding: 0 0.75rem 1.25rem;
+    font-size: 0.7rem;
+  }
+}
+
 .animate-rise {
   animation: rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }

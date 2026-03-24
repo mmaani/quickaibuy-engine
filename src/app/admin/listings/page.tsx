@@ -303,6 +303,14 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Candidate ID" value={detail.item.id} />
                     <KeyValue label="Review decision" value={detail.item.decisionStatus} />
                     <KeyValue label="Supplier" value={`${detail.item.supplierKey} / ${detail.item.supplierProductId}`} />
+                    <KeyValue
+                      label="Best Source Policy"
+                      value={detail.item.selectionSummary ?? detail.item.selectionMode ?? "-"}
+                    />
+                    <KeyValue
+                      label="Compared Sources"
+                      value={detail.item.consideredSources.length ? detail.item.consideredSources.join(", ") : detail.item.supplierKey}
+                    />
                     <KeyValue label="Marketplace" value={`${detail.item.marketplaceKey} / ${detail.item.marketplaceListingId}`} />
                     <KeyValue label="Estimated profit" value={formatMoney(detail.item.estimatedProfit)} />
                     <KeyValue label="Margin / ROI" value={`${formatPercent(detail.item.marginPct)} / ${formatPercent(detail.item.roiPct)}`} />

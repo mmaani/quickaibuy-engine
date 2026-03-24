@@ -794,6 +794,14 @@ export default async function ReviewPage({
                       <KeyValue label="Candidate ID" value={detail.candidate.id} />
                       <KeyValue label="Decision Status" value={detail.candidate.decisionStatus} />
                       <KeyValue label="Supplier" value={`${detail.candidate.supplierKey} / ${detail.candidate.supplierProductId}`} />
+                      <KeyValue
+                        label="Best Source Policy"
+                        value={detail.candidate.selectionSummary ?? detail.candidate.selectionMode ?? "-"}
+                      />
+                      <KeyValue
+                        label="Compared Sources"
+                        value={detail.candidate.consideredSources.length ? detail.candidate.consideredSources.join(", ") : detail.candidate.supplierKey}
+                      />
                       <KeyValue label="Marketplace" value={`${detail.candidate.marketplaceKey} / ${detail.candidate.marketplaceListingId}`} />
                       <KeyValue label="Estimated Profit" value={formatMoney(detail.candidate.estimatedProfit)} />
                       <KeyValue label="Margin / ROI" value={`${formatPercent(detail.candidate.marginPct)} / ${formatPercent(detail.candidate.roiPct)}`} />

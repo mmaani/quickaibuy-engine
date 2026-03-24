@@ -46,6 +46,9 @@ type ListingQueueRow = {
   duplicate_detected: boolean;
   duplicate_reason: string | null;
   duplicate_listing_ids: string[] | null;
+  selection_mode: string | null;
+  selection_summary: string | null;
+  considered_sources: string[] | null;
 };
 
 export type ListingsQueueFilters = {
@@ -96,6 +99,9 @@ export type QueueListItem = {
   duplicateDetected: boolean;
   duplicateReason: string | null;
   duplicateListingIds: string[];
+  selectionMode: string | null;
+  selectionSummary: string | null;
+  consideredSources: string[];
   recoveryState: RecoveryState;
   recoveryNextAction: string;
   recoveryBlockReasonCode: string | null;
@@ -306,6 +312,9 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     duplicateDetected: Boolean(row.duplicate_detected),
     duplicateReason: row.duplicate_reason ?? null,
     duplicateListingIds: row.duplicate_listing_ids ?? [],
+    selectionMode: row.selection_mode ?? null,
+    selectionSummary: row.selection_summary ?? null,
+    consideredSources: row.considered_sources ?? [],
     recoveryState: recovery.recoveryState,
     recoveryNextAction: recovery.recoveryNextAction,
     recoveryBlockReasonCode: recovery.recoveryBlockReasonCode,
@@ -549,6 +558,13 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       pc.decision_status,
       pc.listing_eligible,
       pc.listing_block_reason,
+      pc.estimated_fees ->> 'selectionMode' AS selection_mode,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'selectionSummary' AS selection_summary,
+      ARRAY(
+        SELECT jsonb_array_elements_text(
+          COALESCE(pc.estimated_fees -> 'selectedSupplierOption' -> 'consideredSources', '[]'::jsonb)
+        )
+      ) AS considered_sources,
       pc.approved_ts,
       pc.approved_by,
       l.id AS listing_id,

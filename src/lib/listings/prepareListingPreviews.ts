@@ -5,7 +5,6 @@ import { listings, marketplacePrices, matches, productsRaw, profitableCandidates
 import { buildListingPreview } from "./build_listing_preview";
 import { buildListingPreviewIdempotencyKey } from "./idempotency";
 import { CATEGORY_CONFIDENCE_THRESHOLD, classifyEbayCategory } from "./ebayCategoryClassifier";
-import { markListingReadyToPublish } from "./markListingReadyToPublish";
 import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
@@ -50,6 +49,8 @@ type PrepareListingPreviewsResult = PrepareListingPreviewCounters & {
 
 type CandidatePreviewSourceRow = {
   candidateId: string;
+  supplierSnapshotId: string;
+  marketPriceSnapshotId: string;
   supplierKey: string;
   supplierProductId: string;
   marketplaceKey: string;
@@ -202,6 +203,8 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
   const baseQuery = db
     .select({
       candidateId: profitableCandidates.id,
+      supplierSnapshotId: profitableCandidates.supplierSnapshotId,
+      marketPriceSnapshotId: profitableCandidates.marketPriceSnapshotId,
       supplierKey: profitableCandidates.supplierKey,
       supplierProductId: profitableCandidates.supplierProductId,
       marketplaceKey: profitableCandidates.marketplaceKey,
@@ -227,17 +230,11 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
     .from(profitableCandidates)
     .innerJoin(
       productsRaw,
-      and(
-        eq(productsRaw.supplierKey, profitableCandidates.supplierKey),
-        eq(productsRaw.supplierProductId, profitableCandidates.supplierProductId)
-      )
+      eq(productsRaw.id, profitableCandidates.supplierSnapshotId)
     )
     .innerJoin(
       marketplacePrices,
-      and(
-        eq(marketplacePrices.marketplaceKey, profitableCandidates.marketplaceKey),
-        eq(marketplacePrices.marketplaceListingId, profitableCandidates.marketplaceListingId)
-      )
+      eq(marketplacePrices.id, profitableCandidates.marketPriceSnapshotId)
     )
     .leftJoin(
       matches,
@@ -251,6 +248,7 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
     .where(
       and(
         eq(profitableCandidates.decisionStatus, "APPROVED"),
+        eq(profitableCandidates.listingEligible, true),
         eq(profitableCandidates.marketplaceKey, selection.marketplace),
         selection.candidateId ? eq(profitableCandidates.id, selection.candidateId) : undefined
       )
@@ -312,7 +310,7 @@ async function processCandidatePreviewRows(
 > {
   let created = 0;
   let updated = 0;
-  let ready = 0;
+  const ready = 0;
   const reconciled = await reconcileIneligibleReadyListings(context);
   let skipped = 0;
   let failed = 0;
@@ -641,29 +639,22 @@ async function processCandidatePreviewRows(
       continue;
     }
 
-    const readyResult = await markListingReadyToPublish({
-      listingId,
-      actorId: context.actorId,
+    await writeAuditLog({
       actorType: context.actorType,
+      actorId: context.actorId,
+      entityType: "LISTING",
+      entityId: listingId,
+      eventType: "LISTING_PREVIEW_NOMINATED_FOR_REVIEW",
+      details: {
+        candidateId: row.candidateId,
+        marketplaceKey: context.marketplace,
+        idempotencyKey,
+        source: context.source,
+        supplierSnapshotId: row.supplierSnapshotId,
+        marketPriceSnapshotId: row.marketPriceSnapshotId,
+        status: "PREVIEW",
+      },
     });
-    if (readyResult.ok) {
-      ready++;
-    } else if (readyResult.reason) {
-      await writeAuditLog({
-        actorType: context.actorType,
-        actorId: context.actorId,
-        entityType: "LISTING",
-        entityId: listingId,
-        eventType: "LISTING_AUTO_READY_SKIPPED",
-        details: {
-          candidateId: row.candidateId,
-          marketplaceKey: context.marketplace,
-          idempotencyKey,
-          reason: readyResult.reason,
-          source: context.source,
-        },
-      });
-    }
   }
 
   return {

@@ -49,6 +49,42 @@ type ExistingCandidateState = {
   expectedSupplierPrice: string | null;
 };
 
+type CandidateOption = {
+  row: ProfitRow;
+  normalizedSupplierKey: string;
+  supplierProductId: string;
+  marketplaceKey: string;
+  marketplaceListingId: string;
+  matchConfidence: number;
+  supplierCost: number;
+  marketPrice: number;
+  shipping: number;
+  supplierSnapshotAgeHours: number | null;
+  marketplaceSnapshotAgeHours: number | null;
+  availabilitySignal: string;
+  availabilityConfidence: number | null;
+  sourceQuality: "HIGH" | "MEDIUM" | "LOW" | "STUB" | null;
+  sourceQualityRank: number;
+  pipeline: ReturnType<typeof evaluateProductPipelinePolicy>;
+  estimatedFees: Record<string, unknown>;
+  estimatedShipping: number;
+  estimatedCogs: number;
+  estimatedProfit: number;
+  marginPct: number;
+  roiPct: number;
+  staleMarketplaceSnapshot: boolean;
+  supplierDriftExceeded: boolean;
+  availabilityUnsafe: boolean;
+  availabilityManualReview: boolean;
+  marginOrRoiFailed: boolean;
+  automationSafe: boolean;
+  decisionStatus: string;
+  listingEligible: boolean;
+  listingBlockReason: string | null;
+  riskFlags: string[];
+  reason: string;
+};
+
 // Supplier drift threshold for post-approval protection.
 const SUPPLIER_DRIFT_MANUAL_REVIEW_PCT = 15;
 
@@ -70,6 +106,77 @@ function computePctChange(expected: number | null, latest: number | null): numbe
 function computeAgeHours(now: Date, snapshotTs: Date | null): number | null {
   if (!snapshotTs) return null;
   return round2((now.getTime() - snapshotTs.getTime()) / (1000 * 60 * 60));
+}
+
+function compareNullableNumbersDesc(a: number | null, b: number | null): number {
+  const left = a ?? Number.NEGATIVE_INFINITY;
+  const right = b ?? Number.NEGATIVE_INFINITY;
+  if (left === right) return 0;
+  return left > right ? 1 : -1;
+}
+
+function compareNullableNumbersAsc(a: number | null, b: number | null): number {
+  const left = a ?? Number.POSITIVE_INFINITY;
+  const right = b ?? Number.POSITIVE_INFINITY;
+  if (left === right) return 0;
+  return left < right ? 1 : -1;
+}
+
+function buildSelectionGroupKey(option: CandidateOption): string {
+  return `${option.marketplaceKey}:${option.marketplaceListingId}`;
+}
+
+function sourceQualityRank(value: "HIGH" | "MEDIUM" | "LOW" | "STUB" | null): number {
+  if (value === "HIGH") return 3;
+  if (value === "MEDIUM") return 2;
+  if (value === "LOW") return 1;
+  if (value === "STUB") return 0;
+  return -1;
+}
+
+function describeCandidateOption(option: CandidateOption): string {
+  return [
+    `source ${option.normalizedSupplierKey}`,
+    option.listingEligible ? "listing-ready" : option.decisionStatus.toLowerCase(),
+    `profit ${round2(option.estimatedProfit)}`,
+    `roi ${round2(option.roiPct)}%`,
+    `margin ${round2(option.marginPct)}%`,
+    `quality ${option.sourceQuality ?? "unknown"}`,
+    `availability ${option.availabilitySignal}`,
+    `pipeline ${option.pipeline.score}`,
+    `match ${round2(option.matchConfidence)}`,
+    `supplier_age ${option.supplierSnapshotAgeHours ?? "n/a"}h`,
+  ].join(" | ");
+}
+
+function chooseBestSupplierOption(options: CandidateOption[]): CandidateOption {
+  const sorted = [...options].sort((left, right) => {
+    const orderedComparisons = [
+      Number(left.listingEligible) - Number(right.listingEligible),
+      Number(left.decisionStatus === "APPROVED") - Number(right.decisionStatus === "APPROVED"),
+      Number(!left.staleMarketplaceSnapshot) - Number(!right.staleMarketplaceSnapshot),
+      Number(!left.availabilityManualReview && !left.availabilityUnsafe) -
+        Number(!right.availabilityManualReview && !right.availabilityUnsafe),
+      compareNullableNumbersDesc(left.availabilityConfidence, right.availabilityConfidence),
+      compareNullableNumbersDesc(left.estimatedProfit, right.estimatedProfit),
+      compareNullableNumbersDesc(left.roiPct, right.roiPct),
+      compareNullableNumbersDesc(left.marginPct, right.marginPct),
+      left.sourceQualityRank - right.sourceQualityRank,
+      compareNullableNumbersDesc(left.pipeline.score, right.pipeline.score),
+      compareNullableNumbersDesc(left.matchConfidence, right.matchConfidence),
+      compareNullableNumbersAsc(left.supplierSnapshotAgeHours, right.supplierSnapshotAgeHours),
+      compareNullableNumbersAsc(left.marketplaceSnapshotAgeHours, right.marketplaceSnapshotAgeHours),
+      compareNullableNumbersAsc(left.supplierCost, right.supplierCost),
+    ];
+
+    for (const comparison of orderedComparisons) {
+      if (comparison !== 0) return comparison > 0 ? -1 : 1;
+    }
+
+    return left.normalizedSupplierKey.localeCompare(right.normalizedSupplierKey);
+  });
+
+  return sorted[0];
 }
 
 export async function runProfitEngine(input?: {
@@ -293,70 +400,14 @@ export async function runProfitEngine(input?: {
     acceptedRows.push(row);
   }
 
-  let staleDeleted = 0;
-  const exactScopedRun = Boolean(
-    supplierProductIdFilter || marketplaceKeyFilter || marketplaceListingIdFilter
-  );
-
-  const candidateScopeSql = sql`
-    1 = 1
-    ${supplierKeyFilter ? sql`AND LOWER(pc.supplier_key) = ${supplierKeyFilter}` : sql``}
-    ${supplierProductIdFilter ? sql`AND pc.supplier_product_id = ${supplierProductIdFilter}` : sql``}
-    ${marketplaceKeyFilter ? sql`AND pc.marketplace_key = ${marketplaceKeyFilter}` : sql``}
-    ${marketplaceListingIdFilter ? sql`AND pc.marketplace_listing_id = ${marketplaceListingIdFilter}` : sql``}
-  `;
-
-  if (acceptedRows.length > 0) {
-    const acceptedPairs = acceptedRows.map((row) => sql`
-      (
-        ${String(row.supplierKey || "").toLowerCase()},
-        ${row.supplierProductId},
-        ${normalizeMarketplaceKey(row.marketplaceKey)},
-        ${row.marketplaceListingId}
-      )
-    `);
-
-    const staleCountResult = await db.execute<{ count: number }>(sql`
-      SELECT COUNT(*)::int AS count
-      FROM profitable_candidates pc
-      WHERE
-        ${candidateScopeSql}
-        AND
-        (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
-        NOT IN (${sql.join(acceptedPairs, sql`, `)})
-    `);
-
-    staleDeleted = Number(staleCountResult.rows?.[0]?.count ?? 0);
-
-    await db.execute(sql`
-      DELETE FROM profitable_candidates pc
-      WHERE
-        ${candidateScopeSql}
-        AND
-        (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
-        NOT IN (${sql.join(acceptedPairs, sql`, `)})
-    `);
-  } else if (supplierKeyFilter && !exactScopedRun) {
-    const staleCountResult = await db.execute<{ count: number }>(sql`
-      SELECT COUNT(*)::int AS count
-      FROM profitable_candidates pc
-      WHERE ${candidateScopeSql}
-    `);
-
-    staleDeleted = Number(staleCountResult.rows?.[0]?.count ?? 0);
-
-    await db.execute(sql`
-      DELETE FROM profitable_candidates pc
-      WHERE ${candidateScopeSql}
-    `);
-  }
+  const candidateOptions: CandidateOption[] = [];
 
   for (const row of acceptedRows) {
     const now = new Date();
     const normalizedSupplierKey = String(row.supplierKey || "").toLowerCase();
-    const supplierProductId = row.supplierProductId;
+    const supplierProductId = String(row.supplierProductId ?? "").trim();
     const marketplaceKey = normalizeMarketplaceKey(row.marketplaceKey);
-    const marketplaceListingId = row.marketplaceListingId;
+    const marketplaceListingId = String(row.marketplaceListingId ?? "").trim();
 
     const matchConfidence = toNum(row.confidence) ?? 0;
     const supplierCost = toNum(row.supplierPriceMin) ?? 0;
@@ -444,6 +495,14 @@ export async function runProfitEngine(input?: {
       marginPct,
       roiPct,
     });
+    const rawSupplierQuality =
+      row.supplierRawPayload &&
+      typeof row.supplierRawPayload === "object" &&
+      !Array.isArray(row.supplierRawPayload)
+        ? normalizeSupplierQuality(
+            String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
+          )
+        : null;
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const automationSafe =
       !staleMarketplaceSnapshot &&
@@ -486,10 +545,6 @@ export async function runProfitEngine(input?: {
               : marginOrRoiFailed
                 ? ["PROFIT_THRESHOLD_NOT_MET"]
                 : pipeline.flags;
-    const riskFlagsSql = riskFlags.length
-      ? sql`ARRAY[${sql.join(riskFlags.map((flag) => sql`${flag}`), sql`, `)}]::text[]`
-      : sql`ARRAY[]::text[]`;
-
     const estimatedFeesJson = {
       feePct: economics.assumptions.ebayFeeRatePct,
       feeUsd: estimatedFees,
@@ -519,6 +574,137 @@ export async function runProfitEngine(input?: {
           ? `pipeline manual review | score ${pipeline.score} | penalties ${pipeline.penalties.join(", ") || "none"}`
           : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | pipeline_score ${pipeline.score} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
 
+    candidateOptions.push({
+      row,
+      normalizedSupplierKey,
+      supplierProductId,
+      marketplaceKey,
+      marketplaceListingId,
+      matchConfidence,
+      supplierCost,
+      marketPrice,
+      shipping,
+      supplierSnapshotAgeHours,
+      marketplaceSnapshotAgeHours,
+      availabilitySignal,
+      availabilityConfidence: availability.confidence ?? null,
+      sourceQuality: rawSupplierQuality,
+      sourceQualityRank: sourceQualityRank(rawSupplierQuality),
+      pipeline,
+      estimatedFees: estimatedFeesJson,
+      estimatedShipping,
+      estimatedCogs,
+      estimatedProfit,
+      marginPct,
+      roiPct,
+      staleMarketplaceSnapshot,
+      supplierDriftExceeded,
+      availabilityUnsafe,
+      availabilityManualReview,
+      marginOrRoiFailed,
+      automationSafe,
+      decisionStatus,
+      listingEligible,
+      listingBlockReason,
+      riskFlags,
+      reason,
+    });
+  }
+
+  const winningOptions = Array.from(
+    candidateOptions.reduce((map, option) => {
+      const key = buildSelectionGroupKey(option);
+      const current = map.get(key);
+      if (!current) {
+        map.set(key, option);
+        return map;
+      }
+      map.set(key, chooseBestSupplierOption([current, option]));
+      return map;
+    }, new Map<string, CandidateOption>())
+  ).map(([, option]) => option);
+
+  let staleDeleted = 0;
+  const exactScopedRun = Boolean(
+    supplierProductIdFilter || marketplaceKeyFilter || marketplaceListingIdFilter
+  );
+
+  const candidateScopeSql = sql`
+    1 = 1
+    ${supplierKeyFilter ? sql`AND LOWER(pc.supplier_key) = ${supplierKeyFilter}` : sql``}
+    ${supplierProductIdFilter ? sql`AND pc.supplier_product_id = ${supplierProductIdFilter}` : sql``}
+    ${marketplaceKeyFilter ? sql`AND pc.marketplace_key = ${marketplaceKeyFilter}` : sql``}
+    ${marketplaceListingIdFilter ? sql`AND pc.marketplace_listing_id = ${marketplaceListingIdFilter}` : sql``}
+  `;
+
+  if (winningOptions.length > 0) {
+    const acceptedPairs = winningOptions.map((option) => sql`
+      (
+        ${option.normalizedSupplierKey},
+        ${option.supplierProductId},
+        ${option.marketplaceKey},
+        ${option.marketplaceListingId}
+      )
+    `);
+
+    const staleCountResult = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count
+      FROM profitable_candidates pc
+      WHERE
+        ${candidateScopeSql}
+        AND
+        (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
+        NOT IN (${sql.join(acceptedPairs, sql`, `)})
+    `);
+
+    staleDeleted = Number(staleCountResult.rows?.[0]?.count ?? 0);
+
+    await db.execute(sql`
+      DELETE FROM profitable_candidates pc
+      WHERE
+        ${candidateScopeSql}
+        AND
+        (pc.supplier_key, pc.supplier_product_id, pc.marketplace_key, pc.marketplace_listing_id)
+        NOT IN (${sql.join(acceptedPairs, sql`, `)})
+    `);
+  } else if (supplierKeyFilter && !exactScopedRun) {
+    const staleCountResult = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count
+      FROM profitable_candidates pc
+      WHERE ${candidateScopeSql}
+    `);
+
+    staleDeleted = Number(staleCountResult.rows?.[0]?.count ?? 0);
+
+    await db.execute(sql`
+      DELETE FROM profitable_candidates pc
+      WHERE ${candidateScopeSql}
+    `);
+  }
+
+  for (const option of winningOptions) {
+    const peerOptions = candidateOptions.filter(
+      (candidate) => buildSelectionGroupKey(candidate) === buildSelectionGroupKey(option)
+    );
+    const selectionSummary = describeCandidateOption(option);
+    const alternativeSourceCount = Math.max(0, peerOptions.length - 1);
+    const estimatedFeesJson = {
+      ...option.estimatedFees,
+      selectionMode: "best_supplier_option_per_marketplace_listing_v1",
+      selectedSupplierOption: {
+        supplierKey: option.normalizedSupplierKey,
+        supplierProductId: option.supplierProductId,
+        listingEligible: option.listingEligible,
+        decisionStatus: option.decisionStatus,
+        selectionGroupKey: buildSelectionGroupKey(option),
+        selectionSummary,
+        alternativeSourceCount,
+        consideredSources: peerOptions
+          .map((candidate) => candidate.normalizedSupplierKey)
+          .sort((left, right) => left.localeCompare(right)),
+      },
+    };
+
     await db.execute(sql`
       INSERT INTO profitable_candidates (
         supplier_key,
@@ -540,24 +726,26 @@ export async function runProfitEngine(input?: {
         listing_eligible,
         listing_block_reason
       ) VALUES (
-        ${normalizedSupplierKey},
-        ${supplierProductId},
-        ${marketplaceKey},
-        ${marketplaceListingId},
+        ${option.normalizedSupplierKey},
+        ${option.supplierProductId},
+        ${option.marketplaceKey},
+        ${option.marketplaceListingId},
         NOW(),
-        ${row.supplierSnapshotId},
-        ${row.marketPriceSnapshotId},
+        ${option.row.supplierSnapshotId},
+        ${option.row.marketPriceSnapshotId},
         ${JSON.stringify(estimatedFeesJson)}::jsonb,
-        ${String(estimatedShipping)},
-        ${String(estimatedCogs)},
-        ${String(estimatedProfit)},
-        ${String(marginPct)},
-        ${String(roiPct)},
-        ${riskFlagsSql},
-        ${decisionStatus},
-        ${reason},
-        ${listingEligible},
-        ${listingBlockReason}
+        ${String(option.estimatedShipping)},
+        ${String(option.estimatedCogs)},
+        ${String(option.estimatedProfit)},
+        ${String(option.marginPct)},
+        ${String(option.roiPct)},
+        ${option.riskFlags.length
+          ? sql`ARRAY[${sql.join(option.riskFlags.map((flag) => sql`${flag}`), sql`, `)}]::text[]`
+          : sql`ARRAY[]::text[]`},
+        ${option.decisionStatus},
+        ${option.reason},
+        ${option.listingEligible},
+        ${option.listingBlockReason}
       )
       ON CONFLICT (supplier_key, supplier_product_id, marketplace_key, marketplace_listing_id)
       DO UPDATE SET
