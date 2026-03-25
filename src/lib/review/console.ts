@@ -6,6 +6,7 @@ import {
   normalizeAvailabilitySignal,
   type AvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
+import { classifySupplierEvidence } from "@/lib/products/supplierEvidenceClassification";
 import {
   classifySupplierSnapshotQuality,
   normalizeSupplierTelemetry,
@@ -23,13 +24,22 @@ const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
 export const BLOCKING_RISK_FLAGS = new Set([
   "LOW_MATCH_CONFIDENCE",
   "MISSING_SHIPPING_ESTIMATE",
+  "SHIPPING_SIGNAL_MISSING",
+  "SHIPPING_SIGNAL_WEAK",
   "BRAND_OR_RESTRICTED_TITLE",
   "DUPLICATE_CANDIDATE_PATTERN",
   "SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT",
   "STALE_SUPPLIER_SNAPSHOT",
   "SUPPLIER_DRIFT_DATA_UNAVAILABLE",
   "SUPPLIER_OUT_OF_STOCK",
+  "SUPPLIER_LOW_STOCK",
   "SUPPLIER_AVAILABILITY_UNKNOWN",
+  "AVAILABILITY_NOT_CONFIRMED",
+  "SOURCE_CHALLENGE_PAGE",
+  "SOURCE_PROVIDER_BLOCK",
+  "SUPPLIER_BLOCKED",
+  "MEDIA_SIGNAL_WEAK",
+  "SUPPLIER_SIGNAL_INSUFFICIENT",
 ]);
 
 type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -331,7 +341,18 @@ function hasBrandedOrRestrictedTitle(input: string): boolean {
 }
 
 function deriveRiskFlags(row: CandidateRow): string[] {
-  const flags = new Set<string>((row.risk_flags ?? []).filter(Boolean));
+  const legacyNormalizedFlags = (row.risk_flags ?? [])
+    .filter(Boolean)
+    .map((flag) => {
+      if (flag === "SUPPLIER_AVAILABILITY_UNKNOWN" || flag === "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE") {
+        return "AVAILABILITY_NOT_CONFIRMED";
+      }
+      if (flag === "MISSING_SHIPPING_ESTIMATE") return "SHIPPING_SIGNAL_MISSING";
+      if (flag === "SHIPPING_STABILITY_WEAK") return "SHIPPING_SIGNAL_WEAK";
+      if (flag === "WEAK_MEDIA") return "MEDIA_SIGNAL_WEAK";
+      return flag;
+    });
+  const flags = new Set<string>(legacyNormalizedFlags);
   const confidence = toNumber(row.match_confidence);
   const estimatedShipping = toNumber(row.estimated_shipping);
   const marginPct = toNumber(row.margin_pct);
@@ -344,6 +365,20 @@ function deriveRiskFlags(row: CandidateRow): string[] {
   });
   const availabilitySignal = normalizeAvailabilitySignal(availability.signal);
   const availabilityConfidence = availability.confidence;
+  const supplierPayload = asObject(row.latest_supplier_raw_payload);
+  const supplierSnapshotQuality = classifySupplierSnapshotQuality({
+    rawPayload: supplierPayload,
+    availabilitySignal,
+    availabilityConfidence,
+  });
+  const supplierTelemetry = normalizeSupplierTelemetry(supplierPayload);
+  const supplierEvidence = classifySupplierEvidence({
+    availabilitySignal,
+    availabilityConfidence,
+    sourceQuality: supplierSnapshotQuality,
+    rawPayload: supplierPayload,
+    telemetrySignals: supplierTelemetry.signals,
+  });
   const joinedTitle = `${row.supplier_title ?? ""} ${row.marketplace_title ?? ""}`.trim();
 
   if (confidence != null && confidence < LOW_MATCH_CONFIDENCE_THRESHOLD) {
@@ -355,7 +390,9 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     estimatedShipping === undefined ||
     Number.isNaN(estimatedShipping)
   ) {
-    flags.add("MISSING_SHIPPING_ESTIMATE");
+    if (!supplierEvidence.codes.includes("SOURCE_CHALLENGE_PAGE") && !supplierEvidence.codes.includes("SOURCE_PROVIDER_BLOCK")) {
+      flags.add("SHIPPING_SIGNAL_MISSING");
+    }
   } else {
     flags.delete("MISSING_SHIPPING_ESTIMATE");
   }
@@ -385,16 +422,8 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     flags.add("STALE_SUPPLIER_SNAPSHOT");
   }
 
-  if (availabilitySignal === "OUT_OF_STOCK") {
-    flags.add("SUPPLIER_OUT_OF_STOCK");
-  } else if (availabilitySignal === "UNKNOWN") {
-    flags.add("SUPPLIER_AVAILABILITY_UNKNOWN");
-  } else if (availabilitySignal === "LOW_STOCK") {
-    flags.add("SUPPLIER_LOW_STOCK");
-  }
-
-  if (availabilityConfidence != null && availabilityConfidence < 0.5) {
-    flags.add("SUPPLIER_AVAILABILITY_LOW_CONFIDENCE");
+  for (const code of supplierEvidence.codes) {
+    flags.add(code);
   }
 
   return Array.from(flags);
@@ -445,13 +474,31 @@ function computeListingEligibility(input: {
 
   if (input.availabilitySignal === "OUT_OF_STOCK") {
     reasons.push("supplier availability indicates out of stock");
-  } else if (input.availabilitySignal === "UNKNOWN") {
-    reasons.push("supplier availability is unknown and requires manual review");
   } else if (input.availabilitySignal === "LOW_STOCK") {
     reasons.push("supplier availability is low stock and requires manual review");
   }
 
-  if (input.availabilityConfidence != null && input.availabilityConfidence < 0.5) {
+  if (
+    input.riskFlags.includes("AVAILABILITY_NOT_CONFIRMED") &&
+    !input.riskFlags.includes("SHIPPING_SIGNAL_MISSING") &&
+    !input.riskFlags.includes("SHIPPING_SIGNAL_WEAK") &&
+    !input.riskFlags.includes("SOURCE_CHALLENGE_PAGE") &&
+    !input.riskFlags.includes("SOURCE_PROVIDER_BLOCK")
+  ) {
+    reasons.push("supplier availability is not confirmed");
+  }
+
+  if (input.riskFlags.includes("SHIPPING_SIGNAL_MISSING")) {
+    reasons.push("shipping signal is missing");
+  } else if (input.riskFlags.includes("SHIPPING_SIGNAL_WEAK")) {
+    reasons.push("shipping signal is weak");
+  }
+
+  if (
+    input.availabilityConfidence != null &&
+    input.availabilityConfidence < 0.5 &&
+    !input.riskFlags.includes("AVAILABILITY_NOT_CONFIRMED")
+  ) {
     reasons.push("supplier availability confidence is low");
   }
 

@@ -35,7 +35,15 @@ function findPrimaryRecoveryCode(codes: string[]): string | null {
   if (codes.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE")) return "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE";
   if (codes.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE")) return "SUPPLIER_DRIFT_DATA_UNAVAILABLE";
   if (codes.includes("SUPPLIER_DRIFT_DATA_REQUIRED")) return "SUPPLIER_DRIFT_DATA_REQUIRED";
+  if (codes.includes("SOURCE_PROVIDER_BLOCK")) return "SOURCE_PROVIDER_BLOCK";
+  if (codes.includes("SOURCE_CHALLENGE_PAGE")) return "SOURCE_CHALLENGE_PAGE";
+  if (codes.includes("SUPPLIER_BLOCKED")) return "SUPPLIER_BLOCKED";
   if (codes.includes("SUPPLIER_OUT_OF_STOCK")) return "SUPPLIER_OUT_OF_STOCK";
+  if (codes.includes("AVAILABILITY_NOT_CONFIRMED")) return "AVAILABILITY_NOT_CONFIRMED";
+  if (codes.includes("SHIPPING_SIGNAL_MISSING")) return "SHIPPING_SIGNAL_MISSING";
+  if (codes.includes("SHIPPING_SIGNAL_WEAK")) return "SHIPPING_SIGNAL_WEAK";
+  if (codes.includes("MEDIA_SIGNAL_WEAK")) return "MEDIA_SIGNAL_WEAK";
+  if (codes.includes("SUPPLIER_SIGNAL_INSUFFICIENT")) return "SUPPLIER_SIGNAL_INSUFFICIENT";
   if (codes.includes("SUPPLIER_AVAILABILITY_UNKNOWN")) return "SUPPLIER_AVAILABILITY_UNKNOWN";
   if (codes.includes("SUPPLIER_LOW_STOCK")) return "SUPPLIER_LOW_STOCK";
   if (codes.includes("SUPPLIER_AVAILABILITY_LOW_CONFIDENCE")) return "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE";
@@ -81,7 +89,15 @@ export function computeRecoveryState(input: {
     reasonCodes.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
     reasonCodes.includes("SUPPLIER_DRIFT_DATA_UNAVAILABLE") ||
     reasonCodes.includes("SUPPLIER_DRIFT_DATA_REQUIRED") ||
+    reasonCodes.includes("SOURCE_PROVIDER_BLOCK") ||
+    reasonCodes.includes("SOURCE_CHALLENGE_PAGE") ||
+    reasonCodes.includes("SUPPLIER_BLOCKED") ||
     reasonCodes.includes("SUPPLIER_OUT_OF_STOCK") ||
+    reasonCodes.includes("AVAILABILITY_NOT_CONFIRMED") ||
+    reasonCodes.includes("SHIPPING_SIGNAL_MISSING") ||
+    reasonCodes.includes("SHIPPING_SIGNAL_WEAK") ||
+    reasonCodes.includes("MEDIA_SIGNAL_WEAK") ||
+    reasonCodes.includes("SUPPLIER_SIGNAL_INSUFFICIENT") ||
     reasonCodes.includes("SUPPLIER_AVAILABILITY_UNKNOWN") ||
     reasonCodes.includes("SUPPLIER_LOW_STOCK") ||
     reasonCodes.includes("SUPPLIER_AVAILABILITY_LOW_CONFIDENCE")

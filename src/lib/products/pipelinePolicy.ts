@@ -307,12 +307,34 @@ export function evaluateProductPipelinePolicy(
     flags.add("SUPPLIER_TELEMETRY_RISK");
   }
 
+  const shippingEstimateCount = toShippingEstimateCount(input.shippingEstimates);
+  const availabilityConfirmed =
+    input.availabilitySignal === "IN_STOCK" &&
+    (input.availabilityConfidence == null || input.availabilityConfidence >= 0.6);
+  const shippingSignalPresent = shippingEstimateCount > 0 || shippingConfidence >= 0.75;
+  const shippingSignalWeak = !shippingSignalPresent || shippingConfidence < 0.75;
   const shippingStable =
     actionableSnapshot &&
     input.supplierRowDecision !== "BLOCKED" &&
-    input.availabilitySignal === "IN_STOCK" &&
-    (input.availabilityConfidence == null || input.availabilityConfidence >= 0.6) &&
-    (toShippingEstimateCount(input.shippingEstimates) > 0 || shippingConfidence >= 0.75);
+    availabilityConfirmed &&
+    shippingSignalPresent;
+  if (input.availabilitySignal === "OUT_OF_STOCK") {
+    penalties.push("supplier out of stock");
+    flags.add("SUPPLIER_OUT_OF_STOCK");
+  } else if (input.availabilitySignal === "LOW_STOCK") {
+    penalties.push("supplier low stock");
+    flags.add("SUPPLIER_LOW_STOCK");
+  } else if (!availabilityConfirmed) {
+    penalties.push("availability not confirmed");
+    flags.add("AVAILABILITY_NOT_CONFIRMED");
+  }
+  if (!shippingSignalPresent) {
+    penalties.push("shipping signal missing");
+    flags.add("SHIPPING_SIGNAL_MISSING");
+  } else if (shippingSignalWeak) {
+    penalties.push("shipping signal weak");
+    flags.add("SHIPPING_SIGNAL_WEAK");
+  }
   if (!shippingStable) {
     penalties.push("shipping/availability stability weak");
     flags.add("SHIPPING_STABILITY_WEAK");

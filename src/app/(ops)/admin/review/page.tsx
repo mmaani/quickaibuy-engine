@@ -222,8 +222,16 @@ function RiskBadge({ flag }: { flag: string }) {
   const isBlocking =
     flag === "LOW_MATCH_CONFIDENCE" ||
     flag === "MISSING_SHIPPING_ESTIMATE" ||
+    flag === "SHIPPING_SIGNAL_MISSING" ||
+    flag === "SHIPPING_SIGNAL_WEAK" ||
     flag === "BRAND_OR_RESTRICTED_TITLE" ||
-    flag === "DUPLICATE_CANDIDATE_PATTERN";
+    flag === "DUPLICATE_CANDIDATE_PATTERN" ||
+    flag === "SOURCE_CHALLENGE_PAGE" ||
+    flag === "SOURCE_PROVIDER_BLOCK" ||
+    flag === "SUPPLIER_BLOCKED" ||
+    flag === "SUPPLIER_OUT_OF_STOCK" ||
+    flag === "SUPPLIER_LOW_STOCK" ||
+    flag === "AVAILABILITY_NOT_CONFIRMED";
 
   return (
     <span

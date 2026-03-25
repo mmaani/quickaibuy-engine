@@ -1361,7 +1361,15 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
               from profitable_candidates pc
               where pc.listing_eligible = false
                 and (
-                  upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY_UNKNOWN%'
+                  upper(coalesce(pc.listing_block_reason, '')) like '%AVAILABILITY_NOT_CONFIRMED%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SHIPPING_SIGNAL_MISSING%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SHIPPING_SIGNAL_WEAK%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%MEDIA_SIGNAL_WEAK%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_SIGNAL_INSUFFICIENT%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SOURCE_CHALLENGE_PAGE%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SOURCE_PROVIDER_BLOCK%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_BLOCKED%'
+                  or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY_UNKNOWN%'
                   or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_LOW_STOCK%'
                   or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY_LOW_CONFIDENCE%'
                 )

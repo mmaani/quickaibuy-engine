@@ -3,6 +3,10 @@ import { getProductsRawLatestOrderBySql, getProductsRawTimestampExprSql } from "
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { extractAvailabilityFromRawPayload, normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
 import {
+  classifySupplierEvidence,
+  formatSupplierEvidenceBlockReason,
+} from "@/lib/products/supplierEvidenceClassification";
+import {
   evaluateProductPipelinePolicy,
   PRODUCT_PIPELINE_MARGIN_MIN,
   PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
@@ -444,9 +448,6 @@ export async function runProfitEngine(input?: {
     const staleMarketplaceSnapshot =
       marketplaceSnapshotAgeHours != null &&
       marketplaceSnapshotAgeHours > maxMarketplaceSnapshotAgeHours;
-    const availabilityUnsafe = availabilitySignal === "OUT_OF_STOCK";
-    const availabilityManualReview =
-      availabilitySignal === "UNKNOWN" || availabilitySignal === "LOW_STOCK";
     const supplierImages = Array.isArray(row.supplierImages)
       ? row.supplierImages.filter((value): value is string => typeof value === "string")
       : [];
@@ -517,16 +518,33 @@ export async function runProfitEngine(input?: {
       supplierRawPayload
         ? normalizeSupplierQuality(String(supplierRawPayload.snapshotQuality ?? ""))
         : null;
+    const supplierEvidence = classifySupplierEvidence({
+      availabilitySignal,
+      availabilityConfidence: availability.confidence ?? null,
+      shippingEstimates: row.supplierShippingEstimates,
+      shippingConfidence:
+        supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
+          ? supplierRawPayload.shippingConfidence
+          : null,
+      mediaQualityScore:
+        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
+          ? supplierRawPayload.mediaQualityScore
+          : null,
+      imageCount: supplierImages.length,
+      sourceQuality: rawSupplierQuality,
+      rawPayload: supplierRawPayload,
+      telemetrySignals,
+    });
+    const supplierEvidenceCodes = supplierEvidence.codes;
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const automationSafe =
       !staleMarketplaceSnapshot &&
       !supplierDriftExceeded &&
-      !availabilityUnsafe &&
-      !availabilityManualReview &&
+      !supplierEvidence.manualReview &&
       !marginOrRoiFailed &&
       pipeline.eligible;
     const decisionStatus =
-      staleMarketplaceSnapshot || supplierDriftExceeded || availabilityUnsafe || availabilityManualReview
+      staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview
         ? "MANUAL_REVIEW"
         : marginOrRoiFailed || pipeline.manualReview
           ? "MANUAL_REVIEW"
@@ -538,10 +556,8 @@ export async function runProfitEngine(input?: {
       ? `marketplace snapshot age ${marketplaceSnapshotAgeHours}h exceeds ${maxMarketplaceSnapshotAgeHours}h`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
-      : availabilityUnsafe
-        ? "supplier availability indicates out of stock"
-        : availabilityManualReview
-          ? `supplier availability requires manual review (${availabilitySignal})`
+      : supplierEvidenceCodes.length
+        ? formatSupplierEvidenceBlockReason(supplierEvidenceCodes)
           : marginOrRoiFailed
             ? `profit guard requires margin >= ${minMarginPct}% and roi >= ${minRoiPct}%`
             : pipeline.manualReview
@@ -552,11 +568,9 @@ export async function runProfitEngine(input?: {
         ? ["STALE_MARKETPLACE_SNAPSHOT"]
         : supplierDriftExceeded
           ? ["SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT"]
-          : availabilityUnsafe
-            ? ["SUPPLIER_OUT_OF_STOCK"]
-            : availabilityManualReview
-              ? ["SUPPLIER_AVAILABILITY_UNKNOWN"]
-              : marginOrRoiFailed
+          : supplierEvidenceCodes.length
+            ? Array.from(new Set([...supplierEvidenceCodes, ...pipeline.flags]))
+            : marginOrRoiFailed
                 ? ["PROFIT_THRESHOLD_NOT_MET"]
                 : pipeline.flags;
     const estimatedFeesJson = {
@@ -582,6 +596,8 @@ export async function runProfitEngine(input?: {
       ? `marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} > ${maxMarketplaceSnapshotAgeHours} | roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
+      : supplierEvidenceCodes.length
+        ? `supplier evidence review required | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
       : marginOrRoiFailed
         ? `margin ${marginPct}% / roi ${roiPct}% below required margin ${minMarginPct}% roi ${minRoiPct}%`
         : pipeline.manualReview
@@ -613,8 +629,8 @@ export async function runProfitEngine(input?: {
       roiPct,
       staleMarketplaceSnapshot,
       supplierDriftExceeded,
-      availabilityUnsafe,
-      availabilityManualReview,
+      availabilityUnsafe: supplierEvidenceCodes.includes("SUPPLIER_OUT_OF_STOCK"),
+      availabilityManualReview: supplierEvidence.manualReview,
       marginOrRoiFailed,
       automationSafe,
       decisionStatus,
