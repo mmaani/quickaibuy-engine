@@ -124,13 +124,6 @@ function classifyDropOff(input: {
   }
 
   if (
-    flags.has("SHIPPING_STABILITY_WEAK") ||
-    penalties.has("shipping/availability stability weak")
-  ) {
-    return { bucket: "availability", reason: "shipping_or_availability_weak" };
-  }
-
-  if (
     flags.has("WEAK_MEDIA") ||
     flags.has("SUPPLIER_QUALITY_WEAK") ||
     flags.has("SUPPLIER_TELEMETRY_RISK") ||
@@ -145,6 +138,13 @@ function classifyDropOff(input: {
       return { bucket: "quality", reason: "fallback_stub_no_products_parsed" };
     }
     return { bucket: "quality", reason: "supplier_quality_or_media_weak" };
+  }
+
+  if (
+    flags.has("SHIPPING_STABILITY_WEAK") ||
+    penalties.has("shipping/availability stability weak")
+  ) {
+    return { bucket: "availability", reason: "shipping_or_availability_weak" };
   }
 
   return { bucket: "unknown", reason: "policy_rejected_other" };
@@ -212,12 +212,22 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     for (const item of allProducts) {
       const sourceCounter = getSourceBreakdown(sourceBreakdown, item.platform);
       const normalizedRow = supplierProductToRawInsert(item);
+      const crawlStatus = String(item.raw?.crawlStatus ?? "").trim().toUpperCase();
       if (normalizedRow.supplierKey && normalizedRow.supplierProductId) {
         sourceCounter.normalized_count += 1;
       }
       const listingValidity = String(item.raw?.listingValidity ?? "").trim().toUpperCase();
+      const telemetrySignals = new Set((item.telemetrySignals ?? []).map((value) => String(value).toLowerCase()));
       const hasRequiredFields = Boolean(normalizedRow.title && normalizedRow.sourceUrl);
-      if (normalizedRow.supplierKey && normalizedRow.supplierProductId && hasRequiredFields && listingValidity !== "INVALID") {
+      if (
+        normalizedRow.supplierKey &&
+        normalizedRow.supplierProductId &&
+        hasRequiredFields &&
+        listingValidity !== "INVALID" &&
+        crawlStatus === "PARSED" &&
+        !telemetrySignals.has("fallback") &&
+        !telemetrySignals.has("challenge")
+      ) {
         sourceCounter.valid_count += 1;
       }
       const additionalImageCount = Math.max(0, item.images.length - 1);

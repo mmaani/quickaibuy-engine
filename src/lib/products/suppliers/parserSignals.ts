@@ -10,6 +10,18 @@ export function compactText(value: string): string {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+export function looksLikeProviderBlockPayload(value: string): boolean {
+  const compact = compactText(value).toLowerCase();
+  if (!compact) return false;
+  return (
+    compact.includes("securitycompromiseerror") ||
+    compact.includes("\"code\":451") ||
+    compact.includes("\"status\":45102") ||
+    compact.includes("anonymous access to domain") ||
+    compact.includes("blocked until")
+  );
+}
+
 export function sliceEvidence(value: string, maxLength = MAX_EVIDENCE_TEXT_LENGTH): string {
   const compact = compactText(value);
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1)}...`;

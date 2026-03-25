@@ -5,6 +5,7 @@ import {
   normalizeAvailabilityConfidence,
   normalizeAvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
+import { buildSupplierEnrichment } from "@/lib/products/supplierEnrichment";
 import { resolveSupplierQualityPayload } from "@/lib/products/supplierQuality";
 
 export function supplierProductToRawInsert(product: SupplierProduct): InsertRawProductInput {
@@ -30,14 +31,28 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     availabilityEvidenceQuality === "LOW" && availabilitySignal === "UNKNOWN"
       ? Math.min(rawConfidence ?? 0.2, 0.2)
       : rawConfidence;
+  const enrichment = buildSupplierEnrichment({
+    title: product.title,
+    sourceUrl: product.sourceUrl,
+    images: product.images,
+    shippingEstimates: product.shippingEstimates,
+    availabilitySignal,
+    availabilityConfidence,
+    rawPayload: product.raw,
+    telemetrySignals: product.telemetrySignals ?? [],
+  });
+  const enrichedTitle = enrichment.cleanedTitle ?? product.title;
+  const enrichedImages = enrichment.normalizedImageUrls.length
+    ? enrichment.normalizedImageUrls
+    : product.images;
   const quality = resolveSupplierQualityPayload({
     rawPayload: product.raw,
     availabilitySignal,
     availabilityConfidence,
     price: product.price,
-    title: product.title,
+    title: enrichedTitle,
     sourceUrl: product.sourceUrl,
-    images: product.images,
+    images: enrichedImages,
     shippingEstimates: product.shippingEstimates,
     telemetrySignals: product.telemetrySignals,
   });
@@ -45,10 +60,10 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     ...product.raw,
     jobType: "supplier:discover",
     keyword: product.keyword,
-    title: product.title,
+    title: enrichedTitle,
     price: product.price,
     currency: product.currency,
-    images: product.images,
+    images: enrichedImages,
     variants: product.variants,
     shippingEstimates: product.shippingEstimates,
     sourceUrl: product.sourceUrl,
@@ -62,14 +77,29 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     snapshotQuality: product.snapshotQuality ?? quality.snapshotQuality,
     telemetrySignals: quality.telemetrySignals,
     telemetry: quality.telemetry,
+    primaryImageUrl: enrichment.primaryImageUrl,
+    normalizedImageUrls: enrichment.normalizedImageUrls,
+    imageGalleryCount: enrichment.imageGalleryCount,
+    cleanedTitle: enrichment.cleanedTitle,
+    titleCompleteness: enrichment.titleCompleteness,
+    mediaQualityScore: enrichment.mediaQualityScore,
+    shippingPriceExplicit: enrichment.shippingPriceExplicit,
+    freeShippingExplicit: enrichment.freeShippingExplicit,
+    shippingMethod: enrichment.shippingMethod,
+    deliveryEstimateMinDays: enrichment.deliveryEstimateMinDays,
+    deliveryEstimateMaxDays: enrichment.deliveryEstimateMaxDays,
+    shippingConfidence: enrichment.shippingConfidence,
+    pageIntegrityActionable: enrichment.pageIntegrityActionable,
+    actionableSnapshot: enrichment.actionableSnapshot,
+    supplierRowDecision: enrichment.supplierRowDecision,
   });
 
   return {
     supplierKey: String(product.platform ?? "").trim().toLowerCase(),
     supplierProductId: product.supplierProductId ?? product.sourceUrl,
     sourceUrl: product.sourceUrl,
-    title: product.title,
-    images: product.images,
+    title: enrichedTitle,
+    images: enrichedImages,
     variants: product.variants,
     currency: product.currency,
     priceMin: product.price,

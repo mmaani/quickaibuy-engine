@@ -5,6 +5,7 @@ import {
   extractPriceEvidence,
   extractShippingEvidence,
   inferListingValidity,
+  looksLikeProviderBlockPayload,
   sliceEvidence,
 } from "./parserSignals";
 import { fetchSupplierPageWithFallback } from "./fetchWithFallback";
@@ -15,6 +16,7 @@ function looksLikeTemuChallengePage(text: string): boolean {
   const compact = compactText(text).toLowerCase();
   if (!compact) return false;
   return (
+    looksLikeProviderBlockPayload(text) ||
     compact.includes("security verification") ||
     compact.includes("challenge") ||
     compact.includes("upload-static/assets/chl/js") ||
@@ -69,7 +71,9 @@ function buildTemuSearchUrl(keyword: string): string {
 }
 
 function normalizeTemuItemUrl(url: string): string {
-  const normalized = String(url || "").replace(/^http:\/\//i, "https://");
+  const normalized = String(url || "")
+    .replace(/^http:\/\//i, "https://")
+    .replace(/[):,.;]+$/g, "");
   return normalized.includes("temu.com/") ? normalized : "";
 }
 
@@ -376,7 +380,7 @@ export async function searchTemuByKeyword(
       ? ["fallback", "challenge", "low_quality"]
       : ["fallback", "low_quality"];
 
-    if (rows.length) {
+    if (!effectiveChallengePage && rows.length) {
       const enrichedRows = await Promise.all(rows.map((row) => enrichTemuProductWithDetail(row)));
       console.log(`[supplier][Temu] keyword="${normalizedKeyword}" fetchMode=${effectiveFetched.mode} results=${rows.length}`);
       return enrichedRows;

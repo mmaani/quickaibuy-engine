@@ -86,9 +86,11 @@ type SourceHealthCard = {
   status: "healthy" | "partial" | "blocked";
   statusLabel: string;
   reason: string;
-  viableCandidates: number;
+  viableSnapshots: number;
+  nominatedCandidates: number;
   fetched: number;
   parsed: number;
+  freshRows24h: number;
 };
 
 const CANONICAL_SOURCES = ["cjdropshipping", "aliexpress", "alibaba", "temu"] as const;
@@ -149,6 +151,25 @@ function canonicalSourceKey(value: unknown): string {
   return normalized;
 }
 
+function describeSourceIssue(input: {
+  topReasons: string[];
+  challengePages: number;
+  fallbackRows: number;
+  rejectedMissingFields: number;
+  freshRows24h: number;
+}): string {
+  if (input.challengePages > 0) return "451 / block-page or challenge response detected.";
+  if (input.topReasons.includes("missing_title_or_source_url") || input.rejectedMissingFields > 0) {
+    return "Missing title/image/source_url is blocking viable snapshots.";
+  }
+  if (input.topReasons.includes("shipping_or_availability_weak")) {
+    return "Quality gate is rejecting weak shipping or availability evidence.";
+  }
+  if (input.fallbackRows > 0) return "Fallback/challenge HTML is displacing actionable product rows.";
+  if (input.freshRows24h === 0) return "No fresh viable data in the last 24 hours.";
+  return "Scanned with no actionable parsed rows.";
+}
+
 function buildSourceHealthCards(data: Awaited<ReturnType<typeof getControlPanelData>>): SourceHealthCard[] {
   const cycleRows = new Map(
     data.supplierDiscoveryHealth.latestCycleBreakdown.map((row) => [canonicalSourceKey(row.supplier_key), row])
@@ -156,57 +177,68 @@ function buildSourceHealthCards(data: Awaited<ReturnType<typeof getControlPanelD
   const telemetryRows = new Map(
     data.supplierDiscoveryHealth.parserTelemetry.map((row) => [canonicalSourceKey(row.supplierKey), row])
   );
+  const freshnessRows = new Map(
+    data.supplierDiscoveryHealth.freshnessBySupplier.map((row) => [canonicalSourceKey(row.supplier_key), row])
+  );
   const contributions = new Map(
     data.supplierDiscoveryHealth.candidateContributionBySupplier.map((row) => [
       canonicalSourceKey(row.supplier_key),
-      toNum(row.listing_ready_candidates),
+      toNum(row.total_candidates),
     ])
   );
 
   return CANONICAL_SOURCES.map((source) => {
     const cycleRow = cycleRows.get(source);
     const telemetryRow = telemetryRows.get(source);
+    const freshnessRow = freshnessRows.get(source);
     const fetched = toNum(cycleRow?.fetched_count);
     const parsed = Math.max(toNum(cycleRow?.parsed_count), toNum(telemetryRow?.parsed));
     const valid = toNum(cycleRow?.valid_count);
     const eligible = toNum(cycleRow?.eligible_count);
-    const viableCandidates = contributions.get(source) ?? 0;
-    const rejectedQuality = Math.max(toNum(cycleRow?.rejected_quality_count), toNum(telemetryRow?.lowQuality));
+    const viableSnapshots = Math.max(valid, toNum(telemetryRow?.highQuality) + toNum(telemetryRow?.mediumQuality));
+    const nominatedCandidates = contributions.get(source) ?? 0;
     const rejectedMissingFields = toNum(cycleRow?.rejected_missing_required_fields_count);
     const challengePages = toNum(telemetryRow?.challenge);
     const fallbackRows = toNum(telemetryRow?.fallback);
+    const freshRows24h = toNum(freshnessRow?.rows_24h);
     const topReasons = Array.isArray(cycleRow?.top_rejection_reasons)
       ? cycleRow.top_rejection_reasons.map((value) => String(value)).filter(Boolean)
       : [];
 
-    if (eligible > 0 || viableCandidates > 0) {
+    if (eligible > 0 || nominatedCandidates > 0) {
       return {
         source,
         status: "healthy",
         statusLabel: "Healthy",
-        reason: viableCandidates > 0 ? "Contributing actionable candidates." : "Parsed snapshots are usable downstream.",
-        viableCandidates,
+        reason:
+          nominatedCandidates > 0
+            ? "Contributing downstream nominations with real runtime data."
+            : "Parsed snapshots are usable downstream.",
+        viableSnapshots,
+        nominatedCandidates,
         fetched,
         parsed,
+        freshRows24h,
       };
     }
 
-    if (parsed > 0 || valid > 0) {
+    if (parsed > 0 || valid > 0 || freshRows24h > 0) {
       return {
         source,
         status: "partial",
         statusLabel: "Partial",
-        reason:
-          topReasons[0] ??
-          (fallbackRows > 0
-            ? "Parsed/fallback rows exist, but downstream quality is still not good enough."
-            : null) ??
-          (rejectedMissingFields > 0
-            ? "Parsed rows are missing required listing fields."
-            : "Rows parse, but quality or availability still blocks nomination."),
-        viableCandidates,
+        reason: describeSourceIssue({
+          topReasons,
+          challengePages,
+          fallbackRows,
+          rejectedMissingFields,
+          freshRows24h,
+        }),
+        viableSnapshots,
+        nominatedCandidates,
         fetched,
         parsed,
+        freshRows24h,
       };
     }
 
@@ -214,16 +246,18 @@ function buildSourceHealthCards(data: Awaited<ReturnType<typeof getControlPanelD
       source,
       status: "blocked",
       statusLabel: "Blocked",
-      reason:
-        topReasons[0] ??
-        (challengePages > 0
-          ? "Challenge-page responses are blocking actionable extraction."
-          : fallbackRows > 0 || rejectedQuality > 0
-            ? "Blocked by fallback or low-quality parsed content."
-            : "Scanned with no actionable parsed rows."),
-      viableCandidates,
+      reason: describeSourceIssue({
+        topReasons,
+        challengePages,
+        fallbackRows,
+        rejectedMissingFields,
+        freshRows24h,
+      }),
+      viableSnapshots,
+      nominatedCandidates,
       fetched,
       parsed,
+      freshRows24h,
     };
   });
 }
@@ -514,8 +548,18 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                     <div className="mt-1 font-semibold text-white">{card.parsed}</div>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">Viable</div>
-                    <div className="mt-1 font-semibold text-white">{card.viableCandidates}</div>
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">Fresh 24h</div>
+                    <div className="mt-1 font-semibold text-white">{card.freshRows24h}</div>
+                  </div>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">Viable Snapshots</div>
+                    <div className="mt-1 font-semibold text-white">{card.viableSnapshots}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">Nominated</div>
+                    <div className="mt-1 font-semibold text-white">{card.nominatedCandidates}</div>
                   </div>
                 </div>
               </div>

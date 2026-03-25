@@ -5,6 +5,7 @@ import {
   extractPriceEvidence,
   extractShippingEvidence,
   inferListingValidity,
+  looksLikeProviderBlockPayload,
   sliceEvidence,
 } from "./parserSignals";
 
@@ -14,6 +15,7 @@ function looksLikeAliExpressChallengePage(text: string): boolean {
   const compact = compactText(text).toLowerCase();
   if (!compact) return false;
   return (
+    looksLikeProviderBlockPayload(text) ||
     compact.includes("_____tmd_____/punish") ||
     compact.includes("captcha") ||
     compact.includes("security verification") ||
@@ -96,6 +98,13 @@ function extractPriceNear(text: string, offset: number): string | null {
   return matches[matches.length - 1]?.[1] ?? null;
 }
 
+function normalizeTitleToken(value: string | null): string {
+  return compactText(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function extractTitleNear(text: string, offset: number): string | null {
   const left = text.slice(Math.max(0, offset - 1200), offset);
   const headingMatches = Array.from(left.matchAll(/###\s+([^\n$]{8,300}?)(?:\s+\$[0-9]|$)/g));
@@ -113,15 +122,166 @@ function extractTitleNear(text: string, offset: number): string | null {
   return null;
 }
 
-function extractImageNear(text: string, offset: number): string[] {
-  const left = text.slice(Math.max(0, offset - 1500), offset);
-  const imageMatches = Array.from(
-    left.matchAll(/\((https?:\/\/[^)\s]*ae[-\w.]*aliexpress[^)\s]*|https?:\/\/[^)\s]*ae01\.alicdn\.com[^)\s]*)\)/g)
+function extractImagesNear(text: string, offset: number, title: string | null): string[] {
+  const left = text.slice(Math.max(0, offset - 2400), offset);
+  const normalizedTitle = normalizeTitleToken(title);
+  const productImageMatches = Array.from(
+    left.matchAll(
+      /!\[Image \d+: ([^\]\n]{8,300})\]\((https?:\/\/[^)\s]*(?:aliexpress-media\.com|alicdn\.com)[^)\s]*)\)/gi
+    )
   );
-  const image =
-    imageMatches.find((m) => /\.(jpg|jpeg|png|avif)/i.test(m[1]) && /480x|960x|\.jpg/i.test(m[1]))?.[1] ??
-    imageMatches[imageMatches.length - 1]?.[1];
-  return image ? [image.replace(/^http:\/\//i, "https://")] : [];
+  const filteredMatches = productImageMatches.filter((match) => {
+    const altText = normalizeTitleToken(match[1]);
+    const url = match[2];
+    if (!url || /\/(?:27x27|45x60|48x48|60x60|64x64|72x72|116x64|154x64)\./i.test(url)) return false;
+    if (!/\.(jpg|jpeg|png|avif)/i.test(url) || !/(480x480|960x960|\.jpg|\.png|\.avif)/i.test(url)) return false;
+    if (!normalizedTitle) return true;
+    return altText === normalizedTitle || altText.includes(normalizedTitle) || normalizedTitle.includes(altText);
+  });
+
+  const matches = filteredMatches.length ? filteredMatches : productImageMatches;
+  const images: string[] = [];
+  const seen = new Set<string>();
+  for (const match of matches) {
+    const normalized = match[2].replace(/^http:\/\//i, "https://");
+    if (!normalized || seen.has(normalized)) continue;
+    if (/\/(?:27x27|45x60|48x48|60x60|64x64|72x72|116x64|154x64)\./i.test(normalized)) continue;
+    seen.add(normalized);
+    images.push(normalized);
+  }
+  return images.slice(-8);
+}
+
+function extractMerchandisingSignals(rawText: string): {
+  rating: number | null;
+  soldCount: number | null;
+  soldText: string | null;
+  shippingBadge: string | null;
+} {
+  const compact = compactText(rawText);
+  if (!compact) {
+    return { rating: null, soldCount: null, soldText: null, shippingBadge: null };
+  }
+
+  const ratingSoldMatch = compact.match(/([0-5]\.[0-9])\s+([0-9][0-9,]*\+?\s+sold)/i);
+  const shippingBadgeMatch = compact.match(/\b(dollar express|choice|free shipping|fast delivery)\b/i);
+  const soldCount = ratingSoldMatch?.[2]
+    ? Number(ratingSoldMatch[2].replace(/[^0-9]/g, ""))
+    : null;
+
+  return {
+    rating: ratingSoldMatch?.[1] ? Number(ratingSoldMatch[1]) : null,
+    soldCount: Number.isFinite(soldCount ?? NaN) ? soldCount : null,
+    soldText: ratingSoldMatch?.[2] ? sliceEvidence(ratingSoldMatch[2]) : null,
+    shippingBadge: shippingBadgeMatch?.[1] ? sliceEvidence(shippingBadgeMatch[1]) : null,
+  };
+}
+
+function deriveAliExpressAvailability(input: {
+  nearbyText: string;
+  title: string | null;
+  images: string[];
+  sourceUrl: string;
+  listingValidity: { status: string; reason: string | null };
+  merchandising: ReturnType<typeof extractMerchandisingSignals>;
+}): {
+  signal: "IN_STOCK" | "LOW_STOCK" | "OUT_OF_STOCK" | "UNKNOWN";
+  confidence: number;
+  evidenceText: string | null;
+  quality: "HIGH" | "MEDIUM" | "LOW";
+} {
+  const inferred = inferAvailabilityFromText(input.nearbyText);
+  const evidence = extractAvailabilityEvidence(input.nearbyText);
+
+  if (inferred.signal !== "UNKNOWN") {
+    return {
+      signal: inferred.signal,
+      confidence: inferred.confidence,
+      evidenceText: evidence.evidenceText ?? evidence.inventoryBadge,
+      quality: inferred.signal === "IN_STOCK" ? "HIGH" : "MEDIUM",
+    };
+  }
+
+  const strongActiveCard =
+    input.listingValidity.status === "VALID" &&
+    Boolean(input.title) &&
+    input.images.length >= 4 &&
+    Boolean(input.sourceUrl) &&
+    input.merchandising.rating != null &&
+    input.merchandising.rating >= 4 &&
+    input.merchandising.soldCount != null &&
+    input.merchandising.soldCount >= 100;
+
+  if (strongActiveCard) {
+    const soldCount = input.merchandising.soldCount ?? 0;
+    const confidence = soldCount >= 1000 || (input.merchandising.rating ?? 0) >= 4.7 ? 0.74 : 0.68;
+    const evidenceText = sliceEvidence(
+      `active search card rating ${input.merchandising.rating} ${input.merchandising.soldText ?? `${soldCount} sold`}`
+    );
+    return {
+      signal: "IN_STOCK",
+      confidence,
+      evidenceText,
+      quality: "MEDIUM",
+    };
+  }
+
+  return {
+    signal: inferred.signal,
+    confidence: inferred.confidence,
+    evidenceText: evidence.evidenceText ?? evidence.inventoryBadge,
+    quality: "LOW",
+  };
+}
+
+function deriveAliExpressShipping(
+  nearbyText: string,
+  merchandising: ReturnType<typeof extractMerchandisingSignals>
+): {
+  shippingEstimates: SupplierProduct["shippingEstimates"];
+  evidenceText: string | null;
+  shipsFromHint: string | null;
+  signal: "DIRECT" | "INFERRED" | "MISSING";
+  shippingConfidence: number;
+  shippingMethod: string | null;
+} {
+  const shipping = extractShippingEvidence(nearbyText);
+  const shippingMethod = merchandising.shippingBadge ?? shipping.evidenceText ?? null;
+  const shippingConfidence =
+    shipping.signal === "DIRECT"
+      ? 0.9
+      : merchandising.shippingBadge && /(dollar express|choice|free shipping|fast delivery)/i.test(merchandising.shippingBadge)
+        ? 0.78
+        : shipping.signal === "INFERRED"
+          ? 0.62
+          : 0.2;
+
+  const shippingEstimates =
+    shipping.shippingEstimates.length > 0
+      ? shipping.shippingEstimates
+      : shippingMethod
+        ? [
+            {
+              label: shippingMethod,
+              cost: /free shipping/i.test(shippingMethod) ? "0" : null,
+              currency: /free shipping/i.test(shippingMethod) ? "USD" : null,
+            },
+          ]
+        : [];
+
+  return {
+    shippingEstimates,
+    evidenceText: shipping.evidenceText ?? shippingMethod,
+    shipsFromHint: shipping.shipsFromHint,
+    signal:
+      shipping.signal !== "MISSING"
+        ? shipping.signal
+        : shippingMethod
+          ? "INFERRED"
+          : "MISSING",
+    shippingConfidence,
+    shippingMethod,
+  };
 }
 
 function parseAliExpressText(text: string, keyword: string, snapshotTs: string): SupplierProduct[] {
@@ -140,12 +300,20 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
     const title = extractTitleNear(text, idx);
     const priceEvidence = extractPriceEvidence(nearbyText);
     const price = extractPriceFromItemUrl(rawUrl) ?? extractPriceNear(text, idx) ?? priceEvidence.price;
-    const images = extractImageNear(text, idx);
+    const images = extractImagesNear(text, idx, title);
     const sourceUrl = normalizeAliExpressItemUrl(rawUrl, itemId);
-    const inferredAvailability = inferAvailabilityFromText(nearbyText);
-    const availabilityEvidence = extractAvailabilityEvidence(nearbyText);
-    const shipping = extractShippingEvidence(nearbyText);
     const listingValidity = inferListingValidity(nearbyText);
+    const merchandising = extractMerchandisingSignals(nearbyText);
+    const availability = deriveAliExpressAvailability({
+      nearbyText,
+      title,
+      images,
+      sourceUrl,
+      listingValidity,
+      merchandising,
+    });
+    const availabilityEvidence = extractAvailabilityEvidence(nearbyText);
+    const shipping = deriveAliExpressShipping(nearbyText, merchandising);
 
     seen.add(itemId);
 
@@ -161,29 +329,38 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
       platform: "AliExpress",
       keyword,
       snapshotTs,
-      availabilitySignal: inferredAvailability.signal,
-      availabilityConfidence: inferredAvailability.confidence,
+      availabilitySignal: availability.signal,
+      availabilityConfidence: availability.confidence,
       telemetrySignals: ["parsed"],
       raw: {
         provider: "aliexpress-search",
         parseMode: "text",
         matchedItemUrl: rawUrl,
-        availabilitySignal: inferredAvailability.signal,
-        availabilityConfidence: inferredAvailability.confidence,
+        availabilitySignal: availability.signal,
+        availabilityConfidence: availability.confidence,
         availabilityEvidencePresent: Boolean(
-          availabilityEvidence.evidenceText ||
+          availability.evidenceText ||
+            availabilityEvidence.evidenceText ||
             availabilityEvidence.inventoryBadge ||
             availabilityEvidence.stockCount != null
         ),
-        availabilityEvidenceQuality: inferredAvailability.signal === "UNKNOWN" ? "MEDIUM" : "HIGH",
-        availabilityEvidenceText: availabilityEvidence.evidenceText,
+        availabilityEvidenceQuality: availability.quality,
+        availabilityEvidenceText: availability.evidenceText ?? availabilityEvidence.evidenceText,
         inventoryBadge: availabilityEvidence.inventoryBadge,
         stockCount: availabilityEvidence.stockCount,
         priceText: priceEvidence.priceText,
         priceSignal: priceEvidence.signal,
         shippingSignal: shipping.signal,
         shippingEvidenceText: shipping.evidenceText,
+        shippingBadge: merchandising.shippingBadge,
+        shippingMethod: shipping.shippingMethod,
+        shippingConfidence: shipping.shippingConfidence,
         shipsFromHint: shipping.shipsFromHint,
+        ratingValue: merchandising.rating,
+        soldCount: merchandising.soldCount,
+        soldText: merchandising.soldText,
+        imageGalleryCount: images.length,
+        mediaQualityScore: images.length >= 5 ? 0.9 : images.length >= 4 ? 0.84 : images.length >= 2 ? 0.66 : 0.45,
         listingValidity: listingValidity.status,
         listingValidityReason: listingValidity.reason,
         nearbyTextSample: sliceEvidence(nearbyText),
@@ -198,13 +375,15 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
   return out;
 }
 
+const ALIEXPRESS_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+};
+
 async function fetchAliExpressSearchText(searchUrl: string): Promise<{ text: string; mode: string }> {
-  const headers = {
-    "User-Agent":
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-  };
+  const headers = ALIEXPRESS_HEADERS;
 
   try {
     const res = await fetch(searchUrl, {
@@ -226,6 +405,20 @@ async function fetchAliExpressSearchText(searchUrl: string): Promise<{ text: str
   const res = await fetch(proxyUrl, {
     method: "GET",
     headers,
+    cache: "no-store",
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) {
+    throw new Error(`AliExpress read-through fetch failed: ${res.status}`);
+  }
+  return { text: await res.text(), mode: "read-through" };
+}
+
+async function fetchAliExpressSearchFallbackText(searchUrl: string): Promise<{ text: string; mode: string }> {
+  const proxyUrl = `https://r.jina.ai/http://${searchUrl.replace(/^https?:\/\//, "")}`;
+  const res = await fetch(proxyUrl, {
+    method: "GET",
+    headers: ALIEXPRESS_HEADERS,
     cache: "no-store",
     signal: AbortSignal.timeout(25_000),
   });
@@ -266,15 +459,7 @@ export async function searchAliExpressByKeyword(
     const fetched = await fetchAliExpressSearchText(searchUrl);
     const challengePage = looksLikeAliExpressChallengePage(fetched.text);
     const challengeHint = extractAliExpressChallengeHint(fetched.text);
-    fallbackRaw.fetchMode = fetched.mode;
-    fallbackRaw.pageChallengeDetected = challengePage;
-    fallbackRaw.challengeHint = challengeHint;
-    fallbackRaw.pageTextSample = challengeHint ? sliceEvidence(challengeHint) : null;
-    fallbackRaw.crawlStatus = challengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
-    fallbackRaw.telemetrySignals = challengePage
-      ? ["fallback", "challenge", "low_quality"]
-      : ["fallback", "low_quality"];
-    const rows = parseAliExpressText(fetched.text, normalizedKeyword, snapshotTs)
+    let rows = parseAliExpressText(fetched.text, normalizedKeyword, snapshotTs)
       .filter((row) => row.title || row.supplierProductId)
       .slice(0, capped)
       .map((row) => ({
@@ -287,9 +472,39 @@ export async function searchAliExpressByKeyword(
         },
       }));
 
-    if (rows.length) {
+    let effectiveFetched = fetched;
+    let effectiveChallengePage = challengePage;
+    let effectiveChallengeHint = challengeHint;
+    if (fetched.mode === "direct" && (challengePage || rows.length === 0)) {
+      effectiveFetched = await fetchAliExpressSearchFallbackText(searchUrl);
+      effectiveChallengePage = looksLikeAliExpressChallengePage(effectiveFetched.text);
+      effectiveChallengeHint = extractAliExpressChallengeHint(effectiveFetched.text);
+      rows = parseAliExpressText(effectiveFetched.text, normalizedKeyword, snapshotTs)
+        .filter((row) => row.title || row.supplierProductId)
+        .slice(0, capped)
+        .map((row) => ({
+          ...row,
+          raw: {
+            ...row.raw,
+            fetchMode: effectiveFetched.mode,
+            searchUrl,
+            pageChallengeDetected: effectiveChallengePage,
+          },
+        }));
+    }
+
+    fallbackRaw.fetchMode = effectiveFetched.mode;
+    fallbackRaw.pageChallengeDetected = effectiveChallengePage;
+    fallbackRaw.challengeHint = effectiveChallengeHint;
+    fallbackRaw.pageTextSample = effectiveChallengeHint ? sliceEvidence(effectiveChallengeHint) : null;
+    fallbackRaw.crawlStatus = effectiveChallengePage ? "CHALLENGE_PAGE" : "NO_PRODUCTS_PARSED";
+    fallbackRaw.telemetrySignals = effectiveChallengePage
+      ? ["fallback", "challenge", "low_quality"]
+      : ["fallback", "low_quality"];
+
+    if (!effectiveChallengePage && rows.length) {
       console.log(
-        `[supplier][AliExpress] keyword="${normalizedKeyword}" fetchMode=${fetched.mode} results=${rows.length}`
+        `[supplier][AliExpress] keyword="${normalizedKeyword}" fetchMode=${effectiveFetched.mode} results=${rows.length}`
       );
       return rows;
     }

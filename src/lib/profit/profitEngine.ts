@@ -450,6 +450,12 @@ export async function runProfitEngine(input?: {
     const supplierImages = Array.isArray(row.supplierImages)
       ? row.supplierImages.filter((value): value is string => typeof value === "string")
       : [];
+    const supplierRawPayload =
+      row.supplierRawPayload &&
+      typeof row.supplierRawPayload === "object" &&
+      !Array.isArray(row.supplierRawPayload)
+        ? (row.supplierRawPayload as Record<string, unknown>)
+        : null;
 
     const economics = calculateRealProfit({
       marketplaceKey,
@@ -465,11 +471,8 @@ export async function runProfitEngine(input?: {
     const marginPct = economics.marginPct;
     const roiPct = economics.roiPct;
     const telemetrySignals =
-      row.supplierRawPayload &&
-      typeof row.supplierRawPayload === "object" &&
-      !Array.isArray(row.supplierRawPayload) &&
-      Array.isArray((row.supplierRawPayload as Record<string, unknown>).telemetrySignals)
-        ? ((row.supplierRawPayload as Record<string, unknown>).telemetrySignals as string[])
+      supplierRawPayload && Array.isArray(supplierRawPayload.telemetrySignals)
+        ? (supplierRawPayload.telemetrySignals as string[])
         : [];
     const pipeline = evaluateProductPipelinePolicy({
       title: row.supplierTitle,
@@ -477,18 +480,33 @@ export async function runProfitEngine(input?: {
       supplierTitle: row.supplierTitle,
       imageUrl: supplierImages[0] ?? null,
       additionalImageCount: Math.max(0, supplierImages.length - 1),
+      mediaQualityScore:
+        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
+          ? supplierRawPayload.mediaQualityScore
+          : null,
       supplierQuality:
-        row.supplierRawPayload &&
-        typeof row.supplierRawPayload === "object" &&
-        !Array.isArray(row.supplierRawPayload)
-          ? normalizeSupplierQuality(
-              String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
-            )
+        supplierRawPayload
+          ? normalizeSupplierQuality(String(supplierRawPayload.snapshotQuality ?? ""))
           : null,
       telemetrySignals,
       availabilitySignal,
       availabilityConfidence: availability.confidence ?? null,
       shippingEstimates: row.supplierShippingEstimates,
+      shippingConfidence:
+        supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
+          ? supplierRawPayload.shippingConfidence
+          : null,
+      actionableSnapshot:
+        supplierRawPayload && typeof supplierRawPayload.actionableSnapshot === "boolean"
+          ? supplierRawPayload.actionableSnapshot
+          : null,
+      supplierRowDecision:
+        supplierRawPayload &&
+        (supplierRawPayload.supplierRowDecision === "ACTIONABLE" ||
+          supplierRawPayload.supplierRowDecision === "MANUAL_REVIEW" ||
+          supplierRawPayload.supplierRowDecision === "BLOCKED")
+          ? supplierRawPayload.supplierRowDecision
+          : null,
       supplierPrice: supplierCost,
       marketplacePrice: marketPrice,
       matchConfidence,
@@ -496,12 +514,8 @@ export async function runProfitEngine(input?: {
       roiPct,
     });
     const rawSupplierQuality =
-      row.supplierRawPayload &&
-      typeof row.supplierRawPayload === "object" &&
-      !Array.isArray(row.supplierRawPayload)
-        ? normalizeSupplierQuality(
-            String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
-          )
+      supplierRawPayload
+        ? normalizeSupplierQuality(String(supplierRawPayload.snapshotQuality ?? ""))
         : null;
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const automationSafe =

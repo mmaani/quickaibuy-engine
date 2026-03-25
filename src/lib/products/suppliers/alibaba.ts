@@ -5,6 +5,7 @@ import {
   extractPriceEvidence,
   extractShippingEvidence,
   inferListingValidity,
+  looksLikeProviderBlockPayload,
   sliceEvidence,
 } from "./parserSignals";
 import { fetchSupplierPageWithFallback } from "./fetchWithFallback";
@@ -15,6 +16,7 @@ function looksLikeAlibabaChallengePage(text: string): boolean {
   const compact = compactText(text).toLowerCase();
   if (!compact) return false;
   return (
+    looksLikeProviderBlockPayload(text) ||
     compact.includes("security verification") ||
     compact.includes("unusual traffic") ||
     compact.includes("_____tmd_____/punish") ||
@@ -70,7 +72,9 @@ function buildAlibabaSearchUrl(keyword: string): string {
 }
 
 function normalizeAlibabaItemUrl(url: string): string {
-  const normalized = String(url || "").replace(/^http:\/\//i, "https://");
+  const normalized = String(url || "")
+    .replace(/^http:\/\//i, "https://")
+    .replace(/[):,.;]+$/g, "");
   return normalized.includes("alibaba.com/") ? normalized : "";
 }
 
@@ -376,7 +380,7 @@ export async function searchAlibabaByKeyword(
       ? ["fallback", "challenge", "low_quality"]
       : ["fallback", "low_quality"];
 
-    if (rows.length) {
+    if (!effectiveChallengePage && rows.length) {
       const enrichedRows = await Promise.all(rows.map((row) => enrichAlibabaProductWithDetail(row)));
       console.log(`[supplier][Alibaba] keyword="${normalizedKeyword}" fetchMode=${effectiveFetched.mode} results=${rows.length}`);
       return enrichedRows;

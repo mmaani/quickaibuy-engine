@@ -16,12 +16,16 @@ export type ProductPipelinePolicyInput = {
   supplierTitle?: string | null;
   imageUrl?: string | null;
   additionalImageCount?: number;
+  mediaQualityScore?: number | null;
   supplierKey?: string | null;
   supplierQuality?: SupplierSnapshotQuality | null;
   telemetrySignals?: string[] | null;
   availabilitySignal?: AvailabilitySignal | null;
   availabilityConfidence?: number | null;
   shippingEstimates?: unknown;
+  shippingConfidence?: number | null;
+  actionableSnapshot?: boolean | null;
+  supplierRowDecision?: "ACTIONABLE" | "MANUAL_REVIEW" | "BLOCKED" | null;
   supplierPrice?: number | null;
   marketplacePrice?: number | null;
   matchConfidence?: number | null;
@@ -227,6 +231,9 @@ export function evaluateProductPipelinePolicy(
   const supplierQuality = normalizeSupplierQuality(input.supplierQuality);
   const telemetry = new Set((input.telemetrySignals ?? []).map((value) => String(value).toLowerCase()));
   const additionalImageCount = Math.max(0, Number(input.additionalImageCount ?? 0));
+  const mediaQualityScore = Math.max(0, Math.min(1, Number(input.mediaQualityScore ?? 0) || 0));
+  const shippingConfidence = Math.max(0, Math.min(1, Number(input.shippingConfidence ?? 0) || 0));
+  const actionableSnapshot = input.actionableSnapshot !== false;
   const price = input.marketplacePrice ?? input.supplierPrice ?? null;
   const sellability = scoreSellability({
     title: input.title ?? null,
@@ -274,7 +281,8 @@ export function evaluateProductPipelinePolicy(
 
   const strongMedia =
     Boolean(input.imageUrl) &&
-    additionalImageCount >= 4 &&
+    (additionalImageCount >= 4 || mediaQualityScore >= 0.82) &&
+    actionableSnapshot &&
     !telemetry.has("low_quality") &&
     !telemetry.has("challenge");
   if (!strongMedia) {
@@ -300,9 +308,11 @@ export function evaluateProductPipelinePolicy(
   }
 
   const shippingStable =
-    (input.availabilitySignal === "IN_STOCK" || input.availabilitySignal == null) &&
+    actionableSnapshot &&
+    input.supplierRowDecision !== "BLOCKED" &&
+    input.availabilitySignal === "IN_STOCK" &&
     (input.availabilityConfidence == null || input.availabilityConfidence >= 0.6) &&
-    toShippingEstimateCount(input.shippingEstimates) > 0;
+    (toShippingEstimateCount(input.shippingEstimates) > 0 || shippingConfidence >= 0.75);
   if (!shippingStable) {
     penalties.push("shipping/availability stability weak");
     flags.add("SHIPPING_STABILITY_WEAK");
