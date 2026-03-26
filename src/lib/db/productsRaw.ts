@@ -65,6 +65,33 @@ export async function insertProductRawReturningId(row: InsertRawProductInput): P
   return String(inserted[0]?.id ?? "");
 }
 
+export async function updateProductRawById(
+  id: string,
+  row: InsertRawProductInput
+): Promise<string> {
+  const updated = await db
+    .update(productsRaw)
+    .set({
+      supplierKey: row.supplierKey,
+      supplierProductId: row.supplierProductId,
+      sourceUrl: row.sourceUrl ?? null,
+      title: row.title ?? null,
+      images: row.images ?? null,
+      variants: row.variants ?? null,
+      currency: row.currency ?? null,
+      priceMin: row.priceMin != null ? String(row.priceMin) : null,
+      priceMax: row.priceMax != null ? String(row.priceMax) : null,
+      availabilityStatus: row.availabilityStatus ?? null,
+      shippingEstimates: row.shippingEstimates ?? null,
+      rawPayload: row.rawPayload,
+      snapshotTs: row.snapshotTs ?? new Date(),
+    })
+    .where(eq(productsRaw.id, id))
+    .returning({ id: productsRaw.id });
+
+  return String(updated[0]?.id ?? "");
+}
+
 export async function getLatestProductRawBySupplierProduct(input: {
   supplierKey: string;
   supplierProductId: string;

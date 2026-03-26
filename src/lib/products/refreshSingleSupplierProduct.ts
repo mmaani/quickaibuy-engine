@@ -1,13 +1,16 @@
 import {
   getLatestProductRawBySupplierProduct,
   insertProductRawReturningId,
+  updateProductRawById,
 } from "@/lib/db/productsRaw";
+import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { supplierProductToRawInsert } from "@/lib/products/supplierSnapshots";
 import { normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
 import { classifySupplierSnapshotQuality } from "@/lib/products/supplierQuality";
 import { searchAlibabaByKeyword } from "@/lib/products/suppliers/alibaba";
 import { searchAliExpressByKeyword } from "@/lib/products/suppliers/aliexpress";
 import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
+import { fetchCjDirectProduct } from "@/lib/products/suppliers/cjdropshipping";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
 
 type LatestSupplierSnapshot = Awaited<ReturnType<typeof getLatestProductRawBySupplierProduct>>;
@@ -25,6 +28,7 @@ export type SingleSupplierRefreshResult = {
   sourceUrl: string | null;
   title: string | null;
   refreshMode: string;
+  exactMatchFound: boolean;
 };
 
 function parseSearchTextFromUrl(url: string | null | undefined): string | null {
@@ -161,25 +165,47 @@ function buildAliExpressSyntheticRefreshRow(
 
 async function refreshAliExpressSingleProduct(
   current: NonNullable<LatestSupplierSnapshot>,
-  keyword: string
-): Promise<{ product: SupplierProduct; refreshMode: string }> {
-  const rows = await searchAliExpressByKeyword(keyword, 20);
-  const exact =
-    rows.find((row) => String(row.supplierProductId ?? "").trim() === current.supplierProductId) ?? null;
+  keyword: string,
+  limit: number,
+  allowSyntheticFallback: boolean
+): Promise<{ product: SupplierProduct | null; refreshMode: string; exactMatchFound: boolean }> {
+  const searchTerms = Array.from(
+    new Set(
+      [keyword, String(current.title ?? "").trim()]
+        .map((value) => value.trim())
+        .filter((value) => value.length >= 3)
+    )
+  ).slice(0, 3);
 
-  if (exact) {
-    return {
-      product: {
-        ...exact,
-        supplierProductId: current.supplierProductId,
-      },
-      refreshMode: "exact-match",
-    };
+  for (const searchTerm of searchTerms) {
+    const rows = await searchAliExpressByKeyword(searchTerm, limit);
+    const exact =
+      rows.find((row) => String(row.supplierProductId ?? "").trim() === current.supplierProductId) ?? null;
+
+    if (exact) {
+      return {
+        product: {
+          ...exact,
+          supplierProductId: current.supplierProductId,
+        },
+        refreshMode: searchTerm === keyword ? "exact-match" : "exact-match-title-search",
+        exactMatchFound: true,
+      };
+    }
+
+    if (allowSyntheticFallback && rows.length) {
+      return {
+        product: buildAliExpressSyntheticRefreshRow(current, searchTerm, rows),
+        refreshMode: "synthetic-refresh",
+        exactMatchFound: false,
+      };
+    }
   }
 
   return {
-    product: buildAliExpressSyntheticRefreshRow(current, keyword, rows),
-    refreshMode: "synthetic-refresh",
+    product: null,
+    refreshMode: "exact-match-not-found",
+    exactMatchFound: false,
   };
 }
 
@@ -187,15 +213,19 @@ async function refreshSupplierSingleProduct(input: {
   current: NonNullable<LatestSupplierSnapshot>;
   keyword: string;
   supplierKey: string;
-}): Promise<{ product: SupplierProduct; refreshMode: string }> {
+  searchLimit?: number;
+  allowSyntheticFallback?: boolean;
+}): Promise<{ product: SupplierProduct | null; refreshMode: string; exactMatchFound: boolean }> {
   const { current, keyword, supplierKey } = input;
+  const searchLimit = Math.max(20, Math.min(Number(input.searchLimit ?? 60), 100));
+  const allowSyntheticFallback = Boolean(input.allowSyntheticFallback);
 
   if (supplierKey === "aliexpress") {
-    return refreshAliExpressSingleProduct(current, keyword);
+    return refreshAliExpressSingleProduct(current, keyword, searchLimit, allowSyntheticFallback);
   }
 
   if (supplierKey === "temu") {
-    const rows = await searchTemuByKeyword(keyword, 20);
+    const rows = await searchTemuByKeyword(keyword, searchLimit);
     const exact =
       rows.find((row) => String(row.supplierProductId ?? "").trim() === current.supplierProductId) ?? null;
 
@@ -206,6 +236,15 @@ async function refreshSupplierSingleProduct(input: {
           supplierProductId: current.supplierProductId,
         },
         refreshMode: "exact-match",
+        exactMatchFound: true,
+      };
+    }
+
+    if (!allowSyntheticFallback) {
+      return {
+        product: null,
+        refreshMode: "exact-match-not-found",
+        exactMatchFound: false,
       };
     }
 
@@ -218,11 +257,12 @@ async function refreshSupplierSingleProduct(input: {
         provider: "temu-single-refresh",
       }),
       refreshMode: "synthetic-refresh",
+      exactMatchFound: false,
     };
   }
 
   if (supplierKey === "alibaba") {
-    const rows = await searchAlibabaByKeyword(keyword, 20);
+    const rows = await searchAlibabaByKeyword(keyword, searchLimit);
     const exact =
       rows.find((row) => String(row.supplierProductId ?? "").trim() === current.supplierProductId) ?? null;
 
@@ -233,6 +273,15 @@ async function refreshSupplierSingleProduct(input: {
           supplierProductId: current.supplierProductId,
         },
         refreshMode: "exact-match",
+        exactMatchFound: true,
+      };
+    }
+
+    if (!allowSyntheticFallback) {
+      return {
+        product: null,
+        refreshMode: "exact-match-not-found",
+        exactMatchFound: false,
       };
     }
 
@@ -245,27 +294,45 @@ async function refreshSupplierSingleProduct(input: {
         provider: "alibaba-single-refresh",
       }),
       refreshMode: "synthetic-refresh",
+      exactMatchFound: false,
+    };
+  }
+
+  if (supplierKey === "cjdropshipping" || supplierKey === "cj dropshipping") {
+    if (!current.sourceUrl) {
+      return {
+        product: null,
+        refreshMode: "missing-source-url",
+        exactMatchFound: false,
+      };
+    }
+
+    const direct = await fetchCjDirectProduct(current.sourceUrl);
+    return {
+      product: direct.product,
+      refreshMode: "direct-product-refresh",
+      exactMatchFound: true,
     };
   }
 
   return {
-    product: buildSyntheticRefreshRow({
-      current,
-      keyword,
-      fetchedRows: [],
-      platform: "AliExpress",
-      provider: `${supplierKey}-single-refresh`,
-    }),
+    product: null,
     refreshMode: "unsupported-supplier",
+    exactMatchFound: false,
   };
 }
 
 export async function refreshSingleSupplierProduct(input: {
   supplierKey: string;
   supplierProductId: string;
+  requireExactMatch?: boolean;
+  searchLimit?: number;
+  updateExisting?: boolean;
 }): Promise<SingleSupplierRefreshResult> {
   const supplierKey = String(input.supplierKey ?? "").trim().toLowerCase();
   const supplierProductId = String(input.supplierProductId ?? "").trim();
+  const requireExactMatch = input.requireExactMatch !== false;
+  const updateExisting = input.updateExisting !== false;
   const current = await getLatestProductRawBySupplierProduct({
     supplierKey,
     supplierProductId,
@@ -285,10 +352,11 @@ export async function refreshSingleSupplierProduct(input: {
       sourceUrl: null,
       title: null,
       refreshMode: "not-found",
+      exactMatchFound: false,
     };
   }
 
-  if (!["aliexpress", "temu", "alibaba"].includes(supplierKey)) {
+  if (!["aliexpress", "temu", "alibaba", "cjdropshipping", "cj dropshipping"].includes(supplierKey)) {
     return {
       refreshed: false,
       supplierKey,
@@ -311,6 +379,7 @@ export async function refreshSingleSupplierProduct(input: {
       sourceUrl: current.sourceUrl,
       title: current.title,
       refreshMode: "unsupported-supplier",
+      exactMatchFound: false,
     };
   }
 
@@ -337,38 +406,111 @@ export async function refreshSingleSupplierProduct(input: {
       sourceUrl: current.sourceUrl,
       title: current.title,
       refreshMode: "missing-keyword",
+      exactMatchFound: false,
     };
   }
 
-  const refreshed = await refreshSupplierSingleProduct({ current, keyword, supplierKey });
-  const insertedId = await insertProductRawReturningId(supplierProductToRawInsert(refreshed.product));
+  const refreshed = await refreshSupplierSingleProduct({
+    current,
+    keyword,
+    supplierKey,
+    searchLimit: input.searchLimit,
+    allowSyntheticFallback: !requireExactMatch,
+  });
+  if (!refreshed.product) {
+    return {
+      refreshed: false,
+      supplierKey,
+      supplierProductId,
+      previousSnapshotId: String(current.id),
+      refreshedSnapshotId: null,
+      availabilityStatus: normalizeAvailabilitySignal(current.availabilityStatus),
+      snapshotQuality: classifySupplierSnapshotQuality({
+        rawPayload: current.rawPayload,
+        availabilitySignal: current.availabilityStatus,
+        price: current.priceMin,
+        title: current.title,
+        sourceUrl: current.sourceUrl,
+        images: current.images,
+        shippingEstimates: current.shippingEstimates,
+      }),
+      reevaluationReady: false,
+      blockerReason: requireExactMatch
+        ? `exact supplier row could not be re-fetched for supplier_product_id=${supplierProductId}`
+        : "refresh did not return a supplier product",
+      sourceUrl: current.sourceUrl,
+      title: current.title,
+      refreshMode: refreshed.refreshMode,
+      exactMatchFound: refreshed.exactMatchFound,
+    };
+  }
+
+  const refreshedProduct: SupplierProduct = {
+    ...refreshed.product,
+    raw: {
+      ...refreshed.product.raw,
+      refreshMode: refreshed.refreshMode,
+      refreshExactMatchFound: refreshed.exactMatchFound,
+      previousSnapshotId: String(current.id),
+      refreshedFromSupplierProductId: supplierProductId,
+      refreshKeyword: keyword,
+    },
+  };
+  const normalizedRefreshRow = supplierProductToRawInsert(refreshedProduct);
+  const refreshedSnapshotId = updateExisting
+    ? await updateProductRawById(String(current.id), normalizedRefreshRow)
+    : await insertProductRawReturningId(normalizedRefreshRow);
   const availabilityStatus = normalizeAvailabilitySignal(
-    refreshed.product.availabilitySignal ?? refreshed.product.raw?.availabilitySignal
+    refreshedProduct.availabilitySignal ?? refreshedProduct.raw?.availabilitySignal
   );
   const snapshotQuality = classifySupplierSnapshotQuality({
-    rawPayload: refreshed.product.raw,
-    availabilitySignal: refreshed.product.availabilitySignal,
-    availabilityConfidence: refreshed.product.availabilityConfidence,
-    price: refreshed.product.price,
-    title: refreshed.product.title,
-    sourceUrl: refreshed.product.sourceUrl,
-    images: refreshed.product.images,
-    shippingEstimates: refreshed.product.shippingEstimates,
+    rawPayload: refreshedProduct.raw,
+    availabilitySignal: refreshedProduct.availabilitySignal,
+    availabilityConfidence: refreshedProduct.availabilityConfidence,
+    price: refreshedProduct.price,
+    title: refreshedProduct.title,
+    sourceUrl: refreshedProduct.sourceUrl,
+    images: refreshedProduct.images,
+    shippingEstimates: refreshedProduct.shippingEstimates,
   });
   const proceed = shouldProceedWithReevaluation(snapshotQuality, availabilityStatus);
 
+  await writeAuditLog({
+    actorType: "WORKER",
+    actorId: "supplier:refresh",
+    entityType: "PRODUCT_RAW",
+    entityId: refreshedSnapshotId,
+    eventType: "SUPPLIER_PRODUCT_REFRESHED",
+    details: {
+      supplierKey,
+      supplierProductId,
+      previousSnapshotId: String(current.id),
+      refreshedSnapshotId,
+      refreshMode: refreshed.refreshMode,
+      exactMatchFound: refreshed.exactMatchFound,
+      sourceUrl: refreshedProduct.sourceUrl,
+      title: refreshedProduct.title,
+      availabilityStatus,
+      snapshotQuality,
+      reevaluationReady: proceed.ready,
+      blockerReason: proceed.blockerReason,
+      updateExisting,
+    },
+  });
+
   return {
-    refreshed: true,
+    refreshed: Boolean(refreshedSnapshotId),
     supplierKey,
     supplierProductId,
     previousSnapshotId: String(current.id),
-    refreshedSnapshotId: insertedId,
+    refreshedSnapshotId,
     availabilityStatus,
     snapshotQuality,
     reevaluationReady: proceed.ready,
     blockerReason: proceed.blockerReason,
-    sourceUrl: refreshed.product.sourceUrl,
-    title: refreshed.product.title,
+    sourceUrl: refreshedProduct.sourceUrl,
+    title: refreshedProduct.title,
     refreshMode: refreshed.refreshMode,
+    exactMatchFound: refreshed.exactMatchFound,
   };
 }
