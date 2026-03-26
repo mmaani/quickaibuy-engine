@@ -26,6 +26,7 @@ type VerifyListingPackInput = {
     ruleLabel: string | null;
   };
 };
+export type VerifyListingPackInputShape = VerifyListingPackInput;
 
 export type VerifyListingPackResult =
   | {
@@ -75,7 +76,7 @@ function collectEvidenceStrings(value: unknown, acc: string[], depth = 0): void 
   }
 }
 
-function buildEvidenceCorpus(input: VerifyListingPackInput): { summary: string[]; normalized: string } {
+export function buildEvidenceCorpus(input: VerifyListingPackInput): { summary: string[]; normalized: string } {
   const evidence: string[] = [];
   if (input.supplierTitle) evidence.push(input.supplierTitle);
   evidence.push(...input.supplierFeatures);
@@ -245,7 +246,7 @@ function chooseVerifiedCategory(
   };
 }
 
-function reconcileVerifiedPack(rawPack: unknown, input: VerifyListingPackInput) {
+export function applyEvidenceBackedListingCorrections(rawPack: unknown, input: VerifyListingPackInput) {
   const validation = validateVerifiedListingPackOutput(rawPack);
   if (!validation.ok) return validation;
 
@@ -294,7 +295,7 @@ function reconcileVerifiedPack(rawPack: unknown, input: VerifyListingPackInput) 
 }
 
 function buildFallbackVerifiedPack(input: VerifyListingPackInput) {
-  return reconcileVerifiedPack(
+  return applyEvidenceBackedListingCorrections(
     {
       verified_title: input.generatedPack.optimized_title,
       verified_category_id: input.generatedPack.category_id,
@@ -433,7 +434,7 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
       evidenceSummary: evidence.summary,
     });
     const raw = await callOpenAi(prompt);
-    const reconciled = reconcileVerifiedPack(raw, input);
+    const reconciled = applyEvidenceBackedListingCorrections(raw, input);
     if (!reconciled.ok) {
       return {
         ok: false,
