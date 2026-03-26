@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
+import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
@@ -94,10 +95,17 @@ export async function markListingReadyToPublish(
       pc.supplier_key AS "supplierKey",
       pc.supplier_product_id AS "supplierProductId",
       pc.decision_status AS "decisionStatus",
-      pc.listing_eligible AS "listingEligible"
+      pc.listing_eligible AS "listingEligible",
+      m.status AS "matchStatus",
+      m.confidence AS "matchConfidence"
     FROM listings l
     INNER JOIN profitable_candidates pc
       ON pc.id = l.candidate_id
+    LEFT JOIN matches m
+      ON m.supplier_key = pc.supplier_key
+      AND m.supplier_product_id = pc.supplier_product_id
+      AND m.marketplace_key = l.marketplace_key
+      AND m.marketplace_listing_id = pc.marketplace_listing_id
     WHERE l.id = ${input.listingId}
     LIMIT 1
   `);
@@ -127,6 +135,10 @@ export async function markListingReadyToPublish(
   const supplierProductId = String(row.supplierProductId ?? "").trim() || null;
   const decisionStatus = String(row.decisionStatus ?? "");
   const listingEligible = Boolean(row.listingEligible);
+  const matchStatus = String(row.matchStatus ?? "").trim().toUpperCase() || null;
+  const matchConfidenceRaw = row.matchConfidence;
+  const matchConfidence =
+    matchConfidenceRaw == null || matchConfidenceRaw === "" ? null : Number(matchConfidenceRaw);
 
   if (marketplaceKey !== "ebay") {
     return {
@@ -173,6 +185,22 @@ export async function markListingReadyToPublish(
       marketplaceKey,
       previousStatus,
       reason: "candidate is not listing eligible",
+    };
+  }
+
+  if (
+    matchStatus !== "ACTIVE" ||
+    matchConfidence == null ||
+    !Number.isFinite(matchConfidence) ||
+    matchConfidence < PRODUCT_PIPELINE_MATCH_PREFERRED_MIN
+  ) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: `match confidence gate failed: status=${matchStatus ?? "UNKNOWN"} confidence=${matchConfidence ?? "null"} min=${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}`,
     };
   }
 

@@ -7,6 +7,7 @@ import {
   type AvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
 import { classifySupplierEvidence } from "@/lib/products/supplierEvidenceClassification";
+import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 import {
   classifySupplierSnapshotQuality,
   normalizeSupplierTelemetry,
@@ -17,7 +18,7 @@ import {
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "MANUAL_REVIEW", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
 export const REVIEW_ACTION_STATUSES = ["APPROVED", "REJECTED", "RECHECK"] as const;
-export const LOW_MATCH_CONFIDENCE_THRESHOLD = 0.71;
+export const LOW_MATCH_CONFIDENCE_THRESHOLD = PRODUCT_PIPELINE_MATCH_PREFERRED_MIN;
 export const HIGH_MARGIN_THRESHOLD = 80;
 const SUPPLIER_DRIFT_MANUAL_REVIEW_PCT = 15;
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;

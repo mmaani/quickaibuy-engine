@@ -56,10 +56,22 @@ export type MatchAcceptanceResult = {
   reason: string;
 };
 
+export type MatchRoutingStatus = "ACTIVE" | "MANUAL_REVIEW" | "REJECTED";
+
 export const PRODUCT_PIPELINE_MARGIN_MIN = 30;
 export const PRODUCT_PIPELINE_ROI_MIN = 80;
-export const PRODUCT_PIPELINE_MATCH_PREFERRED_MIN = 0.75;
-export const PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN = 0.65;
+export const PRODUCT_PIPELINE_MATCH_PREFERRED_MIN = 0.8;
+export const PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN = 0.7;
+
+export function getMatchRoutingStatus(confidence: number): MatchRoutingStatus {
+  if (confidence >= PRODUCT_PIPELINE_MATCH_PREFERRED_MIN) return "ACTIVE";
+  if (confidence >= PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN) return "MANUAL_REVIEW";
+  return "REJECTED";
+}
+
+export function isMatchListingEligible(confidence: number): boolean {
+  return getMatchRoutingStatus(confidence) === "ACTIVE";
+}
 
 const DISCOVERY_FOCUS_KEYWORDS = [
   "ambient night light",

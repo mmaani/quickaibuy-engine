@@ -1,6 +1,12 @@
 import { db } from "@/lib/db";
 import { productsRaw, marketplacePrices, matches } from "@/lib/db/schema";
-import { normalizeSupplierQuality, evaluateProductPipelinePolicy } from "@/lib/products/pipelinePolicy";
+import {
+  normalizeSupplierQuality,
+  evaluateProductPipelinePolicy,
+  getMatchRoutingStatus,
+  PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
+  PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
+} from "@/lib/products/pipelinePolicy";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 const STOPWORDS = new Set([
@@ -34,9 +40,6 @@ const BRANDED_TERMS = ["apple", "samsung", "nike", "sony", "lg", "xiaomi", "dyso
 const GENERIC_TERMS = ["accessory", "gadget", "item", "tool", "device", "product"];
 
 type MatchStatus = "ACTIVE" | "MANUAL_REVIEW" | "REJECTED";
-
-const ACTIVE_CONFIDENCE_MIN = 0.75;
-const MANUAL_REVIEW_CONFIDENCE_MIN = 0.65;
 
 function normalizeText(input: string): string {
   return (input || "")
@@ -233,14 +236,12 @@ function evaluateMatchQuality(row: CandidateRow): MatchQuality {
 }
 
 function confidenceStatus(confidence: number): MatchStatus {
-  if (confidence >= ACTIVE_CONFIDENCE_MIN) return "ACTIVE";
-  if (confidence >= MANUAL_REVIEW_CONFIDENCE_MIN) return "MANUAL_REVIEW";
-  return "REJECTED";
+  return getMatchRoutingStatus(confidence);
 }
 
 function detectMatchType(score: number): string {
-  if (score >= ACTIVE_CONFIDENCE_MIN) return "strong_title_similarity";
-  if (score >= MANUAL_REVIEW_CONFIDENCE_MIN) return "manual_review_similarity";
+  if (score >= PRODUCT_PIPELINE_MATCH_PREFERRED_MIN) return "strong_title_similarity";
+  if (score >= PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN) return "manual_review_similarity";
   return "weak_similarity_rejected";
 }
 
@@ -425,8 +426,8 @@ export async function runEbayMatches(input?: { limit?: number; productRawId?: st
       marketplaceListingId: best.marketplaceListingId,
       quality: best.quality,
       confidenceThresholds: {
-        active: ACTIVE_CONFIDENCE_MIN,
-        manualReview: MANUAL_REVIEW_CONFIDENCE_MIN,
+        active: PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
+        manualReview: PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
       },
       selectionMode: "best_per_supplier_product",
     };
@@ -503,8 +504,8 @@ export async function runEbayMatches(input?: { limit?: number; productRawId?: st
     rejected,
     skippedNoQualifiedCandidate,
     confidencePolicy: {
-      activeMin: ACTIVE_CONFIDENCE_MIN,
-      manualReviewMin: MANUAL_REVIEW_CONFIDENCE_MIN,
+      activeMin: PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
+      manualReviewMin: PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
     },
   };
 }

@@ -1,5 +1,9 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import {
+  PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
+  PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
+} from "@/lib/products/pipelinePolicy";
 
 type Row = Record<string, unknown>;
 
@@ -92,6 +96,11 @@ export async function getMatchQualitySummary(input?: {
     : null;
   const inactiveMatches =
     totalMatches != null && activeMatches != null ? Math.max(0, totalMatches - activeMatches) : null;
+  const rejectedLabel = `rejected (<${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN.toFixed(2)})`;
+  const manualReviewLabel = `manual review (${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN.toFixed(2)}-${(
+    PRODUCT_PIPELINE_MATCH_PREFERRED_MIN - 0.01
+  ).toFixed(2)})`;
+  const activeLabel = `active (>=${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN.toFixed(2)})`;
 
   const confidenceDistribution = matchesHasConfidence
     ? (
@@ -100,9 +109,9 @@ export async function getMatchQualitySummary(input?: {
           from (
             select
               case
-                when confidence::numeric < 0.75 then 'low (<0.75)'
-                when confidence::numeric < 0.90 then 'medium (0.75-0.89)'
-                else 'high (>=0.90)'
+                when confidence::numeric < ${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN} then '${rejectedLabel}'
+                when confidence::numeric < ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN} then '${manualReviewLabel}'
+                else '${activeLabel}'
               end as bucket,
               count(*)::int as count
             from matches
@@ -110,8 +119,8 @@ export async function getMatchQualitySummary(input?: {
           ) bands
           order by
             case
-              when bucket = 'low (<0.75)' then 1
-              when bucket = 'medium (0.75-0.89)' then 2
+              when bucket = '${rejectedLabel}' then 1
+              when bucket = '${manualReviewLabel}' then 2
               else 3
             end
         `)
@@ -127,7 +136,7 @@ export async function getMatchQualitySummary(input?: {
           await runQuery(`
             select count(*)::int as count
             from matches
-            where confidence::numeric < 0.75
+            where confidence::numeric < ${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN}
           `)
         )[0]?.count
       )
@@ -140,7 +149,7 @@ export async function getMatchQualitySummary(input?: {
             select count(*)::int as count
             from matches
             where upper(coalesce(status, '')) = 'ACTIVE'
-              and confidence::numeric < 0.75
+              and confidence::numeric < ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}
           `)
         )[0]?.count
       )
@@ -153,8 +162,8 @@ export async function getMatchQualitySummary(input?: {
             select count(*)::int as count
             from matches
             where upper(coalesce(status, '')) = 'ACTIVE'
-              and confidence::numeric >= 0.75
-              and confidence::numeric < 0.80
+              and confidence::numeric >= ${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN}
+              and confidence::numeric < ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}
           `)
         )[0]?.count
       )
@@ -233,8 +242,8 @@ export async function getMatchQualitySummary(input?: {
       select 'borderline_keyword_fuzzy' as reason, count(*)::int as count
       from matches
       where lower(coalesce(match_type, '')) = 'keyword_fuzzy'
-        and coalesce(confidence::numeric, 0) >= 0.75
-        and coalesce(confidence::numeric, 0) < 0.80
+        and coalesce(confidence::numeric, 0) >= ${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN}
+        and coalesce(confidence::numeric, 0) < ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}
     )
     select reason, count
     from weak_flags

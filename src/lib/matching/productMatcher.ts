@@ -1,6 +1,11 @@
 import { db } from "@/lib/db";
 import { productsRaw, marketplacePrices } from "@/lib/db/schema";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
+import {
+  getMatchRoutingStatus,
+  PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
+  PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
+} from "@/lib/products/pipelinePolicy";
 import { eq, desc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
@@ -113,8 +118,8 @@ function computeConfidence(supplierTitle: string, marketplaceTitle: string, mark
 }
 
 function detectMatchType(confidence: number) {
-  if (confidence >= 0.75) return "strong_title_similarity";
-  if (confidence >= 0.5) return "title_similarity";
+  if (confidence >= PRODUCT_PIPELINE_MATCH_PREFERRED_MIN) return "strong_title_similarity";
+  if (confidence >= PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN) return "title_similarity";
   return "fallback_title_similarity";
 }
 
@@ -206,7 +211,7 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
         ${detectMatchType(confidence)},
         ${String(confidence)},
         ${JSON.stringify(evidence)}::jsonb,
-        'ACTIVE',
+        ${getMatchRoutingStatus(confidence)},
         NOW(),
         NOW()
       )
@@ -215,7 +220,7 @@ export async function matchSupplierProductsToMarketplaceListings(input?: {
         match_type = EXCLUDED.match_type,
         confidence = EXCLUDED.confidence,
         evidence = EXCLUDED.evidence,
-        status = 'ACTIVE',
+        status = ${getMatchRoutingStatus(confidence)},
         last_seen_ts = NOW()
     `);
 

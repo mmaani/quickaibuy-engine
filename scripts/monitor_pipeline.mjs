@@ -66,7 +66,7 @@ try {
     select
       case
         when confidence >= 0.90 then 'high'
-        when confidence >= 0.75 then 'medium'
+        when confidence >= 0.80 then 'medium'
         else 'low'
       end as band,
       count(*)::int as count

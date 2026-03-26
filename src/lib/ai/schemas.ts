@@ -61,7 +61,7 @@ function cleanSpecificValue(value: unknown): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-export const LISTING_PACK_LOW_CONFIDENCE_THRESHOLD = 0.75;
+export const LISTING_PACK_LOW_CONFIDENCE_THRESHOLD = 0.8;
 
 export function validateListingPackOutput(value: unknown): ListingPackValidation {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

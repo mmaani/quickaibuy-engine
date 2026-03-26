@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { listings, marketplacePrices, matches, productsRaw, profitableCandidates } from "@/lib/db/schema";
 import { rankProducts } from "@/lib/ai/rankProducts";
 import { isAiListingEngineEnabled } from "@/lib/ai/generateListingPack";
+import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 import { buildListingPreview } from "./build_listing_preview";
 import { buildListingPreviewIdempotencyKey } from "./idempotency";
 import { CATEGORY_CONFIDENCE_THRESHOLD, classifyEbayCategory } from "./ebayCategoryClassifier";
@@ -399,7 +400,12 @@ async function processCandidatePreviewRows(
 
     const matchConfidence = toNum(row.matchConfidence);
     const matchStatus = cleanString(row.matchStatus)?.toUpperCase() ?? null;
-    if (context.marketplace === "ebay" && (matchStatus !== "ACTIVE" || matchConfidence == null || matchConfidence < 0.75)) {
+    if (
+      context.marketplace === "ebay" &&
+      (matchStatus !== "ACTIVE" ||
+        matchConfidence == null ||
+        matchConfidence < PRODUCT_PIPELINE_MATCH_PREFERRED_MIN)
+    ) {
       failed++;
       await blockCandidateForManualReview({
         candidateId: row.candidateId,
@@ -413,7 +419,7 @@ async function processCandidatePreviewRows(
           matchStatus,
           matchConfidence,
           requiredStatus: "ACTIVE",
-          minConfidence: 0.75,
+          minConfidence: PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
           source: context.source,
         },
       });

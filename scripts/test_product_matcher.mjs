@@ -31,7 +31,7 @@ const { matchSupplierProductsToMarketplaceListings } = await import("../src/lib/
 const result = await matchSupplierProductsToMarketplaceListings({
   supplierLimit: Number(process.argv[2] ?? 100),
   marketplaceLimit: Number(process.argv[3] ?? 500),
-  minConfidence: Number(process.argv[4] ?? 0.75),
+  minConfidence: Number(process.argv[4] ?? 0.8),
 });
 
 console.log(JSON.stringify(result, null, 2));
