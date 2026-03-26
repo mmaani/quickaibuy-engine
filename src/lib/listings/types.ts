@@ -74,6 +74,9 @@ export type ListingPreviewInput = {
   marginPct: number | null;
   roiPct: number | null;
   categoryId?: string | null;
+  categoryName?: string | null;
+  categoryConfidence?: number | null;
+  categoryRuleLabel?: string | null;
 };
 
 export type EbayListingPreviewPayload = {

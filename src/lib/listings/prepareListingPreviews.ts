@@ -496,6 +496,9 @@ async function processCandidatePreviewRows(
       marginPct: toNum(row.marginPct),
       roiPct: toNum(row.roiPct),
       categoryId: categoryClassification?.categoryId ?? null,
+      categoryName: categoryClassification?.categoryName ?? null,
+      categoryConfidence: categoryClassification?.confidence ?? null,
+      categoryRuleLabel: categoryClassification?.ruleLabel ?? null,
     });
 
     if (context.marketplace === "ebay") {

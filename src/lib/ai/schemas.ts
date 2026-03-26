@@ -46,6 +46,24 @@ export type ListingPackValidation =
   | { ok: true; data: ListingPackOutput }
   | { ok: false; errors: string[] };
 
+export type VerifiedListingPackOutput = {
+  verified_title: string;
+  verified_category_id: string;
+  verified_category_name: string;
+  verified_bullet_points: string[];
+  verified_description: string;
+  verified_item_specifics: Record<ListingSpecificKey, string | null>;
+  removed_claims: string[];
+  corrected_fields: string[];
+  risk_flags: string[];
+  verification_confidence: number;
+  review_required: boolean;
+};
+
+export type VerifiedListingPackValidation =
+  | { ok: true; data: VerifiedListingPackOutput }
+  | { ok: false; errors: string[] };
+
 function clampConfidence(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
@@ -168,6 +186,87 @@ export function validateListingPackOutput(value: unknown): ListingPackValidation
       trust_flags: trustFlags,
       review_required: reviewRequired,
       confidence,
+    },
+  };
+}
+
+export function validateVerifiedListingPackOutput(value: unknown): VerifiedListingPackValidation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, errors: ["verified listing pack must be an object"] };
+  }
+
+  const record = value as Record<string, unknown>;
+  const errors: string[] = [];
+
+  const verifiedTitle = cleanString(record.verified_title);
+  if (!verifiedTitle) errors.push("verified_title is required");
+  if (verifiedTitle.length > 80) errors.push("verified_title must be <= 80 chars");
+
+  const categoryId = cleanString(record.verified_category_id);
+  if (!categoryId) errors.push("verified_category_id is required");
+
+  const categoryName = cleanString(record.verified_category_name);
+  if (!categoryName) errors.push("verified_category_name is required");
+
+  const bulletPointsRaw = Array.isArray(record.verified_bullet_points) ? record.verified_bullet_points : [];
+  const bulletPoints = bulletPointsRaw
+    .map((entry) => cleanString(entry))
+    .filter((entry) => entry.length > 0)
+    .slice(0, 8);
+  if (bulletPoints.length < 3) errors.push("verified_bullet_points must contain at least 3 entries");
+
+  const description = cleanString(record.verified_description);
+  if (!description) errors.push("verified_description is required");
+
+  const specificsRaw =
+    record.verified_item_specifics &&
+    typeof record.verified_item_specifics === "object" &&
+    !Array.isArray(record.verified_item_specifics)
+      ? (record.verified_item_specifics as Record<string, unknown>)
+      : null;
+
+  const itemSpecifics = Object.fromEntries(
+    LISTING_SPECIFIC_KEYS.map((key) => [key, null])
+  ) as Record<ListingSpecificKey, string | null>;
+  if (!specificsRaw) {
+    errors.push("verified_item_specifics must be an object");
+  } else {
+    for (const key of LISTING_SPECIFIC_KEYS) {
+      itemSpecifics[key] = cleanSpecificValue(specificsRaw[key]);
+    }
+  }
+
+  const removedClaims = Array.isArray(record.removed_claims)
+    ? record.removed_claims.map((entry) => cleanString(entry)).filter((entry) => entry.length > 0).slice(0, 20)
+    : [];
+  const correctedFields = Array.isArray(record.corrected_fields)
+    ? record.corrected_fields.map((entry) => cleanString(entry)).filter((entry) => entry.length > 0).slice(0, 20)
+    : [];
+  const riskFlags = Array.isArray(record.risk_flags)
+    ? record.risk_flags.map((entry) => cleanString(entry)).filter((entry) => entry.length > 0).slice(0, 20)
+    : [];
+
+  const verificationConfidence = clampConfidence(record.verification_confidence);
+  const reviewRequired = Boolean(record.review_required) || verificationConfidence < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD;
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    data: {
+      verified_title: verifiedTitle,
+      verified_category_id: categoryId,
+      verified_category_name: categoryName,
+      verified_bullet_points: bulletPoints,
+      verified_description: description,
+      verified_item_specifics: itemSpecifics,
+      removed_claims: removedClaims,
+      corrected_fields: correctedFields,
+      risk_flags: riskFlags,
+      verification_confidence: verificationConfidence,
+      review_required: reviewRequired,
     },
   };
 }

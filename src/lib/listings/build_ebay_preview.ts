@@ -1,4 +1,5 @@
 import { generateListingPack, isAiListingEngineEnabled } from "@/lib/ai/generateListingPack";
+import { verifyListingPack } from "@/lib/ai/verifyListingPack";
 import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
 import { generateListingDescription } from "./generateListingDescription";
@@ -113,20 +114,23 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
   };
 
   if (isAiListingEngineEnabled()) {
+    const supplierFeatures = extractSupplierFeatures(input.supplierRawPayload);
+    const supplierVariants = extractSupplierVariants(input.supplierRawPayload);
     const listingPack = await generateListingPack({
       supplierTitle: input.supplierTitle,
       supplierRawPayload: input.supplierRawPayload,
-      supplierFeatures: extractSupplierFeatures(input.supplierRawPayload),
+      supplierFeatures,
       supplierMediaMetadata: {
         imageCount: images.length,
         hasVideo: media.audit.videoDetected,
         selectedImageKinds: media.audit.selectedImageKinds ?? [],
       },
-      supplierVariants: extractSupplierVariants(input.supplierRawPayload),
+      supplierVariants,
       matchedMarketplaceEvidence: {
         marketplaceTitle: input.marketplaceTitle,
         marketplacePrice: input.marketplacePrice,
         marketplaceListingId: input.marketplaceListingId,
+        marketplaceRawPayload: input.marketplaceRawPayload ?? null,
       },
       pricingEconomicsSummary: {
         estimatedProfit: input.estimatedProfit,
@@ -141,8 +145,8 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
       },
       heuristicCategory: {
         categoryId: input.categoryId ?? null,
-        categoryName: null,
-        confidence: null,
+        categoryName: input.categoryName ?? null,
+        confidence: input.categoryConfidence ?? null,
       },
     });
 
@@ -152,14 +156,59 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
           typeof listingPack.diagnostics === "object" &&
           (listingPack.diagnostics as Record<string, unknown>).lowConfidence === true
       );
-      title = listingPack.pack.optimized_title;
-      description = `${listingPack.pack.description}\n\nHighlights\n${listingPack.pack.bullet_points
+      const verification = await verifyListingPack({
+        generatedPack: listingPack.pack,
+        supplierTitle: input.supplierTitle,
+        supplierRawPayload: input.supplierRawPayload,
+        supplierFeatures,
+        supplierMediaMetadata: {
+          imageCount: images.length,
+          hasVideo: media.audit.videoDetected,
+          selectedImageKinds: media.audit.selectedImageKinds ?? [],
+          selectedImageUrls: media.audit.selectedImageUrls,
+        },
+        matchedMarketplaceEvidence: {
+          marketplaceTitle: input.marketplaceTitle,
+          marketplacePrice: input.marketplacePrice,
+          marketplaceListingId: input.marketplaceListingId,
+          marketplaceRawPayload: input.marketplaceRawPayload ?? null,
+        },
+        pricingEconomicsSummary: {
+          estimatedProfit: input.estimatedProfit,
+          marginPct: input.marginPct,
+          roiPct: input.roiPct,
+          supplierPrice: input.supplierPrice,
+        },
+        heuristicCategory: {
+          categoryId: input.categoryId ?? null,
+          categoryName: input.categoryName ?? null,
+          confidence: input.categoryConfidence ?? null,
+          ruleLabel: input.categoryRuleLabel ?? null,
+        },
+      });
+      const verifiedPack = verification.ok
+        ? verification.pack
+        : {
+            verified_title: listingPack.pack.optimized_title,
+            verified_category_id: listingPack.pack.category_id,
+            verified_category_name: listingPack.pack.category_name,
+            verified_bullet_points: listingPack.pack.bullet_points,
+            verified_description: listingPack.pack.description,
+            verified_item_specifics: listingPack.pack.item_specifics,
+            removed_claims: [],
+            corrected_fields: [],
+            risk_flags: ["LISTING_VERIFICATION_FAILED"],
+            verification_confidence: 0,
+            review_required: true,
+          };
+      title = verifiedPack.verified_title;
+      description = `${verifiedPack.verified_description}\n\nHighlights\n${verifiedPack.verified_bullet_points
         .map((bullet) => `- ${bullet}`)
         .join("\n")}`.trim();
       payload.title = title;
       payload.description = description;
-      payload.categoryId = listingPack.pack.category_id || payload.categoryId;
-      payload.itemSpecifics = listingPack.pack.item_specifics;
+      payload.categoryId = verifiedPack.verified_category_id || payload.categoryId;
+      payload.itemSpecifics = verifiedPack.verified_item_specifics;
       payload.pricingHint = listingPack.pack.pricing_hint;
       payload.trustFlags = listingPack.pack.trust_flags;
       aiMetadata = {
@@ -170,7 +219,22 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
         reason: lowConfidence ? "LISTING_PACK_LOW_CONFIDENCE" : "HUMAN_REVIEW_REQUIRED_V1",
         trustFlags: listingPack.pack.trust_flags,
         confidence: listingPack.pack.confidence,
-        diagnostics: listingPack.diagnostics,
+        generatedPack: listingPack.pack,
+        verifiedPack,
+        correctedFields: verifiedPack.corrected_fields,
+        removedClaims: verifiedPack.removed_claims,
+        riskFlags: verifiedPack.risk_flags,
+        verificationConfidence: verifiedPack.verification_confidence,
+        diagnostics: {
+          generation: listingPack.diagnostics,
+          verification: verification.ok
+            ? verification.diagnostics
+            : {
+                schemaPassed: false,
+                reason: verification.reason,
+                diagnostics: verification.diagnostics,
+              },
+        },
       };
     } else {
       aiMetadata = {
