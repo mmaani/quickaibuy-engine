@@ -196,7 +196,7 @@ async function blockCandidateForManualReview(input: {
       updated_at = NOW(),
       response = COALESCE(response, '{}'::jsonb) || jsonb_build_object(
         'autoDemotedFromReady', true,
-        'autoDemoteReason', ${input.blockReason}
+        'autoDemoteReason', (${input.blockReason})::text
       )
     WHERE candidate_id = ${input.candidateId}
       AND status = 'READY_TO_PUBLISH'

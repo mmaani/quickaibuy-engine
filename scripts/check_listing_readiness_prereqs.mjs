@@ -39,7 +39,7 @@ async function main() {
     DATABASE_URL: process.env.DATABASE_URL ? "loaded" : "missing",
     MIN_ROI_PCT: process.env.MIN_ROI_PCT ?? "(default 15)",
     PROFIT_MIN_MATCH_CONFIDENCE:
-      process.env.PROFIT_MIN_MATCH_CONFIDENCE ?? "(default 0.80)",
+      process.env.PROFIT_MIN_MATCH_CONFIDENCE ?? "(default 0.70)",
     MARKETPLACE_FEE_PCT: process.env.MARKETPLACE_FEE_PCT ?? "(default 12)",
     OTHER_COST_USD: process.env.OTHER_COST_USD ?? "(default 2)",
   });
@@ -122,7 +122,7 @@ async function main() {
         WITH cfg AS (
           SELECT
             COALESCE(NULLIF(current_setting('app.min_roi_pct', true), '')::numeric, ${Number(process.env.MIN_ROI_PCT || "15")}) AS min_roi_pct,
-            COALESCE(NULLIF(current_setting('app.min_match_confidence', true), '')::numeric, ${Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.80")}) AS min_match_confidence,
+            COALESCE(NULLIF(current_setting('app.min_match_confidence', true), '')::numeric, ${Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.70")}) AS min_match_confidence,
             COALESCE(NULLIF(current_setting('app.marketplace_fee_pct', true), '')::numeric, ${Number(process.env.MARKETPLACE_FEE_PCT || "12")}) AS fee_pct,
             COALESCE(NULLIF(current_setting('app.other_cost_usd', true), '')::numeric, ${Number(process.env.OTHER_COST_USD || "2")}) AS other_cost_usd
         )
@@ -179,7 +179,7 @@ async function main() {
         WITH cfg AS (
           SELECT
             ${Number(process.env.MIN_ROI_PCT || "15")}::numeric AS min_roi_pct,
-            ${Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.80")}::numeric AS min_match_confidence,
+            ${Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || "0.70")}::numeric AS min_match_confidence,
             ${Number(process.env.MARKETPLACE_FEE_PCT || "12")}::numeric AS fee_pct,
             ${Number(process.env.OTHER_COST_USD || "2")}::numeric AS other_cost_usd
         )

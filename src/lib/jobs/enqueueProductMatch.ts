@@ -16,7 +16,7 @@ export async function enqueueProductMatch(params?: {
   const payload = {
       supplierLimit: params?.supplierLimit ?? 250,
       marketplaceLimit: params?.marketplaceLimit ?? 1000,
-      minConfidence: params?.minConfidence ?? 0.8,
+      minConfidence: params?.minConfidence ?? 0.7,
     };
 
   const job = await jobsQueue.add(

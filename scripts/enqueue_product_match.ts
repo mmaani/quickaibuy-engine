@@ -29,7 +29,7 @@ loadEnvFile(".env.development");
 async function main() {
   const supplierLimit = Number(process.argv[2] ?? 250);
   const marketplaceLimit = Number(process.argv[3] ?? 1000);
-  const minConfidence = Number(process.argv[4] ?? 0.8);
+  const minConfidence = Number(process.argv[4] ?? 0.7);
 
   const { enqueueProductMatch, jobsQueue } = await import("../src/lib/jobs/enqueueProductMatch");
 
