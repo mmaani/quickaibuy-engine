@@ -26,6 +26,7 @@ import {
   type AdminOrdersFilter,
   type CompactBatchReviewMode,
 } from "@/lib/orders";
+import { canRecordSupplierPurchaseForOrderStatus } from "@/lib/orders/statuses";
 import {
   getReviewActorIdFromAuthorizationHeader,
   isAuthorizedReviewAuthorizationHeader,
@@ -408,9 +409,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
     ["MANUAL_REVIEW", "NEW", "NEW_ORDER"].includes(String(detail.order.status).toUpperCase());
   const canRecordPurchase =
     detail != null &&
-    ["PURCHASE_APPROVED", "PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(
-      String(detail.order.status).toUpperCase()
-    );
+    canRecordSupplierPurchaseForOrderStatus(String(detail.order.status).toUpperCase());
   const canRecordTracking =
     detail != null &&
     ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(
@@ -1214,6 +1213,11 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <button disabled={!canRecordPurchase} className="mt-3 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                         Save purchase and supplier ref
                       </button>
+                      {canRecordPurchase && !hasSupplierLinkage ? (
+                        <div className="mt-2 text-xs text-amber-100">
+                          Missing supplier linkage remains a warning, but it does not block saving a real supplier purchase.
+                        </div>
+                      ) : null}
                     </form>
 
                     <form id="tracking-form" action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">

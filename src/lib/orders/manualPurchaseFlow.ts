@@ -104,16 +104,30 @@ export async function recordSupplierPurchase(input: {
   const currentStatus = await getOrderStatus(input.orderId);
   if (!canRecordSupplierPurchaseForOrderStatus(currentStatus)) {
     throw new Error(
-      `Order ${input.orderId} must be PURCHASE_APPROVED (or later) before recording purchase. Current status: ${currentStatus}`
+      `Order ${input.orderId} is not eligible for supplier purchase recording. Current status: ${currentStatus}`
     );
   }
 
-  if (currentStatus === ORDER_STATUS.PURCHASE_APPROVED) {
+  if (
+    currentStatus === ORDER_STATUS.MANUAL_REVIEW ||
+    currentStatus === ORDER_STATUS.READY_FOR_PURCHASE_REVIEW ||
+    currentStatus === ORDER_STATUS.PURCHASE_APPROVED
+  ) {
     await transitionOrderStatus({
       orderId: input.orderId,
       nextStatus: ORDER_STATUS.PURCHASE_PLACED,
       actorId: input.actorId,
-      reason: "Manual supplier purchase recorded",
+      reason:
+        currentStatus === ORDER_STATUS.PURCHASE_APPROVED
+          ? "Manual supplier purchase recorded"
+          : "Manual supplier purchase recorded while order remained in review",
+      details:
+        currentStatus === ORDER_STATUS.PURCHASE_APPROVED
+          ? undefined
+          : {
+              purchaseRecordedWithoutApproval: true,
+              previousWorkflowStatus: currentStatus,
+            },
     });
   }
 
