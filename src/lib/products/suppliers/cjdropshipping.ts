@@ -1,4 +1,4 @@
-import type { ProductVariant, SupplierProduct } from "./types";
+import type { ProductVariant, ShippingEstimate, SupplierProduct } from "./types";
 
 type CjInventoryEntry = {
   areaEn?: string;
@@ -53,6 +53,8 @@ type CjProductDetailData = {
   goodsVideo?: string;
   videoUrlList?: string[];
   productVideo?: string;
+  DESCRIPTION?: string;
+  xiaoShouJianYi?: string;
 };
 
 type CjWrappedResponse<T> = {
@@ -155,6 +157,21 @@ function parsePriceRange(value: unknown): { min: number | null; max: number | nu
     min: Math.min(...numbers),
     max: Math.max(...numbers),
   };
+}
+
+function clampPositiveInteger(value: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.max(1, Math.round(value));
+}
+
+function stripHtmlToText(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeImageUrls(detail: CjProductDetailData): string[] {
@@ -369,6 +386,105 @@ function parseDeliveryCycleDays(value: unknown): { minDays: number | null; maxDa
   return {
     minDays: Math.min(...matches),
     maxDays: Math.max(...matches),
+  };
+}
+
+function parseDayRangeFromText(
+  text: string,
+  patterns: RegExp[],
+): { minDays: number | null; maxDays: number | null } | null {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const minDays = clampPositiveInteger(Number.parseFloat(match[1] ?? ""));
+    const maxDays = clampPositiveInteger(Number.parseFloat(match[2] ?? match[1] ?? ""));
+    if (minDays == null && maxDays == null) continue;
+    return { minDays, maxDays };
+  }
+  return null;
+}
+
+function deriveShipFromCountry(text: string, warehouseCountry: string | null): string | null {
+  if (/\b(us|usa|united states)\b/i.test(text)) return "US";
+  if (/\bpoland\b/i.test(text)) return "PL";
+  if (/\bgermany\b/i.test(text)) return "DE";
+  if (/\b(united kingdom|uk)\b/i.test(text)) return "GB";
+  if (/\bchina\b/i.test(text)) return "CN";
+  return warehouseCountry;
+}
+
+function buildCjDetailShippingEvidence(
+  detail: CjProductDetailData,
+  warehouseCountry: string | null,
+): {
+  estimates: ShippingEstimate[];
+  signal: "PRESENT" | "PARTIAL" | "MISSING";
+  evidenceText: string | null;
+  shipFromCountry: string | null;
+} {
+  const rawEvidenceText = toNonEmptyString(detail.xiaoShouJianYi);
+  if (!rawEvidenceText) {
+    return {
+      estimates: [],
+      signal: "MISSING",
+      evidenceText: null,
+      shipFromCountry: null,
+    };
+  }
+  const evidenceText = stripHtmlToText(rawEvidenceText);
+  if (!evidenceText) {
+    return {
+      estimates: [],
+      signal: "MISSING",
+      evidenceText: null,
+      shipFromCountry: null,
+    };
+  }
+
+  const deliveryRange =
+    parseDayRangeFromText(evidenceText, [
+      /estimated delivery time(?: in [a-z ]+)?\s*(?:is|:)?\s*([0-9]+)\s*-\s*([0-9]+)\s*days?/i,
+      /arrival time(?: is)? within\s*([0-9]+)\s*-\s*([0-9]+)\s*days?/i,
+      /delivery time(?: is|:)?\s*([0-9]+)\s*-\s*([0-9]+)\s*days?/i,
+      /processing time(?: is|:)?\s*([0-9]+)\s*-\s*([0-9]+)\s*days?/i,
+    ]) ??
+    parseDayRangeFromText(evidenceText, [
+      /estimated delivery time(?: in [a-z ]+)?\s*(?:is|:)?(?: within)?\s*([0-9]+)\s*days?/i,
+      /arrival time(?: is)? within\s*([0-9]+)\s*days?/i,
+      /delivery time(?: is|:)?(?: within)?\s*([0-9]+)\s*days?/i,
+    ]);
+  const shippingFeeMatch = evidenceText.match(
+    /shipping fee\s*[:\-]?\s*\$?\s*([0-9]+(?:\.[0-9]+)?)/i,
+  );
+  const shipFromCountry = deriveShipFromCountry(evidenceText, warehouseCountry);
+
+  if (!deliveryRange && !shippingFeeMatch && !shipFromCountry) {
+    return {
+      estimates: [],
+      signal: "MISSING",
+      evidenceText,
+      shipFromCountry: null,
+    };
+  }
+
+  const estimates: ShippingEstimate[] = [
+    {
+      label: /\b(us|usa|united states)\b/i.test(evidenceText)
+        ? "CJ US warehouse delivery"
+        : "CJ warehouse delivery",
+      cost: shippingFeeMatch?.[1] ?? null,
+      currency: shippingFeeMatch ? "USD" : null,
+      etaMinDays: deliveryRange?.minDays ?? null,
+      etaMaxDays: deliveryRange?.maxDays ?? null,
+      ship_from_country: shipFromCountry,
+    },
+  ];
+
+  return {
+    estimates,
+    signal: deliveryRange || shippingFeeMatch ? "PRESENT" : "PARTIAL",
+    evidenceText,
+    shipFromCountry,
   };
 }
 
@@ -591,6 +707,9 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
   const title = looksLikeCorruptedTitle(rawTitle)
     ? parseTitleFromCjSourceUrl(sourceUrl) ?? rawTitle
     : rawTitle;
+  const warehouseCountry =
+    toNonEmptyString(inventories[0]?.countryCode) ?? toNonEmptyString(inventories[0]?.countryNameEn);
+  const shippingEvidence = buildCjDetailShippingEvidence(detail, warehouseCountry);
 
   const product: SupplierProduct = {
     title,
@@ -600,7 +719,7 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
     variants: normalizeVariants(detail),
     sourceUrl,
     supplierProductId,
-    shippingEstimates: [],
+    shippingEstimates: shippingEvidence.estimates,
     platform: "CJ Dropshipping",
     keyword: title ?? supplierProductId,
     snapshotTs: new Date().toISOString(),
@@ -635,8 +754,11 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       verifiedInventory,
       totalInventory: stockCount,
       warehouseCount: inventories.length,
-      supplierWarehouseCountry:
-        toNonEmptyString(inventories[0]?.countryCode) ?? toNonEmptyString(inventories[0]?.countryNameEn),
+      supplierWarehouseCountry: warehouseCountry,
+      shipFromCountry: shippingEvidence.shipFromCountry,
+      ship_from_country: shippingEvidence.shipFromCountry,
+      shippingSignal: shippingEvidence.signal,
+      shippingEvidenceText: shippingEvidence.evidenceText,
       verifiedWarehouse: toFiniteNumber(detail.verifiedWarehouse),
       saleStatus: String(detail.saleStatus ?? ""),
       updatePriceDate: String(detail.updatePriceDate ?? ""),

@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import type { PoolConfig } from "pg";
 
 const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
 dotenv.config({ path: dotenvPath });
@@ -13,26 +14,21 @@ if (!DATABASE_URL) {
   );
 }
 
-function normalizeDatabaseUrl(connectionString: string): string {
-  // pg-connection-string warns for libpq SSL modes (prefer/require/verify-ca).
-  // We normalize to verify-full to preserve strong TLS behavior without warnings.
-  try {
-    const parsed = new URL(connectionString);
-    const sslmode = parsed.searchParams.get("sslmode")?.toLowerCase() ?? null;
-    if (sslmode === "prefer" || sslmode === "require" || sslmode === "verify-ca") {
-      parsed.searchParams.set("sslmode", "verify-full");
-      return parsed.toString();
-    }
-    return connectionString;
-  } catch {
-    return connectionString;
-  }
+function buildPoolConfig(connectionString: string): PoolConfig {
+  const parsed = new URL(connectionString);
+  const database = parsed.pathname.replace(/^\/+/, "") || undefined;
+  const port = parsed.port ? Number(parsed.port) : undefined;
+
+  return {
+    host: parsed.hostname,
+    port: Number.isFinite(port) ? port : undefined,
+    user: parsed.username || undefined,
+    password: parsed.password || undefined,
+    database,
+    ssl: { rejectUnauthorized: true },
+  };
 }
 
-export const pool = new Pool({
-  connectionString: normalizeDatabaseUrl(DATABASE_URL),
-  // Neon requires SSL; pooled URLs typically include it, but enforce if needed:
-  ssl: { rejectUnauthorized: true },
-});
+export const pool = new Pool(buildPoolConfig(DATABASE_URL));
 
 export const db = drizzle(pool);

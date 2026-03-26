@@ -4,6 +4,7 @@ export type ShippingEstimate = {
   currency?: string | null;
   etaMinDays?: number | null;
   etaMaxDays?: number | null;
+  ship_from_country?: string | null;
 };
 
 export type SupplierSnapshotQuality = "HIGH" | "MEDIUM" | "LOW" | "STUB";
