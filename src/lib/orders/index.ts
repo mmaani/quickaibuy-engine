@@ -12,3 +12,4 @@ export * from "./getAdminOrdersPageData";
 export * from "./operatorConsole";
 export * from "./purchaseSafety";
 export * from "./repairSupplierLinkage";
+export * from "./reconcileTrackingSync";

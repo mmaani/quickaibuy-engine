@@ -41,7 +41,11 @@ const KNOWN_CARRIER_MAP: Record<string, string> = {
   "ROYAL MAIL": "ROYAL_MAIL",
 };
 
-function normalizeCarrierCode(input: string): string | null {
+const CARRIER_ALIASES: Array<{ pattern: RegExp; code: string }> = [
+  { pattern: /\bYUN\s*EXPRESS\b/i, code: "YunExpress" },
+];
+
+export function normalizeCarrierCode(input: string): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
 
@@ -49,6 +53,8 @@ function normalizeCarrierCode(input: string): string | null {
   if (!direct) return null;
 
   if (KNOWN_CARRIER_MAP[direct]) return KNOWN_CARRIER_MAP[direct];
+  const alias = CARRIER_ALIASES.find((entry) => entry.pattern.test(trimmed));
+  if (alias) return alias.code;
 
   // Preserve unrecognized carrier labels so eBay can validate them directly.
   if (/^[A-Za-z][A-Za-z0-9 _-]{1,60}$/.test(trimmed)) {

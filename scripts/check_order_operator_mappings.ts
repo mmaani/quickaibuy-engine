@@ -1,5 +1,6 @@
 import {
   buildCompactOrderTimeline,
+  getCompactBatchReviewSummary,
   buildOperatorHints,
   getOperatorOrderStep,
   getOperatorOrderStepFromRow,
@@ -9,6 +10,7 @@ import {
   getTimelineEventTitle,
 } from "../src/lib/orders/operatorConsole";
 import type { AdminOrderDetail, AdminOrderEvent } from "../src/lib/orders/getAdminOrdersPageData";
+import { normalizeCarrierCode } from "../src/lib/orders/syncTrackingToEbay";
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -124,6 +126,23 @@ function run() {
   assert(timeline[0].eventType === "TRACKING_SYNCED", "timeline should sort newest first");
   assert(getTimelineEventTitle(timeline[0].eventType) === "Synced", "timeline title mapping should be stable");
 
+  const syncedSummary = getCompactBatchReviewSummary({
+    status: "TRACKING_SYNCED",
+    purchaseStatus: "CONFIRMED",
+    trackingStatus: "NOT_AVAILABLE",
+    trackingReady: false,
+    hasSupplierLinkage: false,
+    trackingSyncError: "older failure should not win",
+  });
+  assert(syncedSummary.bucket === "synced", "TRACKING_SYNCED rows should bucket as synced");
+  assert(syncedSummary.blockedReason === null, "TRACKING_SYNCED rows should not show a stale blocker");
+  assert(syncedSummary.nextAction === "Done", "TRACKING_SYNCED rows should be complete");
+
+  assert(
+    normalizeCarrierCode("YunExpress Sensitive") === "YunExpress",
+    "CJ YunExpress carrier labels should normalize to YunExpress"
+  );
+
   console.log(
     JSON.stringify(
       {
@@ -134,6 +153,8 @@ function run() {
           "row next-action mapping",
           "operator hints",
           "timeline mapping and titles",
+          "synced summary precedence",
+          "carrier normalization",
         ],
       },
       null,

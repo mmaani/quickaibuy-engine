@@ -23,6 +23,7 @@ import {
   recordSupplierPurchase,
   recordSupplierTracking,
   repairOrderItemSupplierLinkage,
+  reconcileTrackingSync,
   setOrderReadyForPurchaseReview,
   syncTrackingToEbay,
   type AdminOrdersFilter,
@@ -343,6 +344,21 @@ async function runOrderAction(formData: FormData) {
       redirectWith({ message: "Tracking synced to eBay successfully." });
     }
 
+    if (actionType === "confirm-sync") {
+      const supplierOrderId = String(formData.get("supplierOrderId") ?? "").trim();
+      const trackingCarrier = String(formData.get("trackingCarrier") ?? "").trim() || undefined;
+      if (!supplierOrderId) {
+        redirectWith({ error: "Supplier order attempt is required for sync confirmation." });
+      }
+      await reconcileTrackingSync({
+        orderId,
+        supplierOrderId,
+        trackingCarrier,
+        actorId,
+      });
+      redirectWith({ message: "Tracking sync was confirmed from the live eBay order page." });
+    }
+
     redirectWith({ error: "Unknown action." });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -492,6 +508,12 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
       ? await prepareTrackingSyncPayload({ orderId: detail.order.id })
       : null;
   const trackingButtonLabel = detail?.latestAttempt?.trackingNumber ? "Update tracking" : "Add tracking";
+  const canConfirmHistoricalSync =
+    detail != null &&
+    Boolean(detail.latestAttempt?.id) &&
+    Boolean(detail.latestAttempt?.trackingNumber?.trim()) &&
+    Boolean(detail.latestAttempt?.supplierOrderRef?.trim()) &&
+    (isPostPurchaseStatus(detail.order.status) || Boolean(detail.lastSyncState?.trackingSyncError));
   const canViewSafety =
     detail != null &&
     purchaseSafetyRelevant &&
@@ -1216,6 +1238,20 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                         Sync to eBay
                       </button>
                     </form>
+                    <form action={runOrderAction}>
+                      <input type="hidden" name="actionType" value="confirm-sync" />
+                      <input type="hidden" name="orderId" value={detail.order.id} />
+                      <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
+                      <input type="hidden" name="supplierOrderId" value={detail.latestAttempt?.id ?? ""} />
+                      <input type="hidden" name="trackingCarrier" value={detail.latestAttempt?.trackingCarrier ?? ""} />
+                      <button
+                        disabled={!canConfirmHistoricalSync}
+                        className={`rounded-lg border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50 ${quickActionButtonTone(canConfirmHistoricalSync)}`}
+                      >
+                        Confirm synced from eBay
+                      </button>
+                    </form>
                     <a href="#purchase-safety" className={`rounded-lg border px-3 py-2 ${quickActionButtonTone(canViewSafety)}`}>
                       Review safety
                     </a>
@@ -1374,6 +1410,22 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     <div className="mt-3 text-sm text-white/70">
                       Sync is blocked until purchase and tracking details are complete.
                     </div>
+                  ) : null}
+                  {canConfirmHistoricalSync ? (
+                    <form action={runOrderAction} className="mt-4">
+                      <input type="hidden" name="actionType" value="confirm-sync" />
+                      <input type="hidden" name="orderId" value={detail.order.id} />
+                      <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
+                      <input type="hidden" name="supplierOrderId" value={detail.latestAttempt?.id ?? ""} />
+                      <input type="hidden" name="trackingCarrier" value={detail.latestAttempt?.trackingCarrier ?? ""} />
+                      <button className="rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2 text-sm font-semibold text-white/90">
+                        Confirm tracking already synced on eBay
+                      </button>
+                      <div className="mt-2 text-xs text-white/55">
+                        Use this only for historical orders when the live eBay order page already shows the tracking as shipped.
+                      </div>
+                    </form>
                   ) : null}
 
                   <form action={runOrderAction} className="mt-4">
