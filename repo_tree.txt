@@ -10,6 +10,7 @@
 │   ├── PUBLISHING_GUARDRAILS.md
 │   ├── SECURITY_POLICY.md
 │   └── SUPPLIER_CRAWL_POLICY.md
+├── check_env_keys.sh
 ├── codex.dev.secrets.private
 ├── codex.dev.vars.private
 ├── codex.prod.secrets.private
@@ -35,6 +36,7 @@
 │   ├── order-automation-rollout.md
 │   ├── order-automation-validation.md
 │   ├── order-purchase-safety-scope.md
+│   ├── railway-jobs-worker.md
 │   ├── runtime-diagnostics.md
 │   ├── scripts-hygiene-audit-2026-03-13.md
 │   ├── system-architecture.md
@@ -77,7 +79,8 @@
 │   ├── 20260311e_supplier_orders_tracking_sync_fields.sql
 │   ├── 20260311f_add_manual_overrides.sql
 │   ├── 20260322_add_seller_account_metrics.sql
-│   └── 20260324_add_ebay_image_normalizations.sql
+│   ├── 20260324_add_ebay_image_normalizations.sql
+│   └── 20260324_add_lead_submissions.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -126,6 +129,11 @@
 │   ├── quickaibuy-logo.svg
 │   ├── vercel.svg
 │   └── window.svg
+├── quickaibuy_auto_diagnose.sh
+├── quickaibuy_auto_diagnose_20260326_081212.log
+├── quickaibuy_diag_clean.sh
+├── quickaibuy_diag_clean_20260326_082657.log
+├── railway.json
 ├── repo_tree.txt
 ├── review_files
 │   ├── db.ts
@@ -184,6 +192,7 @@
 │   ├── check_publish_rate_limit_state.ts
 │   ├── check_publish_result_rows.mjs
 │   ├── check_ready_to_publish_rows.mjs
+│   ├── check_revenue_enablement_truth.ts
 │   ├── check_runtime_db_fingerprint.mjs
 │   ├── check_schema_drift.ts
 │   ├── check_stale_publish_in_progress_rows.mjs
@@ -199,6 +208,7 @@
 │   ├── check_upstream_schedules.ts
 │   ├── check_vercel_env_access.ts
 │   ├── check_worker_run_truth.ts
+│   ├── check_worker_runtime_dependencies.ts
 │   ├── cleanup_trading_image_cache.ts
 │   ├── clear_success_publish_error.ts
 │   ├── compare_local_and_vercel_env.mjs
@@ -207,6 +217,7 @@
 │   ├── debug_marketplace_scan.ts
 │   ├── debug_profit_join.mjs
 │   ├── enqueue_inventory_risk_scan.ts
+│   ├── enqueue_listing_optimize.ts
 │   ├── enqueue_listing_prepare.ts
 │   ├── enqueue_listing_prepare_approved.ts
 │   ├── enqueue_marketplace_scan.ts
@@ -257,6 +268,7 @@
 │   ├── recheck_single_candidate.ts
 │   ├── reclassify_legacy_dry_run_active_listings.ts
 │   ├── refresh_listing_price_guard_readiness.ts
+│   ├── refresh_matched_supplier_rows.ts
 │   ├── refresh_single_supplier_product.ts
 │   ├── reject_profitable_candidate.ts
 │   ├── remove_supplier_discover_job.ts
@@ -291,10 +303,12 @@
 │   ├── run_matches_migration.sh
 │   ├── run_migration.sh
 │   ├── run_pipeline_dashboard.sh
+│   ├── run_prod_jobs_worker.sh
 │   ├── run_product_matcher_direct.sh
 │   ├── run_product_matcher_direct.ts
 │   ├── run_profit_engine_direct.sh
 │   ├── run_profit_engine_direct.ts
+│   ├── run_revenue_enablement_verification.sh
 │   ├── run_single_listing_publish.ts
 │   ├── run_test_product_matcher.sh
 │   ├── run_test_trend_expand.sh
@@ -399,6 +413,8 @@
 │   │   │   │       │   └── route.ts
 │   │   │   │       └── prepare-preview
 │   │   │   │           └── route.ts
+│   │   │   ├── contact
+│   │   │   │   └── route.ts
 │   │   │   ├── health
 │   │   │   │   ├── review-debug
 │   │   │   │   │   └── route.ts
@@ -465,12 +481,15 @@
 │   │   │   ├── enqueueTrendExpand.ts
 │   │   │   ├── enqueueUpstreamSchedules.ts
 │   │   │   ├── followUpJobIds.ts
+│   │   │   ├── freshnessRecovery.ts
 │   │   │   ├── jobLedger.ts
 │   │   │   ├── jobNames.ts
 │   │   │   ├── marketplaceScan.ts
 │   │   │   ├── matchProducts.ts
 │   │   │   ├── supplierDiscover.ts
 │   │   │   └── types.ts
+│   │   ├── leads
+│   │   │   └── notifications.ts
 │   │   ├── listings
 │   │   │   ├── build_amazon_preview.ts
 │   │   │   ├── build_ebay_preview.ts
@@ -488,6 +507,7 @@
 │   │   │   ├── media.ts
 │   │   │   ├── normalizeEbayImages.ts
 │   │   │   ├── optimizeListingTitle.ts
+│   │   │   ├── performanceEngine.ts
 │   │   │   ├── prepareListingPreviews.ts
 │   │   │   ├── publishIdempotency.ts
 │   │   │   ├── publishRateLimiter.ts
@@ -532,9 +552,12 @@
 │   │   ├── products
 │   │   │   ├── discoverProducts.ts
 │   │   │   ├── pipelinePolicy.ts
+│   │   │   ├── refreshMatchedSupplierRows.ts
 │   │   │   ├── refreshSingleSupplierProduct.ts
 │   │   │   ├── sellabilityScore.ts
 │   │   │   ├── supplierAvailability.ts
+│   │   │   ├── supplierEnrichment.ts
+│   │   │   ├── supplierEvidenceClassification.ts
 │   │   │   ├── supplierQuality.ts
 │   │   │   ├── supplierSnapshots.ts
 │   │   │   └── suppliers
@@ -584,4 +607,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-84 directories, 501 files
+86 directories, 522 files

@@ -49,3 +49,4 @@ sources_quickaibuy.zip
 next-env.d.ts
 .env.local
 .env*.local
+railway_worker.env
