@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { log } from "@/lib/logger";
 import { BLOCKING_RISK_FLAGS, REVIEW_ACTION_STATUSES, REVIEW_ROUTE } from "@/lib/review/console";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
+import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 import {
   REVIEW_CONSOLE_REALM,
   getReviewActorIdFromAuthorizationHeader,
@@ -26,6 +27,8 @@ type CandidateDecisionRow = {
   marketplace_listing_id: string;
   decision_status: string;
   risk_flags: string[] | null;
+  match_status: string | null;
+  match_confidence: string | null;
 };
 
 function unauthorizedResponse(): NextResponse {
@@ -61,9 +64,23 @@ function redirectWithError(request: Request, message: string): NextResponse {
 async function getCandidateById(candidateId: string): Promise<CandidateDecisionRow | null> {
   const candidateResult = await pool.query<CandidateDecisionRow>(
     `
-      SELECT id, supplier_key, supplier_product_id, marketplace_key, marketplace_listing_id, decision_status, risk_flags
-      FROM profitable_candidates
-      WHERE id = $1
+      SELECT
+        pc.id,
+        pc.supplier_key,
+        pc.supplier_product_id,
+        pc.marketplace_key,
+        pc.marketplace_listing_id,
+        pc.decision_status,
+        pc.risk_flags,
+        m.status AS match_status,
+        m.confidence::text AS match_confidence
+      FROM profitable_candidates pc
+      LEFT JOIN matches m
+        ON m.supplier_key = pc.supplier_key
+       AND m.supplier_product_id = pc.supplier_product_id
+       AND m.marketplace_key = pc.marketplace_key
+       AND m.marketplace_listing_id = pc.marketplace_listing_id
+      WHERE pc.id = $1
       LIMIT 1
     `,
     [candidateId]
@@ -124,6 +141,28 @@ async function applyCandidateDecision(input: {
   }
 
   if (input.requestedDecisionStatus === "APPROVED" && existing.marketplace_key === "ebay") {
+    const matchStatus = String(existing.match_status ?? "").trim().toUpperCase();
+    const matchConfidence =
+      existing.match_confidence == null || existing.match_confidence === ""
+        ? null
+        : Number(existing.match_confidence);
+    const matchConfidenceApproved =
+      matchStatus === "ACTIVE" &&
+      matchConfidence != null &&
+      Number.isFinite(matchConfidence) &&
+      matchConfidence >= PRODUCT_PIPELINE_MATCH_PREFERRED_MIN;
+
+    if (!matchConfidenceApproved) {
+      effectiveDecisionStatus = "MANUAL_REVIEW";
+      listingEligible = false;
+      listingBlockReason = `MATCH_CONFIDENCE_GATE_FAILED: status=${matchStatus || "UNKNOWN"} confidence=${matchConfidence ?? "null"} min=${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}`;
+      effectiveReason = listingBlockReason;
+
+      if (input.enforceBatchSafeApprove) {
+        return { ok: false, skipped: "match_confidence_requires_manual_review" };
+      }
+    }
+
     const priceGuard = await validateProfitSafety({
       candidateId: input.candidateId,
       mode: "publish",

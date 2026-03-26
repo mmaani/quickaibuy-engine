@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { jobsQueue } from "@/lib/bull";
 import { JOB_NAMES } from "@/lib/jobNames";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
+import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -467,7 +468,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         count(*) filter (
           where lower(coalesce(marketplace_key, '')) = 'ebay'
             and upper(coalesce(status, '')) = 'ACTIVE'
-            and confidence < 0.60
+            and confidence < ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}
         )::int as low_confidence_count,
         round(avg(confidence) filter (
           where lower(coalesce(marketplace_key, '')) = 'ebay'
@@ -539,7 +540,7 @@ export async function getDashboardData(): Promise<DashboardData> {
               or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_BLOCKED%'
               or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY%'
             then 'availability'
-            when coalesce(nullif(pc.estimated_fees ->> 'matchConfidence', ''), '0')::numeric < 0.60
+            when coalesce(nullif(pc.estimated_fees ->> 'matchConfidence', ''), '0')::numeric < ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}
             then 'low_confidence'
             when exists (
               select 1
@@ -605,7 +606,7 @@ export async function getDashboardData(): Promise<DashboardData> {
               or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_BLOCKED%'
               or upper(coalesce(pc.listing_block_reason, '')) like '%SUPPLIER_AVAILABILITY%'
             then 'availability'
-            when coalesce(nullif(pc.estimated_fees ->> 'matchConfidence', ''), '0')::numeric < 0.60
+            when coalesce(nullif(pc.estimated_fees ->> 'matchConfidence', ''), '0')::numeric < ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}
             then 'low_confidence'
             when upper(coalesce(pc.decision_status, '')) = 'MANUAL_REVIEW'
               or upper(coalesce(pc.reason, '')) like '%PIPELINE MANUAL REVIEW%'

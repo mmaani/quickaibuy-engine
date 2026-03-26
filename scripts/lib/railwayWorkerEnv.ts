@@ -238,6 +238,17 @@ export const WORKER_OPTIONAL_OVERRIDE_GROUPS: EnvGroup[] = [
     ],
   },
   {
+    id: "ai_listing",
+    bucket: "optional_override",
+    description: "AI preview generation stays opt-in and is only needed when preview generation runs on the worker.",
+    keys: [
+      "ENABLE_AI_LISTING_ENGINE",
+      "OPENAI_API_KEY",
+      "OPENAI_LISTING_MODEL",
+      "EBAY_SELLER_ACCOUNT_TIER",
+    ],
+  },
+  {
     id: "listing_media",
     bucket: "optional_override",
     description: "Image-hosting provider and API override settings.",

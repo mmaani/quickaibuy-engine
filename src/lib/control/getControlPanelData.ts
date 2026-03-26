@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getQueueNamespaceDiagnostics, resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
+import { PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN } from "@/lib/products/pipelinePolicy";
 import { getUpstreamRecurringScheduleSnapshot } from "@/lib/jobs/enqueueUpstreamSchedules";
 import { getManualOverrideSnapshot } from "./manualOverrides";
 import { getMatchQualitySummary } from "./getMatchQualitySummary";
@@ -2011,7 +2012,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       id: "all-matches-low-confidence",
       tone: "warning",
       title: "All matches are low confidence",
-      detail: "Every current match is below confidence threshold 0.60.",
+      detail: `Every current match is below confidence threshold ${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN.toFixed(2)}.`,
     });
   }
 

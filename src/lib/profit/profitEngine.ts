@@ -10,7 +10,9 @@ import {
   evaluateProductPipelinePolicy,
   PRODUCT_PIPELINE_MARGIN_MIN,
   PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
+  PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
   PRODUCT_PIPELINE_ROI_MIN,
+  getMatchRoutingStatus,
   normalizeSupplierQuality,
 } from "@/lib/products/pipelinePolicy";
 import { sql } from "drizzle-orm";
@@ -551,14 +553,20 @@ export async function runProfitEngine(input?: {
     const supplierEvidenceCodes = supplierEvidence.codes;
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const pipelineHardBlocked = pipeline.flags.some((flag) => PIPELINE_HARD_BLOCK_FLAGS.has(flag));
+    const matchRoutingStatus = getMatchRoutingStatus(matchConfidence);
     const automationSafe =
+      matchRoutingStatus === "ACTIVE" &&
       !staleMarketplaceSnapshot &&
       !supplierDriftExceeded &&
       !supplierEvidence.manualReview &&
       !marginOrRoiFailed &&
       !pipelineHardBlocked;
     const decisionStatus =
-      staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview
+      matchRoutingStatus === "REJECTED"
+        ? "REJECTED"
+        : matchRoutingStatus === "MANUAL_REVIEW"
+          ? "MANUAL_REVIEW"
+          : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview
         ? "MANUAL_REVIEW"
         : marginOrRoiFailed || pipelineHardBlocked
           ? "MANUAL_REVIEW"
@@ -566,7 +574,11 @@ export async function runProfitEngine(input?: {
             ? "APPROVED"
             : (existing?.decisionStatus ?? "PENDING");
     const listingEligible = automationSafe;
-    const listingBlockReason = staleMarketplaceSnapshot
+    const listingBlockReason = matchRoutingStatus === "REJECTED"
+      ? `match confidence ${matchConfidence} is below reject threshold ${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN}`
+      : matchRoutingStatus === "MANUAL_REVIEW"
+        ? `match confidence ${matchConfidence} is below active threshold ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}`
+      : staleMarketplaceSnapshot
       ? `marketplace snapshot age ${marketplaceSnapshotAgeHours}h exceeds ${maxMarketplaceSnapshotAgeHours}h`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
@@ -578,7 +590,11 @@ export async function runProfitEngine(input?: {
               ? `pipeline policy requires manual review: ${pipeline.penalties.join(", ")}`
               : null;
     const riskFlags =
-      staleMarketplaceSnapshot
+      matchRoutingStatus === "REJECTED"
+        ? ["MATCH_CONFIDENCE_BELOW_REJECT_THRESHOLD"]
+        : matchRoutingStatus === "MANUAL_REVIEW"
+          ? ["MATCH_CONFIDENCE_MANUAL_REVIEW_REQUIRED"]
+        : staleMarketplaceSnapshot
         ? ["STALE_MARKETPLACE_SNAPSHOT"]
         : supplierDriftExceeded
           ? ["SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT"]
@@ -606,7 +622,11 @@ export async function runProfitEngine(input?: {
       pipelinePolicy: pipeline,
     };
 
-    const reason = staleMarketplaceSnapshot
+    const reason = matchRoutingStatus === "REJECTED"
+      ? `match ${matchConfidence} < reject threshold ${PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN}`
+      : matchRoutingStatus === "MANUAL_REVIEW"
+        ? `match ${matchConfidence} < active threshold ${PRODUCT_PIPELINE_MATCH_PREFERRED_MIN}`
+      : staleMarketplaceSnapshot
       ? `marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} > ${maxMarketplaceSnapshotAgeHours} | roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`

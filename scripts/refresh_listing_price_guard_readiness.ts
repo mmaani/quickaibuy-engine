@@ -16,6 +16,7 @@ async function main() {
   const { handleMatchProductsJob } = await import("../src/lib/jobs/matchProducts");
   const { runProfitEngine } = await import("../src/lib/profit/profitEngine");
   const { validateProfitSafety } = await import("../src/lib/profit/priceGuard");
+  const { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } = await import("../src/lib/products/pipelinePolicy");
 
   type Row = {
     listing_id: string;
@@ -88,7 +89,30 @@ async function main() {
   });
   console.log(JSON.stringify(safety, null, 2));
 
-  if (safety.allow) {
+  const matchGate = await db.execute(sql`
+    SELECT
+      m.status,
+      m.confidence::text AS confidence
+    FROM profitable_candidates pc
+    LEFT JOIN matches m
+      ON m.supplier_key = pc.supplier_key
+     AND m.supplier_product_id = pc.supplier_product_id
+     AND m.marketplace_key = pc.marketplace_key
+     AND m.marketplace_listing_id = pc.marketplace_listing_id
+    WHERE pc.id = ${row.candidate_id}
+    LIMIT 1
+  `);
+  const matchRow = matchGate.rows[0] as { status?: string | null; confidence?: string | null } | undefined;
+  const matchStatus = String(matchRow?.status ?? "").trim().toUpperCase();
+  const matchConfidence =
+    matchRow?.confidence == null || matchRow.confidence === "" ? null : Number(matchRow.confidence);
+  const matchEligible =
+    matchStatus === "ACTIVE" &&
+    matchConfidence != null &&
+    Number.isFinite(matchConfidence) &&
+    matchConfidence >= PRODUCT_PIPELINE_MATCH_PREFERRED_MIN;
+
+  if (safety.allow && matchEligible) {
     console.log("\n5) restoring listing eligibility + resetting listing to PREVIEW");
     await db.execute(sql`
       UPDATE profitable_candidates
@@ -112,7 +136,7 @@ async function main() {
 
     console.log("Eligibility restored and listing reset to PREVIEW.");
   } else {
-    console.log("\nPrice guard still does not allow publish. No reset performed.");
+    console.log("\nPrice guard or match-confidence gate does not allow publish. No reset performed.");
   }
 
   const finalState = await db.execute(sql`
