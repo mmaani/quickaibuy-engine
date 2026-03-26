@@ -13,6 +13,7 @@ import { markJobFailed, markJobQueued, markJobRunning, markJobSucceeded } from "
 import { pool } from "../lib/db";
 import { runOrderSyncWorker } from "./orderSync.worker";
 import { runAutoPurchaseWorker } from "./autoPurchase.worker";
+import { runTrackingSyncWorker } from "./trackingSync.worker";
 import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSchedules";
@@ -853,6 +854,43 @@ export const jobsWorker = new Worker(
           eventType: "AUTO_PURCHASE_JOB_COMPLETED",
           details: {
             source: "order-auto-purchase-cj",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return result;
+      }
+
+      case JOB_NAMES.TRACKING_SYNC: {
+        const result = await runTrackingSyncWorker({
+          orderId: typeof job.data?.orderId === "string" ? job.data.orderId : undefined,
+          limit: Number(job.data?.limit ?? 20),
+          actorId: JOB_NAMES.TRACKING_SYNC,
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.TRACKING_SYNC,
+          entityType: "ORDER",
+          entityId: String(job.data?.orderId ?? "batch"),
+          eventType: "TRACKING_SYNC_JOB_COMPLETED",
+          details: {
+            source: "cj-tracking-auto-sync",
             jobId: String(job.id ?? ""),
             ...result,
           },
