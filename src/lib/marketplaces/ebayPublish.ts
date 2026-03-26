@@ -810,6 +810,28 @@ function buildDescription(payload: Record<string, unknown>, title: string): stri
   return lines.join("\n").slice(0, 4000);
 }
 
+function buildListingAspects(payload: Record<string, unknown>, shipFromCountry: string): Record<string, string[]> {
+  const fromPayload =
+    payload.itemSpecifics && typeof payload.itemSpecifics === "object" && !Array.isArray(payload.itemSpecifics)
+      ? (payload.itemSpecifics as Record<string, unknown>)
+      : {};
+
+  const aspects: Record<string, string[]> = {};
+  for (const [key, rawValue] of Object.entries(fromPayload)) {
+    const aspectKey = String(key ?? "").trim();
+    const aspectValue = String(rawValue ?? "").trim();
+    if (!aspectKey || !aspectValue) continue;
+    aspects[aspectKey] = [aspectValue];
+  }
+
+  if (!aspects.Brand?.length) aspects.Brand = [stringOrNull(payload.brand) ?? "Unbranded"];
+  if (!aspects.MPN?.length) aspects.MPN = [stringOrNull(payload.mpn) ?? "Does Not Apply"];
+  if (!aspects.Type?.length) aspects.Type = ["Does Not Apply"];
+  if (!aspects.CountryOfOrigin?.length) aspects.CountryOfOrigin = [shipFromCountry];
+
+  return aspects;
+}
+
 type EbayImageHostingMode = "external" | "self_hosted" | "eps" | "invalid";
 type EbayImageHostingCode =
   | "IMAGE_HOSTING_OK"
@@ -1445,12 +1467,7 @@ export async function publishToEbayListing(listing: EbayListingPayload): Promise
             title,
             description,
             imageUrls: imageHostingValidation.selectedUrls,
-            aspects: {
-              Brand: [stringOrNull(payload.brand) ?? "Unbranded"],
-              MPN: [stringOrNull(payload.mpn) ?? "Does Not Apply"],
-              Type: ["Does Not Apply"],
-              CountryOfOrigin: [shipFromCountry],
-            },
+            aspects: buildListingAspects(payload, shipFromCountry),
           },
         }),
       },
