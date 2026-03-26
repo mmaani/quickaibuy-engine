@@ -89,7 +89,9 @@ export type OrderTimelineRow = {
     | "ORDER_INGESTED"
     | "SUPPLIER_PURCHASE_RECORDED"
     | "TRACKING_ADDED"
+    | "TRACKING_SYNC_STARTED"
     | "TRACKING_SYNCED"
+    | "TRACKING_SYNC_FAILED"
     | "STATUS_CHANGED";
   timestamp: string | null;
   description: string;
@@ -170,6 +172,27 @@ function normalizeTimelineEvent(event: AdminOrderEvent): OrderTimelineRow | null
     };
   }
 
+  if (type === "TRACKING_SYNC_ATTEMPTED") {
+    return {
+      id: event.id,
+      eventType: "TRACKING_SYNC_STARTED",
+      timestamp: event.eventTs,
+      description: "Tracking sync to eBay started.",
+    };
+  }
+
+  if (type === "TRACKING_SYNC_FAILED") {
+    const errorText = typeof details?.error === "string" ? details.error : null;
+    return {
+      id: event.id,
+      eventType: "TRACKING_SYNC_FAILED",
+      timestamp: event.eventTs,
+      description: errorText
+        ? `Tracking sync failed: ${errorText}`
+        : "Tracking sync failed.",
+    };
+  }
+
   if (type === "STATUS_CHANGED") {
     const fromStatus =
       typeof details?.fromStatus === "string"
@@ -203,7 +226,9 @@ export function getTimelineEventTitle(eventType: OrderTimelineRow["eventType"]):
   if (eventType === "ORDER_INGESTED") return "New order";
   if (eventType === "SUPPLIER_PURCHASE_RECORDED") return "Purchase recorded";
   if (eventType === "TRACKING_ADDED") return "Tracking added";
+  if (eventType === "TRACKING_SYNC_STARTED") return "Sync started";
   if (eventType === "TRACKING_SYNCED") return "Synced";
+  if (eventType === "TRACKING_SYNC_FAILED") return "Sync failed";
   return "Status changed";
 }
 

@@ -21,6 +21,12 @@ type EbayOrderDetail = {
   lineItems?: EbayLineItem[];
 };
 
+function isTrackingSyncEnabled(): boolean {
+  const explicit = String(process.env.ENABLE_EBAY_TRACKING_SYNC ?? "").trim().toLowerCase();
+  if (explicit) return explicit === "true";
+  return String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").trim().toLowerCase() === "true";
+}
+
 const KNOWN_CARRIER_MAP: Record<string, string> = {
   UPS: "UPS",
   "UNITED PARCEL SERVICE": "UPS",
@@ -44,7 +50,12 @@ function normalizeCarrierCode(input: string): string | null {
 
   if (KNOWN_CARRIER_MAP[direct]) return KNOWN_CARRIER_MAP[direct];
 
-  // Allow explicit eBay-like codes if operator already provided one.
+  // Preserve unrecognized carrier labels so eBay can validate them directly.
+  if (/^[A-Za-z][A-Za-z0-9 _-]{1,60}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Allow explicit eBay-like codes if an operator already provided one.
   if (/^[A-Z0-9_]{2,40}$/.test(trimmed)) {
     return trimmed.toUpperCase();
   }
@@ -159,12 +170,6 @@ export async function syncTrackingToEbay(input: {
   let attemptedLiveCall = false;
 
   try {
-    if (process.env.ENABLE_EBAY_TRACKING_SYNC !== "true") {
-      throw new Error(
-        "Live tracking sync is disabled. Set ENABLE_EBAY_TRACKING_SYNC=true for controlled execution."
-      );
-    }
-
     const payload = await prepareTrackingSyncPayload({
       orderId: input.orderId,
       supplierOrderId: input.supplierOrderId,
@@ -173,6 +178,12 @@ export async function syncTrackingToEbay(input: {
 
     preparedSupplierOrderId = payload.supplierOrderId;
     marketplaceOrderId = payload.marketplaceOrderId;
+
+    if (!isTrackingSyncEnabled()) {
+      throw new Error(
+        "Live tracking sync is disabled. Set ENABLE_EBAY_TRACKING_SYNC=true, or ENABLE_EBAY_LIVE_PUBLISH=true for controlled execution."
+      );
+    }
 
     const carrierCode = normalizeCarrierCode(payload.tracking.trackingCarrier);
     if (!carrierCode) {

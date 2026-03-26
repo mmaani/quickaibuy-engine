@@ -950,7 +950,24 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking number</div><div className="mt-1">{detail.latestAttempt?.trackingNumber ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking carrier</div><div className="mt-1">{detail.latestAttempt?.trackingCarrier ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking status</div><div className="mt-1">{detail.latestAttempt?.trackingStatus ?? "-"}</div></div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Last sync result</div><div className="mt-1">{detail.lastSyncState?.trackingSyncedAt ? "Synced successfully" : detail.lastSyncState?.trackingSyncError ? "Last sync failed" : "Not synced yet"}</div></div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <div className="text-xs text-white/45">Last sync result</div>
+                      <div className="mt-1">
+                        {detail.lastSyncState?.trackingSyncedAt
+                          ? "Synced successfully"
+                          : detail.lastSyncState?.trackingSyncError
+                            ? "Last sync failed"
+                            : "Not synced yet"}
+                      </div>
+                      {detail.lastSyncState?.trackingSyncLastAttemptAt ? (
+                        <div className="mt-1 text-xs text-white/55">
+                          Last attempt: {formatDateTime(detail.lastSyncState.trackingSyncLastAttemptAt.toISOString())}
+                        </div>
+                      ) : null}
+                      {detail.lastSyncState?.trackingSyncError ? (
+                        <div className="mt-2 text-xs text-rose-100">{detail.lastSyncState.trackingSyncError}</div>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
                     <div className="text-xs text-white/45">Purchase status indicator</div>
@@ -1274,6 +1291,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     <input type="hidden" name="actionType" value="sync-ebay" />
                     <input type="hidden" name="orderId" value={detail.order.id} />
                     <input type="hidden" name="filter" value={filter} />
+                    <input type="hidden" name="mode" value={mode} />
                     <input type="hidden" name="supplierOrderId" value={detail.latestAttempt?.id ?? ""} />
                     <input type="hidden" name="supplierKey" value={defaultSupplierKey} />
                     <button disabled={!canSync} className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50">
