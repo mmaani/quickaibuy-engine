@@ -252,11 +252,14 @@ export function applyEvidenceBackedListingCorrections(rawPack: unknown, input: V
 
   const evidence = buildEvidenceCorpus(input);
   const sanitizedSpecifics = sanitizeSpecifics(validation.data.verified_item_specifics, evidence.normalized);
+  const unsupportedClaims = Array.from(
+    new Set([...validation.data.removed_claims, ...sanitizedSpecifics.removedClaims])
+  );
   const sanitizedText = sanitizeTextFields({
     title: validation.data.verified_title,
     bulletPoints: validation.data.verified_bullet_points,
     description: validation.data.verified_description,
-    unsupportedClaims: sanitizedSpecifics.removedClaims,
+    unsupportedClaims,
   });
   const category = chooseVerifiedCategory(input.generatedPack, input.heuristicCategory, evidence.normalized);
   const correctedFields = Array.from(
@@ -267,13 +270,17 @@ export function applyEvidenceBackedListingCorrections(rawPack: unknown, input: V
       ...category.correctedFields,
     ])
   );
-  const removedClaims = Array.from(new Set([...validation.data.removed_claims, ...sanitizedSpecifics.removedClaims]));
+  const removedClaims = unsupportedClaims;
   const riskFlags = Array.from(new Set([...validation.data.risk_flags, ...category.riskFlags]));
   const supportedSpecificCount = LISTING_SPECIFIC_KEYS.filter((key) => Boolean(sanitizedSpecifics.itemSpecifics[key])).length;
+  const supportedSpecificRatio = supportedSpecificCount / LISTING_SPECIFIC_KEYS.length;
   const verificationConfidence = Math.min(
     validation.data.verification_confidence,
-    Math.max(0.35, supportedSpecificCount / LISTING_SPECIFIC_KEYS.length)
+    Math.max(0.35, supportedSpecificRatio)
   );
+  if (verificationConfidence < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD) {
+    riskFlags.push("VERIFICATION_CONFIDENCE_LOW");
+  }
 
   return {
     ok: true as const,
@@ -287,7 +294,7 @@ export function applyEvidenceBackedListingCorrections(rawPack: unknown, input: V
       verified_item_specifics: sanitizedSpecifics.itemSpecifics,
       removed_claims: removedClaims,
       corrected_fields: correctedFields,
-      risk_flags: riskFlags,
+      risk_flags: Array.from(new Set(riskFlags)),
       verification_confidence: verificationConfidence,
       review_required: true,
     },
