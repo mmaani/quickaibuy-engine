@@ -346,6 +346,17 @@ export function getCompactBatchReviewSummary(
 ): CompactBatchReviewSummary {
   const status = String(row.status || "").toUpperCase();
   const purchaseStatus = String(row.purchaseStatus || "").toUpperCase();
+  if (isTrackingSyncedOrderStatus(status)) {
+    return {
+      bucket: "synced",
+      operatorStage: "Synced",
+      purchaseSafetyState: "Completed",
+      readinessState: "Synced",
+      nextAction: "Done",
+      blockedReason: null,
+    };
+  }
+
   const blockedReason =
     !row.hasSupplierLinkage
       ? "Supplier linkage missing"
@@ -396,8 +407,7 @@ export function getCompactBatchReviewSummary(
   }
 
   let readinessState = "Not ready";
-  if (isTrackingSyncedOrderStatus(status)) readinessState = "Synced";
-  else if (row.trackingReady || isTrackingSyncReadyOrderStatus(status)) readinessState = "Ready to sync";
+  if (row.trackingReady || isTrackingSyncReadyOrderStatus(status)) readinessState = "Ready to sync";
   else if (
     isSupplierPurchaseRecordedStatus(purchaseStatus) ||
     isWaitingTrackingOrderStatus(status)

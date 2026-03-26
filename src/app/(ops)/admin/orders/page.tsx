@@ -188,6 +188,15 @@ function normalizePurchaseStatus(value: string | null | undefined): string {
   return "SUBMITTED";
 }
 
+function isPostPurchaseStatus(status: string | null | undefined): boolean {
+  const key = String(status ?? "").toUpperCase();
+  return ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED", "DELIVERED"].includes(key);
+}
+
+function isTrackingFullySynced(status: string | null | undefined): boolean {
+  return String(status ?? "").toUpperCase() === "TRACKING_SYNCED";
+}
+
 function quickActionButtonTone(enabled: boolean): string {
   if (!enabled) return "pointer-events-none cursor-not-allowed border-white/10 bg-white/[0.02] text-white/35";
   return "border-white/15 bg-white/[0.05] text-white/85 hover:bg-white/[0.08]";
@@ -432,18 +441,21 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const defaultSupplierKey =
     detail?.latestAttempt?.supplierKey ?? detail?.items.find((item) => item.supplierKey)?.supplierKey ?? "";
   const defaultRepairItem = detail?.items[0] ?? null;
+  const detailStatus = String(detail?.order.status ?? "").toUpperCase();
   const canReadyReview =
     detail != null &&
     ["MANUAL_REVIEW", "NEW", "NEW_ORDER"].includes(String(detail.order.status).toUpperCase());
   const canRecordPurchase =
     detail != null &&
+    !isTrackingFullySynced(detail.order.status) &&
     canRecordSupplierPurchaseForOrderStatus(String(detail.order.status).toUpperCase());
   const canRecordTracking =
     detail != null &&
-    ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(
+    !isTrackingFullySynced(detail.order.status) &&
+    ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED"].includes(
       String(detail.order.status).toUpperCase()
     );
-  const canSync = detail?.readiness.ready ?? false;
+  const canSync = Boolean(detail?.readiness.ready) && !isTrackingFullySynced(detail?.order.status);
   const timelineRows = detail ? buildCompactOrderTimeline(detail.events) : [];
   const progressIndicator = detail ? getPurchaseStatusIndicator(detail) : "NOT_PURCHASED";
   const stageLabel = detail ? getOperatorOrderStep(detail) : null;
@@ -451,17 +463,26 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const operatorHints = detail ? buildOperatorHints(detail) : [];
   const profitSnapshot = detail ? buildProfitSnapshot(detail) : null;
   const purchaseSafety = detail ? await getOrderPurchaseSafetyStatus(detail) : null;
+  const purchaseSafetyRelevant = detail != null && !isPostPurchaseStatus(detailStatus);
   const canApprove =
     detail != null &&
     String(detail.order.status).toUpperCase() === "READY_FOR_PURCHASE_REVIEW" &&
     purchaseSafety?.status === "READY_FOR_PURCHASE_REVIEW";
   const actionHints = detail
-    ? Array.from(new Set([purchaseSafety?.hint, purchaseSafety?.secondaryHint, ...operatorHints].filter(Boolean) as string[])).slice(0, 2)
+    ? Array.from(
+        new Set(
+          [
+            ...(purchaseSafetyRelevant ? [purchaseSafety?.hint, purchaseSafety?.secondaryHint] : []),
+            ...operatorHints,
+          ].filter(Boolean) as string[]
+        )
+      ).slice(0, 2)
     : [];
   const hasSupplierLinkage =
     detail?.items.some((item) => Boolean(item.supplierKey && item.supplierProductId)) ?? false;
   const showTrackingPreview =
     detail != null &&
+    !isTrackingFullySynced(detail.order.status) &&
     (detail.readiness.ready ||
       ["TRACKING_RECEIVED", "TRACKING_PENDING", "PURCHASE_PLACED"].includes(
         String(detail.order.status || "").toUpperCase()
@@ -471,7 +492,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
       ? await prepareTrackingSyncPayload({ orderId: detail.order.id })
       : null;
   const trackingButtonLabel = detail?.latestAttempt?.trackingNumber ? "Update tracking" : "Add tracking";
-  const canViewSafety = detail != null && (purchaseSafety?.status ?? "VALIDATION_NEEDED") !== "READY_FOR_PURCHASE_REVIEW";
+  const canViewSafety =
+    detail != null &&
+    purchaseSafetyRelevant &&
+    (purchaseSafety?.status ?? "VALIDATION_NEEDED") !== "READY_FOR_PURCHASE_REVIEW";
   const autoPurchaseDiagnostic = detail ? getAutoPurchaseDiagnostic(detail) : null;
   const quickActionHint =
     requestedQuickAction === "mark-purchase"
@@ -688,13 +712,16 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     const href = orderDetailsHref({ filter, mode, orderId: row.orderId });
                     const selected = row.orderId === selectedOrderId;
                     const status = String(row.status || "").toUpperCase();
+                    const synced = isTrackingFullySynced(status);
                     const rowHasSupplier = row.hasSupplierLinkage;
-                    const rowCanMarkPurchase = ["PURCHASE_APPROVED", "PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
-                    const rowCanTracking = ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED", "TRACKING_SYNCED"].includes(status);
+                    const rowCanMarkPurchase = !synced && ["PURCHASE_APPROVED", "PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED"].includes(status);
+                    const rowCanTracking = !synced && ["PURCHASE_PLACED", "TRACKING_PENDING", "TRACKING_RECEIVED"].includes(status);
                     const rowCanPreview =
-                      row.trackingReady || ["TRACKING_RECEIVED", "TRACKING_PENDING", "PURCHASE_PLACED"].includes(status);
-                    const rowCanSync = row.trackingReady;
+                      !synced &&
+                      (row.trackingReady || ["TRACKING_RECEIVED", "TRACKING_PENDING", "PURCHASE_PLACED"].includes(status));
+                    const rowCanSync = !synced && row.trackingReady;
                     const rowCanViewSafety =
+                      !isPostPurchaseStatus(status) &&
                       ["MANUAL_REVIEW", "NEW", "NEW_ORDER", "READY_FOR_PURCHASE_REVIEW", "PURCHASE_APPROVED"].includes(status);
                     const rowCanSupplierRef = rowCanMarkPurchase && rowHasSupplier;
                     const rowCanMarkPurchaseDirect = rowCanMarkPurchase && rowHasSupplier;
@@ -965,7 +992,9 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     </div>
                     {!hasSupplierLinkage ? (
                       <div className="mt-2 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-                        Supplier linkage is missing. Review listing-to-supplier linkage before recording purchase.
+                        {purchaseSafetyRelevant
+                          ? "Supplier linkage is missing. Review listing-to-supplier linkage before recording purchase."
+                          : "Supplier linkage is still missing on the order item. Repair it for audit consistency and future automation, but this order is already in post-purchase flow."}
                       </div>
                     ) : null}
                   </div>
@@ -977,7 +1006,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Purchase status</div><div className="mt-1">{detail.latestAttempt?.purchaseStatus ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Supplier order reference</div><div className="mt-1">{detail.latestAttempt?.supplierOrderRef ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Auto-purchase state</div><div className="mt-1">{autoPurchaseDiagnostic?.label ?? "-"}</div></div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Auto-purchase note</div><div className="mt-1 text-sm text-white/80">{autoPurchaseDiagnostic?.reason ?? (autoPurchaseDiagnostic?.state === "queued" ? "Queued after purchase approval." : autoPurchaseDiagnostic?.state === "submitted" ? "CJ order created and recorded." : purchaseSafety?.status && purchaseSafety.status !== "READY_FOR_PURCHASE_REVIEW" ? `Blocked by purchase safety: ${purchaseSafety.status}` : "No auto-purchase event yet.")}</div></div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Auto-purchase note</div><div className="mt-1 text-sm text-white/80">{autoPurchaseDiagnostic?.reason ?? (autoPurchaseDiagnostic?.state === "queued" ? "Queued after purchase approval." : autoPurchaseDiagnostic?.state === "submitted" ? "CJ order created and recorded." : purchaseSafetyRelevant && purchaseSafety?.status && purchaseSafety.status !== "READY_FOR_PURCHASE_REVIEW" ? `Blocked by purchase safety: ${purchaseSafety.status}` : isPostPurchaseStatus(detail.order.status) ? "Auto-purchase is no longer relevant because the order is already in post-purchase flow." : "No auto-purchase event yet.")}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking number</div><div className="mt-1">{detail.latestAttempt?.trackingNumber ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking carrier</div><div className="mt-1">{detail.latestAttempt?.trackingCarrier ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking status</div><div className="mt-1">{detail.latestAttempt?.trackingStatus ?? "-"}</div></div>
@@ -1039,32 +1068,34 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                   <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                     <div className="text-xs text-white/45">Safety status</div>
                     <div className="mt-2">
-                      <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${purchaseSafetyTone(purchaseSafety?.status ?? "VALIDATION_NEEDED")}`}>
-                        {purchaseSafety?.label ?? "Validation needed before purchase"}
+                      <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${purchaseSafetyRelevant ? purchaseSafetyTone(purchaseSafety?.status ?? "VALIDATION_NEEDED") : "border-white/15 bg-white/[0.05] text-white/90"}`}>
+                        {purchaseSafetyRelevant ? (purchaseSafety?.label ?? "Validation needed before purchase") : "Archived after purchase"}
                       </span>
                     </div>
-                    <div className="mt-2 text-sm text-white/80">{purchaseSafety?.hint ?? "Manual review required."}</div>
-                    {purchaseSafety?.secondaryHint ? <div className="mt-1 text-xs text-white/65">{purchaseSafety.secondaryHint}</div> : null}
+                    <div className="mt-2 text-sm text-white/80">{purchaseSafetyRelevant ? (purchaseSafety?.hint ?? "Manual review required.") : "Purchase safety is evaluated before approval. This order has already progressed to post-purchase workflow."}</div>
+                    {purchaseSafetyRelevant && purchaseSafety?.secondaryHint ? <div className="mt-1 text-xs text-white/65">{purchaseSafety.secondaryHint}</div> : null}
                     <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-white/45">
-                      {purchaseSafety?.technicalLabel ?? "VALIDATION_NOT_RUN"}
+                      {purchaseSafetyRelevant ? (purchaseSafety?.technicalLabel ?? "VALIDATION_NOT_RUN") : "POST_PURCHASE_ARCHIVED"}
                     </div>
                     <div className="mt-2 text-xs text-white/55">
-                      Future execution hook: require fresh supplier validation every time.
+                      {purchaseSafetyRelevant
+                        ? "Future execution hook: require fresh supplier validation every time."
+                        : "Historical safety gaps can still be repaired for audit consistency, but they no longer block completed supplier or tracking steps."}
                     </div>
-                    {purchaseSafety?.checkedAt ? (
+                    {purchaseSafetyRelevant && purchaseSafety?.checkedAt ? (
                       <div className="mt-1 text-xs text-white/55">Checked: {formatDateTime(purchaseSafety.checkedAt)}</div>
                     ) : null}
-                    {purchaseSafety?.reasons.length ? (
+                    {purchaseSafetyRelevant && purchaseSafety?.reasons.length ? (
                       <div className="mt-2 text-xs text-white/55">
                         Reason codes: {purchaseSafety.reasons.join(", ")}
                       </div>
                     ) : null}
-                    {purchaseSafety?.status === "VALIDATION_NEEDED" ? (
+                    {purchaseSafetyRelevant && purchaseSafety?.status === "VALIDATION_NEEDED" ? (
                       <div className="mt-2 text-xs text-amber-100">
                         Purchase safety not checked yet. Review supplier price and run a fresh check before approval.
                       </div>
                     ) : null}
-                    {detail.items.some((item) => item.supplierWarnings.length > 0) ? (
+                    {purchaseSafetyRelevant && detail.items.some((item) => item.supplierWarnings.length > 0) ? (
                       <div className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-xs text-amber-100">
                         {detail.items
                           .flatMap((item) =>
@@ -1233,7 +1264,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <button disabled={!canApprove} className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                         Approve purchase
                       </button>
-                      {!canApprove && purchaseSafety?.status !== "READY_FOR_PURCHASE_REVIEW" ? (
+                      {!canApprove && purchaseSafetyRelevant && purchaseSafety?.status !== "READY_FOR_PURCHASE_REVIEW" ? (
                         <div className="mt-2 text-xs text-amber-100">
                           Disabled: {purchaseSafety?.label ?? "Not checked yet"}.
                         </div>
@@ -1288,7 +1319,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                       <button disabled={!canRecordPurchase} className="mt-3 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                         Save purchase and supplier ref
                       </button>
-                      {canRecordPurchase && !hasSupplierLinkage ? (
+                      {canRecordPurchase && purchaseSafetyRelevant && !hasSupplierLinkage ? (
                         <div className="mt-2 text-xs text-amber-100">
                           Missing supplier linkage remains a warning, but it does not block saving a real supplier purchase.
                         </div>
