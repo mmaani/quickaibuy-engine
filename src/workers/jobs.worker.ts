@@ -12,6 +12,7 @@ import { prepareListingPreviews } from "../lib/listings/prepareListingPreviews";
 import { markJobFailed, markJobQueued, markJobRunning, markJobSucceeded } from "../lib/jobs/jobLedger";
 import { pool } from "../lib/db";
 import { runOrderSyncWorker } from "./orderSync.worker";
+import { runAutoPurchaseWorker } from "./autoPurchase.worker";
 import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSchedules";
@@ -815,6 +816,43 @@ export const jobsWorker = new Worker(
           eventType: "ORDER_SYNC_JOB_COMPLETED",
           details: {
             source: "order-sync-ebay",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return result;
+      }
+
+      case JOB_NAMES.AUTO_PURCHASE: {
+        const result = await runAutoPurchaseWorker({
+          orderId: typeof job.data?.orderId === "string" ? job.data.orderId : undefined,
+          limit: Number(job.data?.limit ?? 20),
+          actorId: JOB_NAMES.AUTO_PURCHASE,
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.AUTO_PURCHASE,
+          entityType: "ORDER",
+          entityId: String(job.data?.orderId ?? "batch"),
+          eventType: "AUTO_PURCHASE_JOB_COMPLETED",
+          details: {
+            source: "order-auto-purchase-cj",
             jobId: String(job.id ?? ""),
             ...result,
           },

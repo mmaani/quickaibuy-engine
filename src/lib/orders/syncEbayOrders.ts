@@ -69,6 +69,11 @@ function buildLegacyRawPayload(order: NormalizedEbayOrder): Record<string, unkno
     marketplace: order.marketplace,
     marketplaceOrderId: order.marketplaceOrderId,
     sourceStatus: order.sourceStatus,
+    buyerName: order.buyerName,
+    buyerCountry: order.buyerCountry,
+    buyerPhone: order.buyerPhone,
+    buyerEmail: order.buyerEmail,
+    shippingAddress: order.shippingAddress,
     lineItems: order.lineItems,
   };
 }

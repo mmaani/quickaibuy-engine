@@ -104,6 +104,14 @@ export type ProfitSnapshot = {
   supplierCostIsEstimate: boolean;
 };
 
+export type AutoPurchaseDiagnostic = {
+  state: "not-queued" | "queued" | "skipped" | "submitted" | "failed";
+  label: string;
+  reason: string | null;
+  supplierOrderRef: string | null;
+  purchaseStatus: string | null;
+};
+
 function toNumber(value: string | number | null | undefined): number | null {
   if (value == null) return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -526,6 +534,70 @@ export function buildOperatorHints(detail: AdminOrderDetail): string[] {
   }
 
   return Array.from(new Set(hints)).slice(0, 2);
+}
+
+export function getAutoPurchaseDiagnostic(detail: AdminOrderDetail): AutoPurchaseDiagnostic {
+  const latestEvent = detail.events.find((event) => {
+    const type = String(event.eventType ?? "").toUpperCase();
+    if (type === "PURCHASE_FAILED" || type === "PURCHASE_SUBMITTED") return true;
+    if (type !== "MANUAL_NOTE") return false;
+    const details = asObject(event.details);
+    const action = String(details?.action ?? "").toUpperCase();
+    return action === "AUTO_PURCHASE_QUEUED" || action === "AUTO_PURCHASE_SKIPPED";
+  });
+
+  const latestEventDetails = asObject(latestEvent?.details);
+  const action = String(latestEventDetails?.action ?? "").toUpperCase();
+  const purchaseStatus = detail.latestAttempt?.purchaseStatus ?? null;
+  const supplierOrderRef = detail.latestAttempt?.supplierOrderRef ?? null;
+
+  if (String(latestEvent?.eventType ?? "").toUpperCase() === "PURCHASE_FAILED") {
+    return {
+      state: "failed",
+      label: "Failed",
+      reason: typeof latestEventDetails?.error === "string" ? latestEventDetails.error : null,
+      supplierOrderRef,
+      purchaseStatus,
+    };
+  }
+
+  if (String(latestEvent?.eventType ?? "").toUpperCase() === "PURCHASE_SUBMITTED") {
+    return {
+      state: "submitted",
+      label: "Submitted",
+      reason: null,
+      supplierOrderRef,
+      purchaseStatus,
+    };
+  }
+
+  if (action === "AUTO_PURCHASE_SKIPPED") {
+    return {
+      state: "skipped",
+      label: "Skipped",
+      reason: typeof latestEventDetails?.reason === "string" ? latestEventDetails.reason : null,
+      supplierOrderRef,
+      purchaseStatus,
+    };
+  }
+
+  if (action === "AUTO_PURCHASE_QUEUED") {
+    return {
+      state: "queued",
+      label: "Queued",
+      reason: null,
+      supplierOrderRef,
+      purchaseStatus,
+    };
+  }
+
+  return {
+    state: "not-queued",
+    label: "Not queued",
+    reason: null,
+    supplierOrderRef,
+    purchaseStatus,
+  };
 }
 
 export function getDisabledRowQuickActionHint(input: {

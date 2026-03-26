@@ -1,10 +1,19 @@
+import { Queue } from "bullmq";
 import { db } from "@/lib/db";
 import { orderEvents, orders } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { bullConnection } from "@/lib/bull";
+import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
+import { markJobQueued } from "@/lib/jobs/jobLedger";
 import { createOrderEvent } from "./orderEvents";
 import { assertOrderPurchaseSafetyForApproval } from "./purchaseSafety";
 import { canTransitionOrderStatus } from "./transitions";
 import { isOrderStatus, ORDER_STATUS, type OrderStatus } from "./statuses";
+
+const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
+  connection: bullConnection,
+  prefix: BULL_PREFIX,
+});
 
 export type TransitionOrderStatusResult = {
   changed: boolean;
@@ -138,6 +147,39 @@ export async function approveOrderForPurchase(input: {
       details: {
         action: "PURCHASE_APPROVED",
         actorId: input.actorId ?? null,
+      },
+    });
+
+    const payload = {
+      orderId: input.orderId,
+      actorId: input.actorId ?? "approveOrderForPurchase",
+    };
+    const job = await jobsQueue.add(JOB_NAMES.AUTO_PURCHASE, payload, {
+      jobId: `auto-purchase-${input.orderId}`,
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 5000,
+      },
+      removeOnComplete: 1000,
+      removeOnFail: 5000,
+    });
+
+    await markJobQueued({
+      jobType: JOB_NAMES.AUTO_PURCHASE,
+      idempotencyKey: String(job.id),
+      payload,
+      attempt: 0,
+      maxAttempts: 3,
+    });
+
+    await createOrderEvent({
+      orderId: input.orderId,
+      eventType: "MANUAL_NOTE",
+      details: {
+        action: "AUTO_PURCHASE_QUEUED",
+        actorId: input.actorId ?? null,
+        jobId: String(job.id),
       },
     });
   }

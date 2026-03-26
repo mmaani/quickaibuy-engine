@@ -8,6 +8,7 @@ import {
   buildCompactOrderTimeline,
   getCompactBatchReviewSummary,
   getDisabledRowQuickActionHint,
+  getAutoPurchaseDiagnostic,
   buildOperatorOrderStepFlow,
   buildOperatorHints,
   buildProfitSnapshot,
@@ -21,6 +22,7 @@ import {
   prepareTrackingSyncPayload,
   recordSupplierPurchase,
   recordSupplierTracking,
+  repairOrderItemSupplierLinkage,
   setOrderReadyForPurchaseReview,
   syncTrackingToEbay,
   type AdminOrdersFilter,
@@ -123,6 +125,7 @@ function purchaseSafetyTone(status: string): string {
     return "border-emerald-300/30 bg-emerald-500/10 text-emerald-100";
   }
   if (
+    status === "BLOCKED_SUPPLIER_LINKAGE_REQUIRED" ||
     status === "BLOCKED_STALE_DATA" ||
     status === "BLOCKED_SUPPLIER_DRIFT" ||
     status === "BLOCKED_ECONOMICS_OUT_OF_BOUNDS"
@@ -295,6 +298,30 @@ async function runOrderAction(formData: FormData) {
       redirectWith({ message: "Tracking details were saved." });
     }
 
+    if (actionType === "repair-linkage") {
+      const orderItemId = String(formData.get("orderItemId") ?? "").trim();
+      const supplierKey = String(formData.get("supplierKey") ?? "").trim();
+      const supplierProductId = String(formData.get("supplierProductId") ?? "").trim();
+      const supplierSourceUrl = String(formData.get("supplierSourceUrl") ?? "").trim() || null;
+      const listingId = String(formData.get("listingId") ?? "").trim() || null;
+      if (!orderItemId) {
+        redirectWith({ error: "Please choose an order item to repair." });
+      }
+      if (!listingId && (!supplierKey || !supplierProductId)) {
+        redirectWith({ error: "Provide an exact listing id or both supplier fields." });
+      }
+      await repairOrderItemSupplierLinkage({
+        orderId,
+        orderItemId,
+        supplierKey,
+        supplierProductId,
+        supplierSourceUrl,
+        listingId,
+        actorId,
+      });
+      redirectWith({ message: "Supplier linkage was repaired." });
+    }
+
     if (actionType === "sync-ebay") {
       const supplierOrderId = String(formData.get("supplierOrderId") ?? "").trim() || undefined;
       const supplierKey = String(formData.get("supplierKey") ?? "").trim() || undefined;
@@ -404,6 +431,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
 
   const defaultSupplierKey =
     detail?.latestAttempt?.supplierKey ?? detail?.items.find((item) => item.supplierKey)?.supplierKey ?? "";
+  const defaultRepairItem = detail?.items[0] ?? null;
   const canReadyReview =
     detail != null &&
     ["MANUAL_REVIEW", "NEW", "NEW_ORDER"].includes(String(detail.order.status).toUpperCase());
@@ -444,6 +472,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
       : null;
   const trackingButtonLabel = detail?.latestAttempt?.trackingNumber ? "Update tracking" : "Add tracking";
   const canViewSafety = detail != null && (purchaseSafety?.status ?? "VALIDATION_NEEDED") !== "READY_FOR_PURCHASE_REVIEW";
+  const autoPurchaseDiagnostic = detail ? getAutoPurchaseDiagnostic(detail) : null;
   const quickActionHint =
     requestedQuickAction === "mark-purchase"
       ? "Shortcut selected: mark purchase recorded."
@@ -947,6 +976,8 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                   <div className="grid gap-3 md:grid-cols-2">
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Purchase status</div><div className="mt-1">{detail.latestAttempt?.purchaseStatus ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Supplier order reference</div><div className="mt-1">{detail.latestAttempt?.supplierOrderRef ?? "-"}</div></div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Auto-purchase state</div><div className="mt-1">{autoPurchaseDiagnostic?.label ?? "-"}</div></div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Auto-purchase note</div><div className="mt-1 text-sm text-white/80">{autoPurchaseDiagnostic?.reason ?? (autoPurchaseDiagnostic?.state === "queued" ? "Queued after purchase approval." : autoPurchaseDiagnostic?.state === "submitted" ? "CJ order created and recorded." : purchaseSafety?.status && purchaseSafety.status !== "READY_FOR_PURCHASE_REVIEW" ? `Blocked by purchase safety: ${purchaseSafety.status}` : "No auto-purchase event yet.")}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking number</div><div className="mt-1">{detail.latestAttempt?.trackingNumber ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking carrier</div><div className="mt-1">{detail.latestAttempt?.trackingCarrier ?? "-"}</div></div>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs text-white/45">Tracking status</div><div className="mt-1">{detail.latestAttempt?.trackingStatus ?? "-"}</div></div>
@@ -1207,6 +1238,33 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
                           Disabled: {purchaseSafety?.label ?? "Not checked yet"}.
                         </div>
                       ) : null}
+                    </form>
+
+                    <form action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <input type="hidden" name="actionType" value="repair-linkage" />
+                      <input type="hidden" name="orderId" value={detail.order.id} />
+                      <input type="hidden" name="filter" value={filter} />
+                      <input type="hidden" name="mode" value={mode} />
+                      <div className="mb-2 text-xs text-white/55">Repair supplier linkage</div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <select name="orderItemId" defaultValue={defaultRepairItem?.id ?? ""} className="contact-input" required>
+                          {detail.items.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.listingExternalId ?? item.listingId ?? item.id} | qty {item.quantity}
+                            </option>
+                          ))}
+                        </select>
+                        <input name="supplierKey" defaultValue={defaultRepairItem?.supplierKey ?? defaultSupplierKey} className="contact-input" placeholder="Supplier key (optional if listing id resolves it)" />
+                        <input name="supplierProductId" defaultValue={defaultRepairItem?.supplierProductId ?? ""} className="contact-input" placeholder="Supplier product id (optional if listing id resolves it)" />
+                        <input name="listingId" defaultValue={defaultRepairItem?.listingId ?? ""} className="contact-input" placeholder="Optional listing id" />
+                        <input name="supplierSourceUrl" defaultValue="" className="contact-input md:col-span-2" placeholder="Optional supplier source URL" />
+                      </div>
+                      <button className="mt-3 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-sm">
+                        Save supplier linkage
+                      </button>
+                      <div className="mt-2 text-xs text-white/55">
+                        Use this only when you have an exact supplier product or exact internal listing row. If the listing already carries source linkage, the supplier fields can be left blank.
+                      </div>
                     </form>
 
                     <form id="supplier-ref-form" action={runOrderAction} className="rounded-xl border border-white/10 bg-black/20 p-3">

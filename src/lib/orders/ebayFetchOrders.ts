@@ -36,7 +36,19 @@ type EbayOrder = {
     shippingStep?: {
       shipTo?: {
         fullName?: string;
-        contactAddress?: { countryCode?: string };
+        contactAddress?: {
+          countryCode?: string;
+          addressLine1?: string;
+          addressLine2?: string;
+          city?: string;
+          stateOrProvince?: string;
+          postalCode?: string;
+          county?: string;
+        };
+        primaryPhone?: {
+          phoneNumber?: string;
+        };
+        email?: string;
       };
     };
   }>;
@@ -59,6 +71,17 @@ export type NormalizedEbayOrder = {
   marketplaceOrderId: string;
   buyerName: string | null;
   buyerCountry: string | null;
+  shippingAddress: {
+    countryCode: string | null;
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    stateOrProvince: string | null;
+    postalCode: string | null;
+    county: string | null;
+  } | null;
+  buyerPhone: string | null;
+  buyerEmail: string | null;
   totalPrice: number | null;
   currency: string | null;
   createdAt: Date;
@@ -132,6 +155,19 @@ function normalizeOrder(order: EbayOrder): NormalizedEbayOrder | null {
   const buyerCountry =
     cleanString(shippingStep?.shipTo?.contactAddress?.countryCode) ??
     cleanString(order.buyer?.registrationAddress?.countryCode);
+  const shippingAddress = shippingStep?.shipTo?.contactAddress
+    ? {
+        countryCode: cleanString(shippingStep.shipTo.contactAddress.countryCode),
+        addressLine1: cleanString(shippingStep.shipTo.contactAddress.addressLine1),
+        addressLine2: cleanString(shippingStep.shipTo.contactAddress.addressLine2),
+        city: cleanString(shippingStep.shipTo.contactAddress.city),
+        stateOrProvince: cleanString(shippingStep.shipTo.contactAddress.stateOrProvince),
+        postalCode: cleanString(shippingStep.shipTo.contactAddress.postalCode),
+        county: cleanString(shippingStep.shipTo.contactAddress.county),
+      }
+    : null;
+  const buyerPhone = cleanString(shippingStep?.shipTo?.primaryPhone?.phoneNumber);
+  const buyerEmail = cleanString(shippingStep?.shipTo?.email);
 
   const totalPrice = toNumber(order.pricingSummary?.total?.value);
   const currency = cleanString(order.pricingSummary?.total?.currency);
@@ -144,6 +180,9 @@ function normalizeOrder(order: EbayOrder): NormalizedEbayOrder | null {
     marketplaceOrderId,
     buyerName,
     buyerCountry,
+    shippingAddress,
+    buyerPhone,
+    buyerEmail,
     totalPrice,
     currency,
     createdAt,
