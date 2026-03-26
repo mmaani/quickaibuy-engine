@@ -30,8 +30,10 @@ Shared shell guard helper: `scripts/lib/preflightMutation.sh`.
 | Mark stale `PUBLISH_IN_PROGRESS` listings as failed | `pnpm exec tsx scripts/mutate_listings_mark_stale_publish_failed.ts` | HIGH | No (guarded) | Platform Setup / Infrastructure |
 | Enqueue inventory risk scan | `pnpm exec tsx scripts/enqueue_inventory_risk_scan.ts` | HIGH | Guarded | Platform Setup / Infrastructure |
 | Enqueue listing prepare | `pnpm exec tsx scripts/enqueue_listing_prepare.ts` | HIGH | Guarded | Platform Setup / Infrastructure |
+| Enqueue listing optimize | `pnpm enqueue:listing-optimize` | HIGH | Guarded | Railway Deployment for jobs.worker |
 | Queue namespace diagnostics | `pnpm exec tsx scripts/queue_namespace_diagnostics.ts` | MED | Yes | Platform Setup / Infrastructure |
 | Inventory-risk schedule check | `pnpm exec tsx scripts/check_inventory_risk_schedule.ts` | MED | Yes | Platform Setup / Infrastructure |
+| Worker runtime dependency preflight | `pnpm preflight:worker-runtime` | MED | Yes | Railway Deployment for jobs.worker |
 | Runtime dashboard checks | `bash scripts/check_monitoring_dashboard_v1.sh` | MED | Yes | Platform Setup / Infrastructure |
 
 ## Renamed high-risk scripts
@@ -78,4 +80,3 @@ The following scripts are kept for one transition phase as **deprecated warning 
 | `bash scripts/run_controlled_listing_gate_migration.sh` | `bash scripts/run_controlled_listing_gate_migration_v2.sh`, `bash scripts/run_controlled_listing_gate_migration_v3.sh` | Use canonical migration wrapper; `v2` wrapper temporarily runs legacy normalization + canonical migration. |
 | `pnpm exec tsx scripts/run_marketplace_scan_monitoring.ts` | `pnpm exec tsx scripts/run_marketplace_scan_monitoring_latest.ts` | Use non-versioned monitoring command. |
 | `node scripts/check_listing_previews_ready_source.mjs` | `node scripts/workers/check_listing_previews_latest.mjs` | Use listing preview readiness source diagnostic. |
-

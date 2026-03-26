@@ -11,6 +11,7 @@
     "worker:engine:dev": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/run_worker_engine_with_preflight.ts",
     "worker:engine:prod": "DOTENV_CONFIG_PATH=.env.vercel node --import dotenv/config --import tsx scripts/run_worker_engine_with_preflight.ts",
     "worker:jobs": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx src/workers/jobs.worker.ts",
+    "worker:jobs:prod": "NODE_OPTIONS=--no-deprecation node --import tsx src/workers/jobs.worker.ts",
     "trend:expand:test": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/test_trend_expand.mjs",
     "product:discover:test": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/test_product_discover.mjs",
     "query:allocate:test": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/test_query_budget_allocator.mjs",
@@ -27,6 +28,7 @@
     "preflight:runtime-deps": "pnpm preflight:runtime-deps:dev",
     "preflight:runtime-deps:dev": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/preflight_runtime_dependencies.ts",
     "preflight:runtime-deps:prod": "DOTENV_CONFIG_PATH=.env.vercel node --import dotenv/config --import tsx scripts/preflight_runtime_dependencies.ts",
+    "preflight:worker-runtime": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/check_worker_runtime_dependencies.ts",
     "diag:db-fingerprint": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config scripts/check_runtime_db_fingerprint.mjs",
     "diag:env-compare": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config scripts/compare_local_and_vercel_env.mjs production",
     "diag:vercel-env-access": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_vercel_env_access.ts production",
@@ -38,7 +40,8 @@
     "check:inventory-risk-schedule": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_inventory_risk_schedule.ts",
     "check:upstream-schedules": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_upstream_schedules.ts",
     "check:worker-run-truth": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_worker_run_truth.ts",
-    "check:schema-drift": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_schema_drift.ts"
+    "check:schema-drift": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_schema_drift.ts",
+    "enqueue:listing-optimize": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/enqueue_listing_optimize.ts"
   },
   "dependencies": {
     "bullmq": "^5.70.2",
