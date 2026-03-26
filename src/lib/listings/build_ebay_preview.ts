@@ -1,4 +1,5 @@
 import { generateListingPack, isAiListingEngineEnabled } from "@/lib/ai/generateListingPack";
+import { LISTING_PACK_LOW_CONFIDENCE_THRESHOLD } from "@/lib/ai/schemas";
 import { verifyListingPack } from "@/lib/ai/verifyListingPack";
 import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
@@ -201,6 +202,8 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
             verification_confidence: 0,
             review_required: true,
           };
+      const lowVerificationConfidence =
+        verifiedPack.verification_confidence < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD || verifiedPack.risk_flags.includes("VERIFICATION_CONFIDENCE_LOW");
       title = verifiedPack.verified_title;
       description = `${verifiedPack.verified_description}\n\nHighlights\n${verifiedPack.verified_bullet_points
         .map((bullet) => `- ${bullet}`)
@@ -216,7 +219,11 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
         listingPackGenerated: true,
         schemaPassed: true,
         manualReviewRequired: true,
-        reason: lowConfidence ? "LISTING_PACK_LOW_CONFIDENCE" : "HUMAN_REVIEW_REQUIRED_V1",
+        reason: lowVerificationConfidence
+          ? "LISTING_VERIFICATION_LOW_CONFIDENCE"
+          : lowConfidence
+            ? "LISTING_PACK_LOW_CONFIDENCE"
+            : "HUMAN_REVIEW_REQUIRED_V1",
         trustFlags: listingPack.pack.trust_flags,
         confidence: listingPack.pack.confidence,
         generatedPack: listingPack.pack,
@@ -225,7 +232,9 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
         removedClaims: verifiedPack.removed_claims,
         riskFlags: verifiedPack.risk_flags,
         verificationConfidence: verifiedPack.verification_confidence,
+        lowVerificationConfidence,
         diagnostics: {
+          lowVerificationConfidence,
           generation: listingPack.diagnostics,
           verification: verification.ok
             ? verification.diagnostics
