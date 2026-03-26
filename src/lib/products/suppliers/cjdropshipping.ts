@@ -230,6 +230,22 @@ function normalizeVariants(detail: CjProductDetailData): ProductVariant[] {
   return Array.from(values).map((value) => ({ name: "option", value }));
 }
 
+function buildCjVariantMapping(
+  stanProducts: CjStanProduct[] | undefined
+): Array<Record<string, unknown>> {
+  return (Array.isArray(stanProducts) ? stanProducts : [])
+    .slice(0, 50)
+    .map((variant) => ({
+      sku: toNonEmptyString(variant.SKU),
+      variantKey: toNonEmptyString(variant.VARIANTKEY),
+      optionValues: parseVariantValues(variant.expandField),
+      sellPrice: toNonEmptyString(String(variant.SELLPRICE ?? "")),
+      image: toNonEmptyString(variant.IMG),
+      name: toNonEmptyString(variant.NAMEEN),
+      stanProductId: toNonEmptyString(variant.ID),
+    }));
+}
+
 function sumInventoryValues(entries: CjInventoryEntry[] | undefined, key: keyof CjInventoryEntry): number {
   return (entries ?? []).reduce((sum, entry) => sum + (toFiniteNumber(entry[key]) ?? 0), 0);
 }
@@ -610,6 +626,12 @@ function mapSearchProductToSupplierProduct(product: CjSearchProduct, keyword: st
       availabilityEvidencePresent: toFiniteNumber(product.warehouseInventoryNum) != null,
       availabilityEvidenceQuality: "HIGH",
       videos,
+      sku: null,
+      variantMapping: normalizeCjSearchVariants(product).map((variant) => ({
+        sku: null,
+        variantKey: variant.value,
+        optionValues: [variant.value],
+      })),
       telemetrySignals: primaryImage ? ["parsed"] : ["parsed", "low_quality"],
     },
   };
@@ -710,6 +732,7 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
   const warehouseCountry =
     toNonEmptyString(inventories[0]?.countryCode) ?? toNonEmptyString(inventories[0]?.countryNameEn);
   const shippingEvidence = buildCjDetailShippingEvidence(detail, warehouseCountry);
+  const variantMapping = buildCjVariantMapping(detail.stanProducts);
 
   const product: SupplierProduct = {
     title,
@@ -744,6 +767,7 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       priceMax,
       currency: "USD",
       sku: toNonEmptyString(detail.SKU),
+      variantMapping,
       availabilitySignal,
       availabilityConfidence,
       availabilityEvidencePresent: stockCount != null,

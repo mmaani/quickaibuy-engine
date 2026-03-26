@@ -77,6 +77,11 @@ export function validateListingReadyImageState(
   };
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
 export async function markListingReadyToPublish(
   input: MarkListingReadyInput
 ): Promise<MarkListingReadyResult> {
@@ -133,6 +138,9 @@ export async function markListingReadyToPublish(
   const listingTitle = String(row.listingTitle ?? "").trim() || null;
   const supplierKey = String(row.supplierKey ?? "").trim() || null;
   const supplierProductId = String(row.supplierProductId ?? "").trim() || null;
+  const payloadSource = asObject(payload?.source);
+  const payloadSupplierKey = String(payloadSource?.supplierKey ?? "").trim() || null;
+  const payloadSupplierProductId = String(payloadSource?.supplierProductId ?? "").trim() || null;
   const decisionStatus = String(row.decisionStatus ?? "");
   const listingEligible = Boolean(row.listingEligible);
   const matchStatus = String(row.matchStatus ?? "").trim().toUpperCase() || null;
@@ -185,6 +193,17 @@ export async function markListingReadyToPublish(
       marketplaceKey,
       previousStatus,
       reason: "candidate is not listing eligible",
+    };
+  }
+
+  if (!supplierKey || !supplierProductId || !payloadSupplierKey || !payloadSupplierProductId) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: "supplier linkage is incomplete: supplierKey and supplierProductId must exist on both candidate and listing payload",
     };
   }
 

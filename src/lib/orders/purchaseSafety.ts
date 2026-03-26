@@ -4,6 +4,7 @@ import { getAdminOrderDetail, type AdminOrderDetail } from "./getAdminOrdersPage
 
 export type OrderPurchaseSafetyStatusCode =
   | "VALIDATION_NEEDED"
+  | "BLOCKED_SUPPLIER_LINKAGE_REQUIRED"
   | "BLOCKED_STALE_DATA"
   | "BLOCKED_SUPPLIER_DRIFT"
   | "BLOCKED_ECONOMICS_OUT_OF_BOUNDS"
@@ -38,7 +39,23 @@ function pickCandidateLink(detail: AdminOrderDetail): { candidateId: string | nu
   return { candidateId: null, listingId: null };
 }
 
+function hasSupplierLinkage(detail: AdminOrderDetail): boolean {
+  return detail.items.some((item) => {
+    const supplierKey = String(item.supplierKey ?? "").trim();
+    const supplierProductId = String(item.supplierProductId ?? "").trim();
+    return Boolean(supplierKey && supplierProductId);
+  });
+}
+
 function statusFromReasons(reasons: string[]): OrderPurchaseSafetyStatusCode {
+  if (
+    reasons.includes("ORDER_SUPPLIER_LINKAGE_REQUIRED") ||
+    reasons.includes("MISSING_SUPPLIER_PRODUCT_ID") ||
+    reasons.includes("MISSING_SUPPLIER_KEY")
+  ) {
+    return "BLOCKED_SUPPLIER_LINKAGE_REQUIRED";
+  }
+
   const hasStale =
     reasons.includes("STALE_SUPPLIER_SNAPSHOT") || reasons.includes("STALE_MARKETPLACE_SNAPSHOT");
   if (hasStale) return "BLOCKED_STALE_DATA";
@@ -85,6 +102,16 @@ function mapStatusPresentation(status: OrderPurchaseSafetyStatusCode): {
       technicalLabel: "STALE_SNAPSHOT_BLOCK",
       hint: "Validation needed before purchase.",
       secondaryHint: "Refresh data, then re-check supplier price before purchase.",
+      manualReviewRequired: true,
+    };
+  }
+
+  if (status === "BLOCKED_SUPPLIER_LINKAGE_REQUIRED") {
+    return {
+      label: "Blocked - supplier linkage required",
+      technicalLabel: "SUPPLIER_LINKAGE_BLOCK",
+      hint: "Auto purchase must stay blocked until the order resolves to a supplier and supplier product.",
+      secondaryHint: "Re-sync order linkage from listing preview or repair candidate linkage before purchase approval.",
       manualReviewRequired: true,
     };
   }
@@ -198,6 +225,23 @@ export async function assertOrderPurchaseSafetyForApproval(input: {
 export async function getOrderPurchaseSafetyStatus(
   detail: AdminOrderDetail
 ): Promise<OrderPurchaseSafetyStatus> {
+  if (!hasSupplierLinkage(detail)) {
+    const presentation = mapStatusPresentation("BLOCKED_SUPPLIER_LINKAGE_REQUIRED");
+    return {
+      status: "BLOCKED_SUPPLIER_LINKAGE_REQUIRED",
+      label: presentation.label,
+      technicalLabel: presentation.technicalLabel,
+      hint: presentation.hint,
+      secondaryHint: presentation.secondaryHint,
+      manualReviewRequired: presentation.manualReviewRequired,
+      checkedAt: null,
+      reasons: ["ORDER_SUPPLIER_LINKAGE_REQUIRED", "MISSING_SUPPLIER_PRODUCT_ID"],
+      candidateId: null,
+      listingId: null,
+      futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
+    };
+  }
+
   const link = pickCandidateLink(detail);
   if (!link.candidateId) {
     const presentation = mapStatusPresentation("VALIDATION_NEEDED");

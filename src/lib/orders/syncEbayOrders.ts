@@ -139,8 +139,14 @@ async function resolveListingLinkages(
     SELECT
       l.published_external_id AS "listingExternalId",
       l.id AS "listingId",
-      pc.supplier_key AS "supplierKey",
-      pc.supplier_product_id AS "supplierProductId"
+      COALESCE(
+        NULLIF(BTRIM(pc.supplier_key), ''),
+        NULLIF(BTRIM(l.payload -> 'source' ->> 'supplierKey'), '')
+      ) AS "supplierKey",
+      COALESCE(
+        NULLIF(BTRIM(pc.supplier_product_id), ''),
+        NULLIF(BTRIM(l.payload -> 'source' ->> 'supplierProductId'), '')
+      ) AS "supplierProductId"
     FROM listings l
     LEFT JOIN profitable_candidates pc
       ON pc.id = l.candidate_id

@@ -254,11 +254,18 @@ function evaluatePreviewReadiness(row: ListingQueueRow): {
   if (!payload) {
     missing.push("payload");
   } else if (normalizeMarketplaceKey(row.marketplace_key) === "ebay") {
+    const source = asObject(payload.source);
     const shipFromCountry = String(payload.shipFromCountry ?? "").trim();
     if (!shipFromCountry) {
       missing.push("payload.shipFromCountry");
     } else if (!/^[A-Z]{2}$/.test(shipFromCountry)) {
       missing.push("payload.shipFromCountry (ISO-3166 alpha-2 required)");
+    }
+    if (!String(source?.supplierKey ?? "").trim()) {
+      missing.push("payload.source.supplierKey");
+    }
+    if (!String(source?.supplierProductId ?? "").trim()) {
+      missing.push("payload.source.supplierProductId");
     }
     const imageNormalization = asObject(response?.imageNormalization);
     if (imageNormalization?.ok !== true) {
