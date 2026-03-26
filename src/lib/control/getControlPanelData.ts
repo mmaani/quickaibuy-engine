@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Queue } from "bullmq";
 import { db } from "@/lib/db";
-import { resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
+import { getQueueNamespaceDiagnostics, resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { getUpstreamRecurringScheduleSnapshot } from "@/lib/jobs/enqueueUpstreamSchedules";
@@ -287,6 +287,23 @@ export type ControlPanelData = {
       };
     };
   workerQueueHealth: {
+    workerAlive: boolean;
+    lastSuccessfulWorkerActivityTs: string | null;
+    staleStages: string[];
+    queueNamespace: {
+      environment: string;
+      bullPrefix: string;
+      jobsQueueName: string;
+      explicitBullPrefix: boolean;
+      explicitJobsQueueName: boolean;
+      mismatch: boolean;
+    };
+    listingPerformanceFreshness: {
+      state: "fresh" | "stale" | "missing";
+      latestSuccessTs: string | null;
+      rowsPresent: number | null;
+      detail: string;
+    };
     upstreamSchedules: Array<{
       stage: string;
       jobName: string;
@@ -1302,6 +1319,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const publishRateLimit = await getPublishRateLimitState("ebay");
   const inventoryRiskSchedule = await getInventoryRiskScheduleStatus();
   const upstreamScheduleSnapshot = await getUpstreamRecurringScheduleSnapshot().catch(() => []);
+  const queueNamespaceDiagnostics = getQueueNamespaceDiagnostics();
   const profitableCandidatesHasListingEligible = profitableCandidatesExists
     ? await columnExists("profitable_candidates", "listing_eligible")
     : false;
@@ -1380,6 +1398,51 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       )
     : null;
 
+  const lastSuccessfulWorkerActivityTs = workerRunsExists
+    ? toStr(
+        (
+          await runQuery(`
+            select max(${workerRunsOrderExpr}) as ts
+            from worker_runs
+            where upper(coalesce(status, '')) = 'SUCCEEDED'
+          `)
+        )[0]?.ts
+      )
+    : null;
+  const listingPerformanceRowsPresent = (toNum(listingPerformanceSummary.listing_performance_rows_present) ?? 0) > 0;
+  const listingPerformanceRowsPresentCount = toNum(listingPerformanceSummary.listing_performance_rows_present);
+  const latestListingPerformanceSuccessTs = workerRunsExists
+    ? toStr(
+        (
+          await runQuery(`
+            select max(${workerRunsOrderExpr}) as ts
+            from worker_runs
+            where worker = 'jobs.worker'
+              and job_name = 'LISTING_OPTIMIZE'
+              and upper(coalesce(status, '')) = 'SUCCEEDED'
+          `)
+        )[0]?.ts
+      )
+    : null;
+  const listingPerformanceFreshnessState: ControlPanelData["workerQueueHealth"]["listingPerformanceFreshness"]["state"] =
+    !latestListingPerformanceSuccessTs || !listingPerformanceRowsPresent
+      ? "missing"
+      : Date.now() - new Date(latestListingPerformanceSuccessTs).getTime() > 8 * 60 * 60 * 1000
+        ? "stale"
+        : "fresh";
+  const listingPerformanceFreshnessDetail =
+    listingPerformanceFreshnessState === "fresh"
+      ? "LISTING_OPTIMIZE has recent success and listingPerformance rows are present."
+      : listingPerformanceFreshnessState === "stale"
+        ? "LISTING_OPTIMIZE ran before, but the last successful listing-performance pass is older than 8 hours."
+        : "LISTING_OPTIMIZE success or listingPerformance rows are still missing.";
+  const queueNamespaceMismatch =
+    queueNamespaceDiagnostics.environment !== "production" ||
+    queueNamespaceDiagnostics.bullPrefix !== "qaib-prod" ||
+    queueNamespaceDiagnostics.jobsQueueName !== "jobs-prod" ||
+    !queueNamespaceDiagnostics.explicitBullPrefix ||
+    !queueNamespaceDiagnostics.explicitJobsQueueName;
+
   const configuredStages = upstreamScheduleSnapshot.filter((item) => item.active).length;
   const missingStages = upstreamScheduleSnapshot.filter((item) => !item.active).map((item) => item.stage);
   const workerState: ControlPanelData["workerQueueHealth"]["workerState"] = !recentWorkerActivityTs
@@ -1387,6 +1450,14 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     : Date.now() - new Date(recentWorkerActivityTs).getTime() > 30 * 60 * 1000
       ? "stale"
       : "healthy";
+  const stagesMissingNextRun = upstreamScheduleSnapshot
+    .filter((item) => item.active && !item.nextRun)
+    .map((item) => item.stage);
+  const staleStages = [
+    ...(workerState !== "healthy" ? ["worker_activity"] : []),
+    ...missingStages,
+    ...stagesMissingNextRun,
+  ];
   const workerStateDetail =
     workerState === "healthy"
       ? "Recent worker activity is within the last 30 minutes."
@@ -1972,6 +2043,34 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     }
   }
 
+  if (missingStages.length > 0 || stagesMissingNextRun.length > 0) {
+    const affectedStages = Array.from(new Set([...missingStages, ...stagesMissingNextRun]));
+    operationalFreshnessAlerts.push({
+      id: "upstream-schedule-drift",
+      tone: "error",
+      title: "Upstream schedule drift detected",
+      detail: `Affected stages: ${affectedStages.join(", ")}.`,
+    });
+  }
+
+  if (queueNamespaceMismatch) {
+    operationalFreshnessAlerts.push({
+      id: "queue-namespace-mismatch",
+      tone: "error",
+      title: "Queue namespace mismatch",
+      detail: `Runtime is using ${queueNamespaceDiagnostics.bullPrefix}/${queueNamespaceDiagnostics.jobsQueueName} in ${queueNamespaceDiagnostics.environment}. Expected qaib-prod/jobs-prod with explicit production env vars.`,
+    });
+  }
+
+  if (listingPerformanceFreshnessState !== "fresh") {
+    operationalFreshnessAlerts.push({
+      id: "listing-performance-freshness",
+      tone: listingPerformanceFreshnessState === "missing" ? "warning" : "error",
+      title: "Listing performance freshness lagging",
+      detail: listingPerformanceFreshnessDetail,
+    });
+  }
+
   const approvedWithoutPreview = profitableCandidatesExists && listingsExists
     ? toNum(
         (
@@ -2019,7 +2118,6 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
             ? "Matching is live but profitable candidates are still not materializing."
             : "Worker, supplier, marketplace, and profitability freshness all look live.";
 
-  const listingPerformanceRowsPresent = (toNum(listingPerformanceSummary.listing_performance_rows_present) ?? 0) > 0;
   const revenueState: ControlPanelData["workerQueueHealth"]["revenueState"] =
     (activeListings ?? 0) === 0 || ((firstSaleCandidates.length > 0 || listingPerformanceRowsPresent) && workerState === "healthy")
       ? "ready"
@@ -2295,6 +2393,23 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       publishRateLimit,
     },
     workerQueueHealth: {
+      workerAlive: workerState === "healthy",
+      lastSuccessfulWorkerActivityTs,
+      staleStages,
+      queueNamespace: {
+        environment: queueNamespaceDiagnostics.environment,
+        bullPrefix: queueNamespaceDiagnostics.bullPrefix,
+        jobsQueueName: queueNamespaceDiagnostics.jobsQueueName,
+        explicitBullPrefix: queueNamespaceDiagnostics.explicitBullPrefix,
+        explicitJobsQueueName: queueNamespaceDiagnostics.explicitJobsQueueName,
+        mismatch: queueNamespaceMismatch,
+      },
+      listingPerformanceFreshness: {
+        state: listingPerformanceFreshnessState,
+        latestSuccessTs: latestListingPerformanceSuccessTs,
+        rowsPresent: listingPerformanceRowsPresentCount,
+        detail: listingPerformanceFreshnessDetail,
+      },
       upstreamSchedules: upstreamScheduleSnapshot,
       configuredStages,
       missingStages,

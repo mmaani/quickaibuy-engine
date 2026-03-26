@@ -1135,9 +1135,14 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
         <Section title="Worker Health">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="upstream schedules configured" value={`${data.workerQueueHealth.configuredStages}`} />
+            <StatCard label="worker alive" value={data.workerQueueHealth.workerAlive ? "yes" : "no"} />
             <StatCard label="worker state" value={data.workerQueueHealth.workerState} />
             <StatCard label="pipeline state" value={data.workerQueueHealth.pipelineState} />
             <StatCard label="revenue state" value={data.workerQueueHealth.revenueState} />
+            <StatCard label="last successful worker ts" value={data.workerQueueHealth.lastSuccessfulWorkerActivityTs ?? "none"} />
+            <StatCard label="stale stages" value={data.workerQueueHealth.staleStages.length} />
+            <StatCard label="listing_performance freshness" value={data.workerQueueHealth.listingPerformanceFreshness.state} />
+            <StatCard label="namespace mismatch" value={data.workerQueueHealth.queueNamespace.mismatch ? "yes" : "no"} />
             <StatCard label="worker successes (24h)" value={data.workerQueueHealth.recentSuccessCount24h ?? "n/a"} />
             <StatCard label="worker failures (24h)" value={data.workerQueueHealth.recentFailureCount24h ?? "n/a"} />
             <StatCard label="recent activity ts" value={data.workerQueueHealth.recentWorkerActivityTs ?? "none"} />
@@ -1155,6 +1160,18 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
               <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">revenue detail</div>
               <div className="mt-2">{data.workerQueueHealth.revenueStateDetail}</div>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">listing performance freshness</div>
+              <div className="mt-2">{data.workerQueueHealth.listingPerformanceFreshness.detail}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">queue namespace</div>
+              <div className="mt-2">
+                {data.workerQueueHealth.queueNamespace.environment} / {data.workerQueueHealth.queueNamespace.bullPrefix} / {data.workerQueueHealth.queueNamespace.jobsQueueName}
+              </div>
             </div>
           </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
