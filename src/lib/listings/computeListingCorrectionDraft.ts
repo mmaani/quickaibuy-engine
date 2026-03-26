@@ -63,6 +63,13 @@ export function computeListingCorrectionDraft(input: {
     riskFlags.add("LIVE_CATEGORY_DRIFT");
   }
 
+  const liveCategoryName = normalizeValue(input.liveListing.categoryName ?? null);
+  const verifiedCategoryName = normalizeValue(input.verifiedPack.verified_category_name);
+  if (valuesDiffer(liveCategoryName, verifiedCategoryName)) {
+    pushMismatch("category_name", liveCategoryName, verifiedCategoryName, "live category name differs from verified category");
+    riskFlags.add("LIVE_CATEGORY_NAME_DRIFT");
+  }
+
   const liveDescription = normalizeValue(input.liveListing.description);
   const verifiedDescription = normalizeValue(input.verifiedPack.verified_description);
   if (valuesDiffer(liveDescription, verifiedDescription)) {

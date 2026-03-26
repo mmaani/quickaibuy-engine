@@ -274,7 +274,10 @@ export function applyEvidenceBackedListingCorrections(rawPack: unknown, input: V
   const riskFlags = Array.from(new Set([...validation.data.risk_flags, ...category.riskFlags]));
   const supportedSpecificCount = LISTING_SPECIFIC_KEYS.filter((key) => Boolean(sanitizedSpecifics.itemSpecifics[key])).length;
   const supportedSpecificRatio = supportedSpecificCount / LISTING_SPECIFIC_KEYS.length;
-  const verificationConfidence = Math.min(validation.data.verification_confidence, supportedSpecificRatio);
+  const verificationConfidence = Math.min(
+    validation.data.verification_confidence,
+    Math.max(0.35, supportedSpecificRatio)
+  );
   if (verificationConfidence < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD) {
     riskFlags.push("VERIFICATION_CONFIDENCE_LOW");
   }

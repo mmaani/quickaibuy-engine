@@ -119,6 +119,7 @@ const audit = auditLiveEbayListing({
     listingId: "live-1",
     title: "Portable USB Fan Modern Leafless Mini Fan for Travel",
     categoryId: "20612",
+    categoryName: "Portable Fans",
     description: "Portable cooling with a modern design and USB charging.",
     itemSpecifics: {
       connectivity: "USB",
@@ -133,6 +134,10 @@ assert(audit.auditStatus === "REVIEW_REQUIRED", "live audit must remain review o
 assert(audit.manualApprovalRequired === true, "manual approval must be required");
 assert(audit.correctionDraft.autoApply === false, "live corrections must not auto-apply");
 assert(audit.correctionDraft.mismatchCount >= 2, "audit should detect live drift against verified preview");
+assert(
+  audit.correctionDraft.mismatches.some((entry) => entry.field === "category_name"),
+  "audit should detect category name drift"
+);
 
 console.log(
   JSON.stringify(
