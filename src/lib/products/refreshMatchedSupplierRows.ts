@@ -166,7 +166,7 @@ export async function refreshMatchedSupplierRows(input?: {
       for (const candidate of approvedCandidates) {
         try {
           const prepared = await prepareListingPreviewForCandidate(candidate.candidateId, {
-            marketplace: String(candidate.marketplaceKey).trim().toLowerCase() === "amazon" ? "amazon" : "ebay",
+            marketplace: "ebay",
             forceRefresh: true,
           });
           if (prepared.ok) {

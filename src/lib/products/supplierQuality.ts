@@ -107,8 +107,6 @@ export function classifySupplierSnapshotQuality(input: {
 }): SupplierSnapshotQuality {
   const payload = asObject(input.rawPayload) ?? {};
   const direct = normalizeSupplierSnapshotQuality(payload.snapshotQuality);
-  if (direct) return direct;
-
   const telemetry = normalizeSupplierTelemetry(payload);
   const availabilitySignal = normalizeAvailabilitySignal(
     input.availabilitySignal ?? payload.availabilitySignal ?? payload.availability_status
@@ -134,10 +132,12 @@ export function classifySupplierSnapshotQuality(input: {
     availabilitySignal === "UNKNOWN" &&
     (availabilityConfidence ?? 0) <= 0.25;
 
-  if (fallbackOnly && minimal) return "STUB";
-  if (!listingValid || telemetry.flags.challenge) return minimal ? "STUB" : "LOW";
-
-  if (
+  let inferred: SupplierSnapshotQuality;
+  if (fallbackOnly && minimal) {
+    inferred = "STUB";
+  } else if (!listingValid || telemetry.flags.challenge) {
+    inferred = minimal ? "STUB" : "LOW";
+  } else if (
     sourceUrlPresent &&
     titlePresent &&
     pricePresent &&
@@ -147,20 +147,22 @@ export function classifySupplierSnapshotQuality(input: {
     (shippingEstimates.length > 0 || images.length > 0) &&
     !telemetry.flags.low_quality
   ) {
-    return "HIGH";
-  }
-
-  if (
+    inferred = "HIGH";
+  } else if (
     pricePresent &&
     titlePresent &&
     sourceUrlPresent &&
     (availabilitySignal !== "UNKNOWN" || evidenceQuality === "MEDIUM" || shippingEstimates.length > 0)
   ) {
-    return "MEDIUM";
+    inferred = "MEDIUM";
+  } else if (minimal) {
+    inferred = "STUB";
+  } else {
+    inferred = "LOW";
   }
 
-  if (minimal) return "STUB";
-  return "LOW";
+  if (!direct) return inferred;
+  return qualityRank(direct) > qualityRank(inferred) ? direct : inferred;
 }
 
 export function buildSupplierSnapshotQualityPayload(input: {

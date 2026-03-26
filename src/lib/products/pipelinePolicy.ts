@@ -179,15 +179,31 @@ function normalizeText(...parts: Array<string | null | undefined>): string {
   return parts
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join(" ")
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function includesAny(text: string, keywords: string[]): boolean {
-  return keywords.some((keyword) => text.includes(keyword));
+  return keywords.some((keyword) => {
+    const normalized = keyword.toLowerCase().trim();
+    if (!normalized) return false;
+    if (normalized.includes(" ")) return text.includes(normalized);
+    return new RegExp(`\\b${escapeRegExp(normalized)}\\b`, "i").test(text);
+  });
 }
 
 function countMatches(text: string, keywords: string[]): number {
-  return keywords.filter((keyword) => text.includes(keyword)).length;
+  return keywords.filter((keyword) => {
+    const normalized = keyword.toLowerCase().trim();
+    if (!normalized) return false;
+    if (normalized.includes(" ")) return text.includes(normalized);
+    return new RegExp(`\\b${escapeRegExp(normalized)}\\b`, "i").test(text);
+  }).length;
 }
 
 export function normalizeSupplierQuality(value: string | null | undefined): SupplierSnapshotQuality | null {

@@ -84,15 +84,36 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     titleCompleteness: enrichment.titleCompleteness,
     mediaQualityScore: enrichment.mediaQualityScore,
     shippingPriceExplicit: enrichment.shippingPriceExplicit,
+    shippingCurrency: enrichment.shippingCurrency,
     freeShippingExplicit: enrichment.freeShippingExplicit,
     shippingMethod: enrichment.shippingMethod,
+    shippingSignal: enrichment.shippingSignal,
+    shippingStability: enrichment.shippingStability,
     deliveryEstimateMinDays: enrichment.deliveryEstimateMinDays,
     deliveryEstimateMaxDays: enrichment.deliveryEstimateMaxDays,
+    shipFromCountry: enrichment.shipFromCountry,
+    ship_from_country: enrichment.shipFromCountry,
+    shipFromLocation: enrichment.shipFromLocation,
+    ship_from_location: enrichment.shipFromLocation,
+    stockCount: enrichment.stockCount,
+    evidenceSource: enrichment.evidenceSource,
+    detailQuality: enrichment.detailQuality,
+    enrichmentQuality: enrichment.enrichmentQuality,
+    shippingGuarantees: enrichment.shippingGuarantees,
     shippingConfidence: enrichment.shippingConfidence,
     pageIntegrityActionable: enrichment.pageIntegrityActionable,
     actionableSnapshot: enrichment.actionableSnapshot,
     supplierRowDecision: enrichment.supplierRowDecision,
   });
+  const resolvedSnapshotQuality =
+    product.snapshotQuality === "HIGH" ||
+    quality.snapshotQuality === "HIGH"
+      ? "HIGH"
+      : product.snapshotQuality === "MEDIUM" || quality.snapshotQuality === "MEDIUM"
+        ? "MEDIUM"
+        : product.snapshotQuality === "LOW" || quality.snapshotQuality === "LOW"
+          ? "LOW"
+          : "STUB";
 
   return {
     supplierKey: String(product.platform ?? "").trim().toLowerCase(),
@@ -106,7 +127,10 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     priceMax: product.price,
     availabilityStatus: availabilitySignal,
     shippingEstimates: product.shippingEstimates,
-    rawPayload: sanitizedRawPayload,
+    rawPayload: {
+      ...sanitizedRawPayload,
+      snapshotQuality: resolvedSnapshotQuality,
+    },
     snapshotTs,
   };
 }

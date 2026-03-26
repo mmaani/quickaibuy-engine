@@ -293,6 +293,9 @@ function deriveAliExpressShipping(
   shippingEstimates: SupplierProduct["shippingEstimates"];
   evidenceText: string | null;
   shipsFromHint: string | null;
+  shipFromCountry: string | null;
+  shipFromLocation: string | null;
+  shippingGuarantee: string | null;
   signal: "DIRECT" | "INFERRED" | "MISSING";
   shippingConfidence: number;
   shippingMethod: string | null;
@@ -325,6 +328,9 @@ function deriveAliExpressShipping(
     shippingEstimates,
     evidenceText: shipping.evidenceText ?? shippingMethod,
     shipsFromHint: shipping.shipsFromHint,
+    shipFromCountry: shipping.shipFromCountry,
+    shipFromLocation: shipping.shipFromLocation,
+    shippingGuarantee: shipping.shippingGuarantee,
     signal:
       shipping.signal !== "MISSING"
         ? shipping.signal
@@ -413,8 +419,16 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
         shippingSignal: shipping.signal,
         shippingEvidenceText: shipping.evidenceText,
         shipsFromHint: shipping.shipsFromHint,
+        shipFromCountry: shipping.shipFromCountry,
+        ship_from_country: shipping.shipFromCountry,
+        shipFromLocation: shipping.shipFromLocation,
+        ship_from_location: shipping.shipFromLocation,
+        shippingGuarantee: shipping.shippingGuarantee,
         listingValidity: listingValidity.status,
         listingValidityReason: listingValidity.reason,
+        evidenceSource: "product_detail",
+        detailQuality: fetched.mode === "direct" ? "HIGH" : "MEDIUM",
+        enrichmentQuality: shipping.signal === "DIRECT" ? "HIGH" : "MEDIUM",
         detailTextSample: sliceEvidence(fetched.text),
         crawlStatus: "PARSED",
         telemetrySignals: ["parsed"],
@@ -497,6 +511,11 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
         shippingMethod: shipping.shippingMethod,
         shippingConfidence: shipping.shippingConfidence,
         shipsFromHint: shipping.shipsFromHint,
+        shipFromCountry: shipping.shipFromCountry,
+        ship_from_country: shipping.shipFromCountry,
+        shipFromLocation: shipping.shipFromLocation,
+        ship_from_location: shipping.shipFromLocation,
+        shippingGuarantee: shipping.shippingGuarantee,
         ratingValue: merchandising.rating,
         soldCount: merchandising.soldCount,
         soldText: merchandising.soldText,
@@ -504,6 +523,9 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
         mediaQualityScore: images.length >= 5 ? 0.9 : images.length >= 4 ? 0.84 : images.length >= 2 ? 0.66 : 0.45,
         listingValidity: listingValidity.status,
         listingValidityReason: listingValidity.reason,
+        evidenceSource: "search_card",
+        detailQuality: "LOW",
+        enrichmentQuality: shipping.signal === "DIRECT" ? "MEDIUM" : "LOW",
         nearbyTextSample: sliceEvidence(nearbyText),
         crawlStatus: "PARSED",
         telemetrySignals: ["parsed"],

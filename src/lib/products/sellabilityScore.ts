@@ -61,11 +61,24 @@ const CLARITY_KEYWORDS = [
 ];
 
 function toText(...parts: Array<string | null | undefined>): string {
-  return parts.filter(Boolean).join(" ").toLowerCase();
+  return parts
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function countMatches(text: string, keywords: string[]): number {
-  return keywords.filter((keyword) => text.includes(keyword)).length;
+  return keywords.filter((keyword) => {
+    const normalizedKeyword = keyword.toLowerCase().trim();
+    if (!normalizedKeyword) return false;
+    if (normalizedKeyword.includes(" ")) {
+      return text.includes(normalizedKeyword);
+    }
+    const pattern = new RegExp(`\\b${normalizedKeyword.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b`, "i");
+    return pattern.test(text);
+  }).length;
 }
 
 function scoreDemand(text: string): { score: number; reason: string } {
@@ -86,7 +99,12 @@ function scoreVisual(imageUrl: string | null, additionalImageCount: number): { s
   }
 
   score += 10;
-  if (/s-l(960|1200|1400|1600)/i.test(imageUrl)) score += 8;
+  if (/(s-l(960|1200|1400|1600)|[._-](960|1200|1400|1600)x(960|1200|1400|1600)|\/(960|1200|1400|1600)x(960|1200|1400|1600))/i.test(imageUrl)) {
+    score += 8;
+  }
+  else if (/(480x480|640x640|750x750|800x800|1080x1080|1200x1200|_q90|\.webp|\.avif)/i.test(imageUrl)) {
+    score += 6;
+  }
   else if (/s-l225/i.test(imageUrl)) {
     score += 2;
     penalties.push("low-resolution primary image");

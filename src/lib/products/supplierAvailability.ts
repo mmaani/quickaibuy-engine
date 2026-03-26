@@ -103,8 +103,7 @@ export function inferAvailabilityFromText(text: string): {
     compact.includes("ready to ship") ||
     compact.includes("ships within") ||
     compact.includes("inventory available") ||
-    compact.includes("stock available") ||
-    compact.includes("ships from")
+    compact.includes("stock available")
   ) {
     return { signal: "IN_STOCK", confidence: 0.7 };
   }

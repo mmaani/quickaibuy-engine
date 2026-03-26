@@ -31,6 +31,16 @@ export type SupplierEnrichment = {
   deliveryEstimateMinDays: number | null;
   deliveryEstimateMaxDays: number | null;
   shippingConfidence: number;
+  shippingSignal: string | null;
+  shippingStability: "HIGH" | "MEDIUM" | "LOW";
+  shippingCurrency: string | null;
+  shipFromCountry: string | null;
+  shipFromLocation: string | null;
+  stockCount: number | null;
+  evidenceSource: string | null;
+  detailQuality: string | null;
+  enrichmentQuality: "HIGH" | "MEDIUM" | "LOW";
+  shippingGuarantees: string | null;
   availabilityStatus: AvailabilitySignal;
   availabilityConfidence: number | null;
   pageIntegrityActionable: boolean;
@@ -63,6 +73,17 @@ function asNumber(value: unknown): number | null {
 function asPositiveNumber(value: unknown): number | null {
   const parsed = asNumber(value);
   return parsed != null && parsed > 0 ? parsed : null;
+}
+
+function normalizeCountryCode(value: unknown): string | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(normalized)) return normalized;
+  if (normalized === "USA" || normalized === "UNITED STATES") return "US";
+  if (normalized === "UK" || normalized === "UNITED KINGDOM") return "GB";
+  if (normalized === "CHINA") return "CN";
+  if (normalized === "POLAND") return "PL";
+  if (normalized === "GERMANY") return "DE";
+  return null;
 }
 
 function sanitizeTitle(value: string | null): string | null {
@@ -136,6 +157,12 @@ function deriveShippingDetails(
   deliveryEstimateMinDays: number | null;
   deliveryEstimateMaxDays: number | null;
   shippingConfidence: number;
+  shippingSignal: string | null;
+  shippingStability: "HIGH" | "MEDIUM" | "LOW";
+  shippingCurrency: string | null;
+  shipFromCountry: string | null;
+  shipFromLocation: string | null;
+  shippingGuarantees: string | null;
 } {
   const directConfidence = normalizeAvailabilityConfidence(rawPayload.shippingConfidence);
   const rawShippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
@@ -144,9 +171,22 @@ function deriveShippingDetails(
     asString(rawPayload.shippingBadge) ??
     asString(rawPayload.shippingEvidenceText);
   const directPrice = asString(rawPayload.shippingPriceExplicit);
+  const directCurrency = asString(rawPayload.shippingCurrency);
   const directFree = asBoolean(rawPayload.freeShippingExplicit);
   const directMin = asPositiveNumber(rawPayload.deliveryEstimateMinDays);
   const directMax = asPositiveNumber(rawPayload.deliveryEstimateMaxDays);
+  const directShipFromCountry =
+    normalizeCountryCode(rawPayload.shipFromCountry) ??
+    normalizeCountryCode(rawPayload.ship_from_country) ??
+    normalizeCountryCode(rawPayload.supplierWarehouseCountry) ??
+    normalizeCountryCode(rawPayload.supplier_warehouse_country);
+  const directShipFromLocation =
+    asString(rawPayload.shipFromLocation) ??
+    asString(rawPayload.ship_from_location) ??
+    asString(rawPayload.shipsFromHint);
+  const directShippingGuarantees =
+    asString(rawPayload.shippingGuarantees) ??
+    asString(rawPayload.shippingGuarantee);
 
   const estimate = shippingEstimates.find((candidate) => {
     const label = String(candidate.label ?? "").toLowerCase();
@@ -162,6 +202,7 @@ function deriveShippingDetails(
 
   const label = asString(estimate?.label);
   const shippingPriceExplicit = directPrice ?? asString(estimate?.cost);
+  const shippingCurrency = directCurrency ?? asString(estimate?.currency);
   const freeShippingExplicit =
     directFree ??
     (shippingPriceExplicit != null ? Number(shippingPriceExplicit) === 0 : null) ??
@@ -169,12 +210,16 @@ function deriveShippingDetails(
   const shippingMethod = directMethod ?? label;
   const deliveryEstimateMinDays = directMin ?? estimate?.etaMinDays ?? null;
   const deliveryEstimateMaxDays = directMax ?? estimate?.etaMaxDays ?? null;
+  const shipFromCountry = directShipFromCountry ?? normalizeCountryCode(estimate?.ship_from_country);
+  const shipFromLocation = directShipFromLocation ?? asString(estimate?.ship_from_location);
   const hasShippingEvidence =
     shippingPriceExplicit != null ||
     freeShippingExplicit === true ||
     shippingMethod != null ||
     deliveryEstimateMinDays != null ||
-    deliveryEstimateMaxDays != null;
+    deliveryEstimateMaxDays != null ||
+    shipFromCountry != null ||
+    shipFromLocation != null;
 
   let shippingConfidence =
     directConfidence ??
@@ -194,12 +239,26 @@ function deriveShippingDetails(
     shippingConfidence = 0.82;
   }
 
+  const shippingSignal = rawShippingSignal || (hasShippingEvidence ? "DIRECT" : "MISSING");
+  const shippingStability =
+    shippingConfidence >= 0.85 && (deliveryEstimateMinDays != null || shipFromCountry != null)
+      ? "HIGH"
+      : shippingConfidence >= 0.6
+        ? "MEDIUM"
+        : "LOW";
+
   return {
     shippingPriceExplicit,
     freeShippingExplicit,
     shippingMethod,
     deliveryEstimateMinDays,
     deliveryEstimateMaxDays,
+    shippingSignal,
+    shippingStability,
+    shippingCurrency,
+    shipFromCountry,
+    shipFromLocation,
+    shippingGuarantees: directShippingGuarantees,
     shippingConfidence: clamp01(shippingConfidence),
   };
 }
@@ -231,6 +290,21 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
   const availabilityConfidence = normalizeAvailabilityConfidence(
     input.availabilityConfidence ?? rawPayload.availabilityConfidence
   );
+  const stockCount = asPositiveNumber(rawPayload.stockCount);
+  const evidenceSource =
+    asString(rawPayload.evidenceSource) ??
+    asString(rawPayload.provider) ??
+    asString(rawPayload.parseMode);
+  const detailQuality =
+    asString(rawPayload.detailQuality) ??
+    asString(rawPayload.detailFetchMode) ??
+    asString(rawPayload.enrichmentQuality);
+  const enrichmentQuality: "HIGH" | "MEDIUM" | "LOW" =
+    shipping.shippingConfidence >= 0.85 && (availabilityConfidence ?? 0) >= 0.7
+      ? "HIGH"
+      : shipping.shippingConfidence >= 0.6 || (availabilityConfidence ?? 0) >= 0.6
+        ? "MEDIUM"
+        : "LOW";
 
   let supplierRowDecision: SupplierRowDecision = "MANUAL_REVIEW";
   if (!actionableSnapshot) {
@@ -257,6 +331,16 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
     deliveryEstimateMinDays: shipping.deliveryEstimateMinDays,
     deliveryEstimateMaxDays: shipping.deliveryEstimateMaxDays,
     shippingConfidence: shipping.shippingConfidence,
+    shippingSignal: shipping.shippingSignal,
+    shippingStability: shipping.shippingStability,
+    shippingCurrency: shipping.shippingCurrency,
+    shipFromCountry: shipping.shipFromCountry,
+    shipFromLocation: shipping.shipFromLocation,
+    stockCount,
+    evidenceSource,
+    detailQuality,
+    enrichmentQuality,
+    shippingGuarantees: shipping.shippingGuarantees,
     availabilityStatus,
     availabilityConfidence,
     pageIntegrityActionable,

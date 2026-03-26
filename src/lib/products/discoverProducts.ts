@@ -28,13 +28,10 @@ export type ProductDiscoverResult = {
   markets: string[];
 };
 
-const MARKETPLACES = ["amazon", "ebay", "temu", "aliexpress", "alibaba"];
+const MARKETPLACES = ["ebay", "temu", "aliexpress", "alibaba"];
 
 function isStubProductDiscoverEnabled(): boolean {
-  return (
-    process.env.ENABLE_STUB_PRODUCT_DISCOVER === "true" ||
-    process.env.NODE_ENV === "development"
-  );
+  return process.env.ENABLE_STUB_PRODUCT_DISCOVER === "true";
 }
 
 function hashToInt(input: string): number {
