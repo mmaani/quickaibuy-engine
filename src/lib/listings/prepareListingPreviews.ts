@@ -9,6 +9,7 @@ import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
 } from "./duplicateProtection";
+import { markListingReadyToPublish } from "./markListingReadyToPublish";
 import { normalizeEbayListingImages } from "./normalizeEbayImages";
 import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
@@ -310,7 +311,7 @@ async function processCandidatePreviewRows(
 > {
   let created = 0;
   let updated = 0;
-  const ready = 0;
+  let ready = 0;
   const reconciled = await reconcileIneligibleReadyListings(context);
   let skipped = 0;
   let failed = 0;
@@ -637,6 +638,34 @@ async function processCandidatePreviewRows(
         },
       });
       continue;
+    }
+
+    if (context.marketplace === "ebay") {
+      const readyResult = await markListingReadyToPublish({
+        listingId,
+        actorId: context.actorId,
+        actorType: context.actorType,
+      });
+
+      if (readyResult.ok) {
+        ready++;
+        continue;
+      }
+
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: listingId,
+        eventType: "LISTING_AUTO_READY_SKIPPED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          source: context.source,
+          reason: readyResult.reason ?? "ready-to-publish checks did not pass",
+        },
+      });
     }
 
     await writeAuditLog({

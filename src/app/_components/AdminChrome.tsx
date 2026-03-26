@@ -58,7 +58,7 @@ export function AdminFooter() {
   return (
     <footer className="admin-footer">
       <div>QuickAIBuy admin surfaces follow canonical DB and worker truth.</div>
-      <div>Manual approval before live publish remains required.</div>
+      <div>Automation handles routine flow; use one daily exception review before live publish.</div>
     </footer>
   );
 }

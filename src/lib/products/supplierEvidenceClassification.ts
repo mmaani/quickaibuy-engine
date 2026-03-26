@@ -164,6 +164,12 @@ export function classifySupplierEvidence(
 
   const orderedCodes = sortCodes(codes);
   const dominantCode = orderedCodes[0] ?? null;
+  const blockingOrManualReviewCodes = new Set<SupplierEvidenceReasonCode>([
+    "SOURCE_PROVIDER_BLOCK",
+    "SOURCE_CHALLENGE_PAGE",
+    "SUPPLIER_BLOCKED",
+    "SUPPLIER_OUT_OF_STOCK",
+  ]);
   return {
     codes: orderedCodes,
     dominantCode,
@@ -173,7 +179,7 @@ export function classifySupplierEvidence(
       code === "SUPPLIER_BLOCKED" ||
       code === "SUPPLIER_OUT_OF_STOCK"
     ),
-    manualReview: orderedCodes.length > 0,
+    manualReview: orderedCodes.some((code) => blockingOrManualReviewCodes.has(code)),
   };
 }
 

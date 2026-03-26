@@ -1788,7 +1788,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       id: "ready-for-repromotion",
       label: "Ready for re-promotion",
       technicalLabel: "REPROMOTION_READY",
-      hint: "Promote from PREVIEW to READY_TO_PUBLISH when checks pass.",
+      hint: "Auto-promotion now attempts PREVIEW to READY_TO_PUBLISH; use manual promotion only as fallback.",
       severity: "info",
     });
   }

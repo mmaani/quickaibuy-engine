@@ -91,6 +91,7 @@ type CandidateOption = {
 
 // Supplier drift threshold for post-approval protection.
 const SUPPLIER_DRIFT_MANUAL_REVIEW_PCT = 15;
+const PIPELINE_HARD_BLOCK_FLAGS = new Set(["HARD_EXCLUDE", "BRAND_RISK", "HIGH_RISK_ELECTRONICS"]);
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -549,16 +550,17 @@ export async function runProfitEngine(input?: {
     });
     const supplierEvidenceCodes = supplierEvidence.codes;
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
+    const pipelineHardBlocked = pipeline.flags.some((flag) => PIPELINE_HARD_BLOCK_FLAGS.has(flag));
     const automationSafe =
       !staleMarketplaceSnapshot &&
       !supplierDriftExceeded &&
       !supplierEvidence.manualReview &&
       !marginOrRoiFailed &&
-      pipeline.eligible;
+      !pipelineHardBlocked;
     const decisionStatus =
       staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview
         ? "MANUAL_REVIEW"
-        : marginOrRoiFailed || pipeline.manualReview
+        : marginOrRoiFailed || pipelineHardBlocked
           ? "MANUAL_REVIEW"
           : automationSafe
             ? "APPROVED"
@@ -568,11 +570,11 @@ export async function runProfitEngine(input?: {
       ? `marketplace snapshot age ${marketplaceSnapshotAgeHours}h exceeds ${maxMarketplaceSnapshotAgeHours}h`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
-      : supplierEvidenceCodes.length
+      : supplierEvidence.manualReview && supplierEvidenceCodes.length
         ? formatSupplierEvidenceBlockReason(supplierEvidenceCodes)
           : marginOrRoiFailed
             ? `profit guard requires margin >= ${minMarginPct}% and roi >= ${minRoiPct}%`
-            : pipeline.manualReview
+            : pipelineHardBlocked
               ? `pipeline policy requires manual review: ${pipeline.penalties.join(", ")}`
               : null;
     const riskFlags =
@@ -608,12 +610,14 @@ export async function runProfitEngine(input?: {
       ? `marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} > ${maxMarketplaceSnapshotAgeHours} | roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
-      : supplierEvidenceCodes.length
+      : supplierEvidence.manualReview && supplierEvidenceCodes.length
         ? `supplier evidence review required | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
       : marginOrRoiFailed
         ? `margin ${marginPct}% / roi ${roiPct}% below required margin ${minMarginPct}% roi ${minRoiPct}%`
-        : pipeline.manualReview
+        : pipelineHardBlocked
           ? `pipeline manual review | score ${pipeline.score} | penalties ${pipeline.penalties.join(", ") || "none"}`
+          : supplierEvidenceCodes.length
+            ? `automated with supplier evidence warnings | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
           : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | pipeline_score ${pipeline.score} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
 
     candidateOptions.push({
