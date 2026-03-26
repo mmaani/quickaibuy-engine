@@ -2,6 +2,8 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { listings, marketplacePrices, matches, productsRaw, profitableCandidates } from "@/lib/db/schema";
+import { rankProducts } from "@/lib/ai/rankProducts";
+import { isAiListingEngineEnabled } from "@/lib/ai/generateListingPack";
 import { buildListingPreview } from "./build_listing_preview";
 import { buildListingPreviewIdempotencyKey } from "./idempotency";
 import { CATEGORY_CONFIDENCE_THRESHOLD, classifyEbayCategory } from "./ebayCategoryClassifier";
@@ -150,6 +152,19 @@ function dedupeRows(rows: CandidatePreviewSourceRow[]): CandidatePreviewSourceRo
   return Array.from(
     new Map(rows.map((row) => [`${row.candidateId}:${row.marketplaceKey}:${row.marketplaceListingId}`, row])).values()
   );
+}
+
+function rankCandidateRowsForProcessing(
+  rows: CandidatePreviewSourceRow[],
+  marketplace: ListingPreviewMarketplace
+): CandidatePreviewSourceRow[] {
+  if (marketplace !== "ebay" || !isAiListingEngineEnabled()) return rows;
+
+  const feedbackScore = Number(process.env.EBAY_SELLER_FEEDBACK_SCORE ?? process.env.SELLER_FEEDBACK_SCORE ?? "0");
+  return rankProducts(rows, {
+    feedbackScore: Number.isFinite(feedbackScore) ? feedbackScore : 0,
+    policyRiskTolerance: "low",
+  });
 }
 
 async function blockCandidateForManualReview(input: {
@@ -428,7 +443,7 @@ async function processCandidatePreviewRows(
       continue;
     }
 
-    const preview = buildListingPreview(context.marketplace, {
+    const preview = await buildListingPreview(context.marketplace, {
       candidateId: row.candidateId,
       supplierKey: row.supplierKey,
       supplierProductId: row.supplierProductId,
@@ -641,6 +656,28 @@ async function processCandidatePreviewRows(
     }
 
     if (context.marketplace === "ebay") {
+      const aiListing =
+        preview.response && typeof preview.response === "object" && !Array.isArray(preview.response)
+          ? ((preview.response as Record<string, unknown>).aiListing as Record<string, unknown> | undefined)
+          : undefined;
+      if (aiListing && Boolean(aiListing.manualReviewRequired)) {
+        failed++;
+        await blockCandidateForManualReview({
+          candidateId: row.candidateId,
+          actorType: context.actorType,
+          actorId: context.actorId,
+          eventType: "LISTING_AI_MANUAL_REVIEW_REQUIRED",
+          marketplaceKey: context.marketplace,
+          idempotencyKey,
+          blockReason: `AI_LISTING_MANUAL_REVIEW_REQUIRED: ${String(aiListing.reason ?? "unspecified")}`,
+          details: {
+            source: context.source,
+            aiListing,
+          },
+        });
+        continue;
+      }
+
       const readyResult = await markListingReadyToPublish({
         listingId,
         actorId: context.actorId,
@@ -706,8 +743,9 @@ export async function prepareListingPreviews(input?: PrepareListingPreviewsInput
     marketplace,
     limit,
   });
+  const rankedRows = rankCandidateRowsForProcessing(rows, marketplace);
 
-  const processed = await processCandidatePreviewRows(rows, {
+  const processed = await processCandidatePreviewRows(rankedRows, {
     marketplace,
     forceRefresh,
     actorType: "WORKER",
@@ -739,6 +777,7 @@ export async function prepareListingPreviewForCandidate(
     candidateId: normalizedCandidateId,
     marketplace,
   });
+  const rankedRows = rankCandidateRowsForProcessing(rows, marketplace);
 
   if (!rows.length) {
     const existing = await db
@@ -765,7 +804,7 @@ export async function prepareListingPreviewForCandidate(
     );
   }
 
-  const processed = await processCandidatePreviewRows(rows, {
+  const processed = await processCandidatePreviewRows(rankedRows, {
     marketplace,
     forceRefresh,
     actorType: "ADMIN",

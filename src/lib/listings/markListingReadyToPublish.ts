@@ -176,6 +176,22 @@ export async function markListingReadyToPublish(
     };
   }
 
+  const aiListing =
+    response && typeof response.aiListing === "object" && response.aiListing && !Array.isArray(response.aiListing)
+      ? (response.aiListing as Record<string, unknown>)
+      : null;
+  const aiManualReviewRequired = Boolean(aiListing?.manualReviewRequired);
+  if (aiManualReviewRequired) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: `AI listing engine requires manual review: ${String(aiListing?.reason ?? "unspecified")}`,
+    };
+  }
+
   const imageState = validateListingReadyImageState(payload, response);
   if (!imageState.ok) {
     return {
