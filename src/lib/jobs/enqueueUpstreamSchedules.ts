@@ -33,7 +33,7 @@ type StageSchedule = {
 
 const HOUR_MS = 60 * 60 * 1000;
 
-const UPSTREAM_STAGE_SCHEDULES: StageSchedule[] = [
+export const UPSTREAM_STAGE_SCHEDULES: StageSchedule[] = [
   {
     stage: "trend",
     jobName: JOB_NAMES.TREND_EXPAND_REFRESH,
@@ -157,11 +157,22 @@ export async function ensureUpstreamRecurringSchedules() {
     }
   }
 
+  const schedules = await getUpstreamRecurringScheduleSnapshot();
+
+  return {
+    removedCount,
+    createdCount,
+    schedules,
+  };
+}
+
+export async function getUpstreamRecurringScheduleSnapshot() {
   const [repeatableSnapshot, schedulerSnapshot] = await Promise.all([
     jobsQueue.getRepeatableJobs(0, 1000) as Promise<RepeatableEntry[]>,
     jobsQueue.getJobSchedulers(0, 1000) as Promise<SchedulerEntry[]>,
   ]);
-  const schedules = UPSTREAM_STAGE_SCHEDULES.map((schedule) => {
+
+  return UPSTREAM_STAGE_SCHEDULES.map((schedule) => {
     const matchingRepeatables = repeatableSnapshot.filter((entry) => isDesiredEntry(entry, schedule));
     const matchingSchedulers = schedulerSnapshot.filter((entry) => isDesiredScheduler(entry, schedule));
     const nextRunMs = [...matchingSchedulers, ...matchingRepeatables]
@@ -179,10 +190,4 @@ export async function ensureUpstreamRecurringSchedules() {
       nextRun: Number.isFinite(nextRunMs) ? new Date(nextRunMs).toISOString() : null,
     };
   });
-
-  return {
-    removedCount,
-    createdCount,
-    schedules,
-  };
 }

@@ -42,6 +42,10 @@ async function main() {
           count(*) filter (where upper(status) = 'ACTIVE')::int as active_listings,
           count(*) filter (
             where upper(status) = 'ACTIVE'
+              and (response->'listingPerformance') is not null
+          )::int as listing_performance_rows_present,
+          count(*) filter (
+            where upper(status) = 'ACTIVE'
               and lower(coalesce(response->'listingPerformance'->'readiness'->>'commercialState', '')) = 'dead_listing'
           )::int as dead_listings,
           count(*) filter (
@@ -69,12 +73,28 @@ async function main() {
       `),
     ]);
 
+    const workerRows = freshness.rows;
+    const listingMetrics = listings.rows[0] ?? {};
+    const listingOptimizeRow = workerRows.find((row) => String(row.job_name) === JOB_NAMES.LISTING_OPTIMIZE) ?? null;
+    const latestListingOptimizeTs = String(listingOptimizeRow?.latest_success ?? "").trim();
+    const listingOptimizeRunning =
+      Boolean(latestListingOptimizeTs) &&
+      Number.isFinite(new Date(latestListingOptimizeTs).getTime()) &&
+      Date.now() - new Date(latestListingOptimizeTs).getTime() <= 8 * 60 * 60 * 1000;
+    const listingPerformanceRowsPresent = Number(listingMetrics.listing_performance_rows_present ?? 0) > 0;
+    const revenuePathReady =
+      Number(listingMetrics.active_listings ?? 0) === 0 ||
+      (listingOptimizeRunning && listingPerformanceRowsPresent);
+
     console.log(
       JSON.stringify(
         {
           generatedAt: new Date().toISOString(),
           worker: freshness.rows,
-          listings: listings.rows[0] ?? {},
+          listingOptimizeRunning,
+          listingPerformanceRowsPresent,
+          revenuePathReady,
+          listings: listingMetrics,
         },
         null,
         2

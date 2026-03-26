@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { resolveBullPrefix, resolveJobsQueueName } from "@/lib/queueNamespace";
 import { getPublishRateLimitState } from "@/lib/listings/publishRateLimiter";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
+import { getUpstreamRecurringScheduleSnapshot } from "@/lib/jobs/enqueueUpstreamSchedules";
 import { getManualOverrideSnapshot } from "./manualOverrides";
 import { getMatchQualitySummary } from "./getMatchQualitySummary";
 
@@ -286,6 +287,28 @@ export type ControlPanelData = {
       };
     };
   workerQueueHealth: {
+    upstreamSchedules: Array<{
+      stage: string;
+      jobName: string;
+      everyMs: number;
+      active: boolean;
+      matchedEntries: number;
+      nextRun: string | null;
+    }>;
+    configuredStages: number;
+    missingStages: string[];
+    workerState: "healthy" | "stale" | "inactive";
+    workerStateDetail: string;
+    pipelineState: "healthy" | "warning";
+    pipelineStateDetail: string;
+    revenueState: "ready" | "pending";
+    revenueStateDetail: string;
+    failureClassifications: Array<{
+      scope: string;
+      classification: string;
+      detail: string | null;
+      lastSeen: string | null;
+    }>;
     recentWorkerRuns: Row[];
     recentWorkerFailures: Row[];
     recentJobs: Row[];
@@ -381,6 +404,31 @@ function truncateText(value: string, limit = 120): string {
   const compact = value.replace(/\s+/g, " ").trim();
   if (compact.length <= limit) return compact;
   return `${compact.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function formatMinutes(ageMs: number): string {
+  const minutes = Math.max(0, Math.round(ageMs / (1000 * 60)));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  return `${hours}h`;
+}
+
+function classifyOperatorFailure(raw: string | null): string {
+  const text = String(raw ?? "").trim().toUpperCase();
+  if (!text) return "unknown";
+  if (text.includes("EAI_AGAIN") || text.includes("ENOTFOUND") || text.includes("ECONNREFUSED") || text.includes("ETIMEDOUT")) {
+    return "worker connectivity";
+  }
+  if (text.includes("MISSING") || text.includes("VALIDATION") || text.includes("INVALID")) {
+    return "job payload or validation";
+  }
+  if (text.includes("STALE") || text.includes("FRESH")) {
+    return "freshness gate";
+  }
+  if (text.includes("NO ") || text.includes("EMPTY") || text.includes("NOT FOUND")) {
+    return "source produced no usable data";
+  }
+  return "job runtime failure";
 }
 
 function humanizePublishFailureReason(raw: string | null): string {
@@ -998,6 +1046,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
                 and upper(coalesce(l.status, '')) = 'ACTIVE'
             )
             select
+              count(*) filter (where commercial_state <> '')::int as listing_performance_rows_present,
               count(*) filter (where zero_views)::int as zero_view_listings,
               count(*) filter (where low_traffic)::int as low_traffic_listings,
               count(*) filter (where not title_optimized)::int as title_optimization_needed,
@@ -1252,6 +1301,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const capRemaining = capLimit == null || capUsed == null ? null : Math.max(0, capLimit - capUsed);
   const publishRateLimit = await getPublishRateLimitState("ebay");
   const inventoryRiskSchedule = await getInventoryRiskScheduleStatus();
+  const upstreamScheduleSnapshot = await getUpstreamRecurringScheduleSnapshot().catch(() => []);
   const profitableCandidatesHasListingEligible = profitableCandidatesExists
     ? await columnExists("profitable_candidates", "listing_eligible")
     : false;
@@ -1329,6 +1379,20 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         )[0]?.count
       )
     : null;
+
+  const configuredStages = upstreamScheduleSnapshot.filter((item) => item.active).length;
+  const missingStages = upstreamScheduleSnapshot.filter((item) => !item.active).map((item) => item.stage);
+  const workerState: ControlPanelData["workerQueueHealth"]["workerState"] = !recentWorkerActivityTs
+    ? "inactive"
+    : Date.now() - new Date(recentWorkerActivityTs).getTime() > 30 * 60 * 1000
+      ? "stale"
+      : "healthy";
+  const workerStateDetail =
+    workerState === "healthy"
+      ? "Recent worker activity is within the last 30 minutes."
+      : workerState === "stale"
+        ? `Most recent worker activity is ${formatMinutes(Date.now() - new Date(recentWorkerActivityTs ?? 0).getTime())} old.`
+        : "No recent worker_runs activity detected.";
 
   const recentJobs = jobsExists
     ? await runQuery(`
@@ -1937,6 +2001,51 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     });
   }
 
+  const pipelineState: ControlPanelData["workerQueueHealth"]["pipelineState"] =
+    workerState !== "healthy" ||
+    (recentEbayPrices24h ?? 0) === 0 ||
+    !latestSupplierSnapshotTs ||
+    ((matchQuality.totalMatches ?? 0) > 0 && (toNum(profitStats.total_candidates) ?? 0) === 0)
+      ? "warning"
+      : "healthy";
+  const pipelineStateDetail =
+    workerState !== "healthy"
+      ? "Worker activity is not currently healthy enough to trust autonomous freshness."
+      : (recentEbayPrices24h ?? 0) === 0
+        ? "Marketplace scan has not produced eBay rows in the last 24 hours."
+        : !latestSupplierSnapshotTs
+          ? "Supplier freshness evidence is unavailable."
+          : ((matchQuality.totalMatches ?? 0) > 0 && (toNum(profitStats.total_candidates) ?? 0) === 0)
+            ? "Matching is live but profitable candidates are still not materializing."
+            : "Worker, supplier, marketplace, and profitability freshness all look live.";
+
+  const listingPerformanceRowsPresent = (toNum(listingPerformanceSummary.listing_performance_rows_present) ?? 0) > 0;
+  const revenueState: ControlPanelData["workerQueueHealth"]["revenueState"] =
+    (activeListings ?? 0) === 0 || ((firstSaleCandidates.length > 0 || listingPerformanceRowsPresent) && workerState === "healthy")
+      ? "ready"
+      : "pending";
+  const revenueStateDetail =
+    (activeListings ?? 0) === 0
+      ? "No active eBay listings are live yet, so revenue readiness is not blocked by stale commercial telemetry."
+      : revenueState === "ready"
+        ? "Commercial telemetry is present for active listings."
+        : "Active listings exist, but listing-performance telemetry or first-sale targeting is still incomplete.";
+
+  const failureClassifications = [
+    ...recentWorkerFailures.map((row) => ({
+      scope: "worker_runs",
+      classification: classifyOperatorFailure(toStr(row.error)),
+      detail: toStr(row.error),
+      lastSeen: toStr(row.finished_at) ?? toStr(row.started_at),
+    })),
+    ...recentJobFailures.map((row) => ({
+      scope: toStr(row.job_type) ?? "jobs",
+      classification: classifyOperatorFailure(toStr(row.last_error)),
+      detail: toStr(row.last_error),
+      lastSeen: toStr(row.finished_ts),
+    })),
+  ].slice(0, 10);
+
   if (!ordersExists) {
     futureOrdersAlerts.push({
       id: "orders-placeholder-partial",
@@ -2186,6 +2295,16 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       publishRateLimit,
     },
     workerQueueHealth: {
+      upstreamSchedules: upstreamScheduleSnapshot,
+      configuredStages,
+      missingStages,
+      workerState,
+      workerStateDetail,
+      pipelineState,
+      pipelineStateDetail,
+      revenueState,
+      revenueStateDetail,
+      failureClassifications,
       recentWorkerRuns,
       recentWorkerFailures,
       recentJobs,

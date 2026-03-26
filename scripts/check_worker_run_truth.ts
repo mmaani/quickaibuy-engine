@@ -8,6 +8,7 @@ const STAGES = [
   { stage: "marketplace", names: [JOB_NAMES.SCAN_MARKETPLACE_PRICE] },
   { stage: "matching", names: [JOB_NAMES.MATCH_PRODUCT] },
   { stage: "profit", names: [JOB_NAMES.EVAL_PROFIT] },
+  { stage: "listing_performance", names: [JOB_NAMES.LISTING_OPTIMIZE] },
 ];
 
 function dbUrl() {
@@ -23,6 +24,7 @@ async function main() {
 
   try {
     const summary = [];
+    let recentWorkerActivityTs: string | null = null;
     for (const stage of STAGES) {
       const result = await pool.query(
         `
@@ -45,9 +47,43 @@ async function main() {
         successCount: Number(result.rows[0]?.success_count ?? 0),
         failureCount: Number(result.rows[0]?.failure_count ?? 0),
       });
+
+      const stageLatest = String(result.rows[0]?.latest_success ?? "");
+      if (stageLatest && (!recentWorkerActivityTs || new Date(stageLatest) > new Date(recentWorkerActivityTs))) {
+        recentWorkerActivityTs = stageLatest;
+      }
     }
 
-    console.log(JSON.stringify({ worker: "jobs.worker", summary }, null, 2));
+    const workerAlive =
+      recentWorkerActivityTs != null &&
+      Number.isFinite(new Date(recentWorkerActivityTs).getTime()) &&
+      Date.now() - new Date(recentWorkerActivityTs).getTime() <= 30 * 60 * 1000;
+
+    const staleStages = summary
+      .filter((stage) => {
+        if (!stage.latestSuccess) return true;
+        const latestSuccessTs = new Date(String(stage.latestSuccess)).getTime();
+        if (!Number.isFinite(latestSuccessTs)) return true;
+        const staleThresholdMs = stage.stage === "trend" || stage.stage === "supplier" || stage.stage === "listing_performance"
+          ? 8 * 60 * 60 * 1000
+          : 6 * 60 * 60 * 1000;
+        return Date.now() - latestSuccessTs > staleThresholdMs;
+      })
+      .map((stage) => stage.stage);
+
+    console.log(
+      JSON.stringify(
+        {
+          worker: "jobs.worker",
+          recentWorkerActivityTs,
+          workerAlive,
+          staleStages,
+          summary,
+        },
+        null,
+        2
+      )
+    );
   } finally {
     await pool.end();
   }
@@ -57,4 +93,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

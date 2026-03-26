@@ -1134,10 +1134,32 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
 
         <Section title="Worker Health">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="upstream schedules configured" value={`${data.workerQueueHealth.configuredStages}`} />
+            <StatCard label="worker state" value={data.workerQueueHealth.workerState} />
+            <StatCard label="pipeline state" value={data.workerQueueHealth.pipelineState} />
+            <StatCard label="revenue state" value={data.workerQueueHealth.revenueState} />
             <StatCard label="worker successes (24h)" value={data.workerQueueHealth.recentSuccessCount24h ?? "n/a"} />
             <StatCard label="worker failures (24h)" value={data.workerQueueHealth.recentFailureCount24h ?? "n/a"} />
             <StatCard label="recent activity ts" value={data.workerQueueHealth.recentWorkerActivityTs ?? "none"} />
             <StatCard label="recent job failures" value={data.workerQueueHealth.recentJobFailures.length} />
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">worker detail</div>
+              <div className="mt-2">{data.workerQueueHealth.workerStateDetail}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">pipeline detail</div>
+              <div className="mt-2">{data.workerQueueHealth.pipelineStateDetail}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">revenue detail</div>
+              <div className="mt-2">{data.workerQueueHealth.revenueStateDetail}</div>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <DataTable rows={data.workerQueueHealth.upstreamSchedules} empty="No upstream schedule rows." />
+            <DataTable rows={data.workerQueueHealth.failureClassifications} empty="No classified worker or job failures." />
           </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <DataTable rows={data.workerQueueHealth.recentWorkerFailures} empty="No recent worker failures." />
