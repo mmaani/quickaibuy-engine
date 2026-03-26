@@ -161,8 +161,8 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
         enabled: true,
         listingPackGenerated: true,
         schemaPassed: true,
-        manualReviewRequired: Boolean(listingPack.pack.review_required),
-        reason: listingPack.pack.review_required ? "AI_REVIEW_REQUIRED" : null,
+        manualReviewRequired: true,
+        reason: "HUMAN_REVIEW_REQUIRED_V1",
         trustFlags: listingPack.pack.trust_flags,
         confidence: listingPack.pack.confidence,
       };

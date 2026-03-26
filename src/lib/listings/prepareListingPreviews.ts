@@ -75,6 +75,7 @@ type CandidatePreviewSourceRow = {
   matchId: string | null;
   matchConfidence: unknown;
   matchType: string | null;
+  matchStatus: string | null;
 };
 
 type CandidateSelection = {
@@ -242,6 +243,7 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
       matchId: matches.id,
       matchConfidence: matches.confidence,
       matchType: matches.matchType,
+      matchStatus: matches.status,
     })
     .from(profitableCandidates)
     .innerJoin(
@@ -389,6 +391,29 @@ async function processCandidatePreviewRows(
           candidateId: row.candidateId,
           marketplaceKey: context.marketplace,
           idempotencyKey,
+          source: context.source,
+        },
+      });
+      continue;
+    }
+
+    const matchConfidence = toNum(row.matchConfidence);
+    const matchStatus = cleanString(row.matchStatus)?.toUpperCase() ?? null;
+    if (context.marketplace === "ebay" && (matchStatus !== "ACTIVE" || matchConfidence == null || matchConfidence < 0.75)) {
+      failed++;
+      await blockCandidateForManualReview({
+        candidateId: row.candidateId,
+        actorType: context.actorType,
+        actorId: context.actorId,
+        eventType: "LISTING_MATCH_CONFIDENCE_MANUAL_REVIEW_REQUIRED",
+        marketplaceKey: context.marketplace,
+        idempotencyKey,
+        blockReason: `MATCH_CONFIDENCE_GATE_FAILED: status=${matchStatus ?? "UNKNOWN"} confidence=${matchConfidence ?? "null"}`,
+        details: {
+          matchStatus,
+          matchConfidence,
+          requiredStatus: "ACTIVE",
+          minConfidence: 0.75,
           source: context.source,
         },
       });

@@ -8,13 +8,29 @@ export type ListingPackTrustFlag =
   | "SUPPLIER_PAYLOAD_SPARSE"
   | "MEDIA_QUALITY_LOW";
 
+export const LISTING_SPECIFIC_KEYS = [
+  "brand",
+  "type",
+  "model",
+  "material",
+  "color",
+  "voltage",
+  "power",
+  "connectivity",
+  "room",
+  "use_case",
+  "country_of_origin",
+] as const;
+
+export type ListingSpecificKey = (typeof LISTING_SPECIFIC_KEYS)[number];
+
 export type ListingPackOutput = {
   optimized_title: string;
   category_id: string;
   category_name: string;
   bullet_points: string[];
   description: string;
-  item_specifics: Record<string, string>;
+  item_specifics: Record<ListingSpecificKey, string | null>;
   pricing_hint: string;
   trust_flags: ListingPackTrustFlag[];
   review_required: boolean;
@@ -40,7 +56,12 @@ function cleanString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export const LISTING_PACK_LOW_CONFIDENCE_THRESHOLD = 0.7;
+function cleanSpecificValue(value: unknown): string | null {
+  const cleaned = cleanString(value);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+export const LISTING_PACK_LOW_CONFIDENCE_THRESHOLD = 0.75;
 
 export function validateListingPackOutput(value: unknown): ListingPackValidation {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -74,19 +95,22 @@ export function validateListingPackOutput(value: unknown): ListingPackValidation
     record.item_specifics && typeof record.item_specifics === "object" && !Array.isArray(record.item_specifics)
       ? (record.item_specifics as Record<string, unknown>)
       : null;
-  const itemSpecifics: Record<string, string> = {};
+
+  const itemSpecifics = Object.fromEntries(
+    LISTING_SPECIFIC_KEYS.map((key) => [key, null])
+  ) as Record<ListingSpecificKey, string | null>;
+
   if (!specificsRaw) {
     errors.push("item_specifics must be an object");
   } else {
-    for (const [key, raw] of Object.entries(specificsRaw)) {
-      const cleanKey = cleanString(key);
-      const cleanValue = cleanString(raw);
-      if (!cleanKey || !cleanValue) continue;
-      itemSpecifics[cleanKey] = cleanValue;
+    for (const key of LISTING_SPECIFIC_KEYS) {
+      itemSpecifics[key] = cleanSpecificValue(specificsRaw[key]);
     }
-    if (Object.keys(itemSpecifics).length < 3) {
-      errors.push("item_specifics must contain at least 3 populated entries");
-    }
+  }
+
+  const populatedSpecificsCount = LISTING_SPECIFIC_KEYS.filter((key) => Boolean(itemSpecifics[key])).length;
+  if (populatedSpecificsCount < 3) {
+    errors.push("item_specifics must contain at least 3 non-null supported fields");
   }
 
   const pricingHint = cleanString(record.pricing_hint);
@@ -122,7 +146,8 @@ export function validateListingPackOutput(value: unknown): ListingPackValidation
   const hasLowConfidence =
     confidence.overall < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
     confidence.category < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
-    confidence.title < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD;
+    confidence.title < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
+    confidence.specifics < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD;
 
   const reviewRequired = Boolean(record.review_required) || hasLowConfidence;
 

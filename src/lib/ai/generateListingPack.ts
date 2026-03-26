@@ -1,6 +1,7 @@
 import { buildEbayListingPrompt } from "./prompts/ebayListing";
 import {
   LISTING_PACK_LOW_CONFIDENCE_THRESHOLD,
+  LISTING_SPECIFIC_KEYS,
   validateListingPackOutput,
   type ListingPackOutput,
 } from "./schemas";
@@ -99,7 +100,11 @@ async function callOpenAi(prompt: string): Promise<unknown> {
               description: { type: "string" },
               item_specifics: {
                 type: "object",
-                additionalProperties: { type: "string" },
+                additionalProperties: false,
+                required: LISTING_SPECIFIC_KEYS,
+                properties: Object.fromEntries(
+                  LISTING_SPECIFIC_KEYS.map((key) => [key, { type: ["string", "null"] }])
+                ),
               },
               pricing_hint: { type: "string" },
               trust_flags: { type: "array", items: { type: "string" } },
@@ -127,12 +132,31 @@ async function callOpenAi(prompt: string): Promise<unknown> {
     throw new Error(`OpenAI listing request failed (${response.status}): ${body.slice(0, 400)}`);
   }
 
-  const parsed = (await response.json()) as { output_text?: string };
-  if (!parsed.output_text) {
-    throw new Error("OpenAI listing request returned no output_text");
+  const parsed = (await response.json()) as Record<string, unknown>;
+  const outputText =
+    typeof parsed.output_text === "string" && parsed.output_text.trim().length > 0
+      ? parsed.output_text
+      : Array.isArray(parsed.output)
+        ? (() => {
+            for (const output of parsed.output) {
+              if (!output || typeof output !== "object") continue;
+              const content = (output as { content?: unknown }).content;
+              if (!Array.isArray(content)) continue;
+              for (const part of content) {
+                if (!part || typeof part !== "object") continue;
+                const textPart = (part as { text?: unknown }).text;
+                if (typeof textPart === "string" && textPart.trim().length > 0) return textPart;
+              }
+            }
+            return null;
+          })()
+        : null;
+
+  if (!outputText) {
+    throw new Error("OpenAI listing request returned no parseable JSON text");
   }
 
-  return JSON.parse(parsed.output_text);
+  return JSON.parse(outputText);
 }
 
 export async function generateListingPack(input: GenerateListingPackInput): Promise<GenerateListingPackResult> {

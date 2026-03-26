@@ -819,7 +819,7 @@ function buildListingAspects(payload: Record<string, unknown>, shipFromCountry: 
   const aspects: Record<string, string[]> = {};
   for (const [key, rawValue] of Object.entries(fromPayload)) {
     const aspectKey = String(key ?? "").trim();
-    const aspectValue = String(rawValue ?? "").trim();
+    const aspectValue = rawValue == null ? "" : String(rawValue).trim();
     if (!aspectKey || !aspectValue) continue;
     aspects[aspectKey] = [aspectValue];
   }
