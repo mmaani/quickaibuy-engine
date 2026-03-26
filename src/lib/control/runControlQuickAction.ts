@@ -8,6 +8,7 @@ import { enqueueInventoryRiskScan } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { enqueueProfitEval } from "@/lib/jobs/enqueueProfitEval";
 import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutionCandidates";
 import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
+import { syncEbayOrders } from "@/lib/orders/syncEbayOrders";
 import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
 
 export async function runControlQuickAction(action: string, actorId: string): Promise<string> {
@@ -35,6 +36,13 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
       triggerSource: "manual",
     });
     message = `Profit evaluation enqueued (${String(job.id)}).`;
+  } else if (action === "order-sync") {
+    const result = await syncEbayOrders({
+      limit: Number(process.env.ORDER_SYNC_FETCH_LIMIT ?? 50),
+      lookbackHours: Number(process.env.ORDER_SYNC_LOOKBACK_HOURS ?? 168),
+      actorId: `admin-control:${actorId}`,
+    });
+    message = `Order sync fetched ${result.fetched}, created ${result.created}, updated ${result.updated}, unchanged ${result.unchanged}, failed ${result.failed}.`;
   } else if (action === "prepare") {
     const result = await prepareListingPreviews({ limit: 25, marketplace: "ebay" });
     message = `Previews created ${result.created}, updated ${result.updated}, skipped ${result.skipped}.`;

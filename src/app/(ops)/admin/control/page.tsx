@@ -413,6 +413,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
     { key: "match", label: "Run matching" },
     { key: "scan", label: "Run marketplace scan" },
     { key: "profit", label: "Run profit engine" },
+    { key: "order-sync", label: "Run eBay order sync" },
     { key: "inventory-risk-scan", label: "Run inventory risk scan" },
     { key: "prepare", label: "Prepare listing previews" },
     { key: "promote", label: "Promote listing previews ready" },

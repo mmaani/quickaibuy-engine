@@ -217,7 +217,16 @@ export async function getAdminOrdersRows(input?: {
         ELSE (o.total_price::text || ' ' || coalesce(o.currency, 'USD'))
       END AS "totalDisplay",
       o.status AS "status",
-      COALESCE(item.listing_external_id, item.listing_id) AS "listingDisplay",
+      COALESCE(
+        item.listing_external_id,
+        CASE
+          WHEN jsonb_typeof(coalesce(o.raw_payload, '{}'::jsonb) -> 'lineItems') = 'array'
+            AND jsonb_array_length(coalesce(o.raw_payload, '{}'::jsonb) -> 'lineItems') = 1
+          THEN coalesce(o.raw_payload, '{}'::jsonb) -> 'lineItems' -> 0 ->> 'listingExternalId'
+          ELSE NULL
+        END,
+        item.listing_id
+      ) AS "listingDisplay",
       item.supplier_key AS "supplierDisplay",
       item.supplier_product_id AS "supplierProductId",
       (
@@ -295,7 +304,15 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
         oi.id::text AS id,
         oi.listing_id::text AS "listingId",
         l.candidate_id::text AS "candidateId",
-        l.published_external_id AS "listingExternalId",
+        COALESCE(
+          l.published_external_id,
+          CASE
+            WHEN jsonb_typeof(coalesce(o.raw_payload, '{}'::jsonb) -> 'lineItems') = 'array'
+              AND jsonb_array_length(coalesce(o.raw_payload, '{}'::jsonb) -> 'lineItems') = 1
+            THEN coalesce(o.raw_payload, '{}'::jsonb) -> 'lineItems' -> 0 ->> 'listingExternalId'
+            ELSE NULL
+          END
+        ) AS "listingExternalId",
         oi.supplier_key AS "supplierKey",
         oi.supplier_product_id AS "supplierProductId",
         oi.quantity AS quantity,
@@ -306,6 +323,7 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
         latest_pr.snapshot_ts::text AS "latestSupplierSnapshotTs",
         latest_pr.raw_payload AS "latestSupplierRawPayload"
       FROM order_items oi
+      INNER JOIN orders o ON o.id = oi.order_id
       LEFT JOIN listings l ON l.id = oi.listing_id
       LEFT JOIN profitable_candidates pc ON pc.id = l.candidate_id
       LEFT JOIN LATERAL (
