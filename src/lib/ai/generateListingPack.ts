@@ -183,25 +183,12 @@ export async function generateListingPack(input: GenerateListingPackInput): Prom
       confidence.category < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
       confidence.title < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD;
 
-    if (lowConfidence) {
-      return {
-        ok: false,
-        reviewRequired: true,
-        reason: "LISTING_PACK_LOW_CONFIDENCE",
-        diagnostics: {
-          schemaPassed: true,
-          lowConfidence: true,
-          confidence,
-        },
-      };
-    }
-
     return {
       ok: true,
       pack: validation.data,
       diagnostics: {
         schemaPassed: true,
-        lowConfidence: false,
+        lowConfidence,
         confidence,
       },
     };

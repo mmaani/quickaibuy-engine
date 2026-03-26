@@ -81,6 +81,10 @@ function normalizeMediaUrl(url: string): string | null {
     const parsed = new URL(url);
     if (!/^https?:$/.test(parsed.protocol)) return null;
     parsed.hash = "";
+    if (parsed.hostname.toLowerCase().endsWith("ebayimg.com")) {
+      // Browse payloads often ship thumbnail EPS variants like s-l225; prefer the larger source asset.
+      parsed.pathname = parsed.pathname.replace(/\/s-l\d{2,4}(\.[a-z0-9]+)$/i, "/s-l1600$1");
+    }
     return parsed.toString();
   } catch {
     return null;
@@ -108,8 +112,15 @@ function stripUrlNoise(url: string): string {
 function buildFingerprint(url: string): string {
   const stable = stripUrlNoise(url).toLowerCase();
   const parsed = new URL(stable);
+  const ebayGalleryToken = parsed.pathname.match(/\/images\/g\/([^/]+)\//i)?.[1] ?? null;
   const baseName = parsed.pathname.split("/").pop() ?? parsed.pathname;
+  const fingerprintBase =
+    parsed.hostname.endsWith("ebayimg.com") && ebayGalleryToken
+      ? ebayGalleryToken
+      : baseName;
   return `${parsed.hostname}|${baseName
+    .replace(/^s-l\d{2,4}$/i, fingerprintBase)
+    .replace(/^s-l\d{2,4}\.[a-z0-9]+$/i, fingerprintBase)
     .replace(/\.[a-z0-9]{2,5}$/i, "")
     .replace(/[_-]?(?:\d{2,4}x\d{2,4}|copy|small|large|zoom|thumb|thumbnail|main|hero|detail)\b/gi, "")
     .replace(/[^a-z0-9]+/gi, "")
@@ -155,7 +166,22 @@ function containsAny(text: string, patterns: RegExp[]): boolean {
 }
 
 function parseImageDimensions(url: string): { width: number; height: number; longestSide: number; aspectRatio: number } | null {
-  const matches = Array.from(url.matchAll(/(?:^|[_=/-])(\d{2,4})[xX](\d{2,4})(?:$|[_.?&/-])/g));
+  const ebaySize = url.match(/\/s-l(\d{2,4})(?:\.[a-z0-9]+)(?:$|[?#])/i);
+  if (ebaySize) {
+    const side = Number(ebaySize[1]);
+    if (Number.isFinite(side) && side > 0) {
+      return {
+        width: side,
+        height: side,
+        longestSide: side,
+        aspectRatio: 1,
+      };
+    }
+  }
+
+  const matches = Array.from(
+    url.matchAll(/(?:^|[_=/-])(\d{2,4})[xX](\d{2,4})(?:q\d+)?(?:$|[_.?&/-])/g)
+  );
   const last = matches[matches.length - 1];
   if (!last) return null;
 
@@ -723,6 +749,7 @@ export function buildListingPreviewMedia(input: ListingPreviewInput): ListingPre
   }
 
   walkForMedia(input.supplierRawPayload, state, "supplier");
+  walkForMedia(input.marketplaceRawPayload, state, "marketplace");
 
   for (const entry of state.imageUrls) {
     pushImageCandidate(candidates, entry.url, entry.source, entry.index);

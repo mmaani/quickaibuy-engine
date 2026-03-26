@@ -147,6 +147,11 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
     });
 
     if (listingPack.ok) {
+      const lowConfidence = Boolean(
+        listingPack.diagnostics &&
+          typeof listingPack.diagnostics === "object" &&
+          (listingPack.diagnostics as Record<string, unknown>).lowConfidence === true
+      );
       title = listingPack.pack.optimized_title;
       description = `${listingPack.pack.description}\n\nHighlights\n${listingPack.pack.bullet_points
         .map((bullet) => `- ${bullet}`)
@@ -162,9 +167,10 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
         listingPackGenerated: true,
         schemaPassed: true,
         manualReviewRequired: true,
-        reason: "HUMAN_REVIEW_REQUIRED_V1",
+        reason: lowConfidence ? "LISTING_PACK_LOW_CONFIDENCE" : "HUMAN_REVIEW_REQUIRED_V1",
         trustFlags: listingPack.pack.trust_flags,
         confidence: listingPack.pack.confidence,
+        diagnostics: listingPack.diagnostics,
       };
     } else {
       aiMetadata = {
