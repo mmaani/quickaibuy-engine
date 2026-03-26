@@ -242,6 +242,20 @@ export type ControlPanelData = {
     sellerFeedbackSource: string | null;
     sellerFeedbackFetchedAt: string | null;
   };
+  listingPerformance: {
+    zeroViewListings: number | null;
+    lowTrafficListings: number | null;
+    titleOptimizationNeeded: number | null;
+    itemSpecificsMissing: number | null;
+    promotedRateBelowSuggested: number | null;
+    deadListingRecoveryActions: number | null;
+    firstSaleCandidates: Row[];
+    commerciallyWeakLiveListings: number | null;
+    sourceWired: {
+      listings: boolean;
+      response: boolean;
+    };
+  };
   listingLifecycle: {
     statusCounts: Row[];
     readyToPublishBacklog: number | null;
@@ -958,6 +972,66 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   };
 
   const listingsHasResponse = listingsExists ? await columnExists("listings", "response") : false;
+  const listingPerformanceSummary =
+    listingsExists && listingsHasResponse
+      ? (
+          await runQuery(`
+            with perf as (
+              select
+                upper(coalesce((l.response::jsonb)->'listingPerformance'->'readiness'->>'commercialState', '')) as commercial_state,
+                lower(coalesce((l.response::jsonb)->'listingPerformance'->'readiness'->'weakSignals'->>'zeroViews', 'false')) = 'true' as zero_views,
+                lower(coalesce((l.response::jsonb)->'listingPerformance'->'readiness'->'weakSignals'->>'lowTraffic', 'false')) = 'true' as low_traffic,
+                lower(coalesce((l.response::jsonb)->'listingPerformance'->'readiness'->'weakSignals'->>'missingItemSpecifics', 'false')) = 'true' as missing_item_specifics,
+                lower(coalesce((l.response::jsonb)->'listingPerformance'->'optimization'->>'titleChanged', 'false')) = 'true' as title_optimized,
+                case
+                  when coalesce((l.response::jsonb)->'listingPerformance'->'promoted'->>'currentBidPercentage', '') ~ '^[0-9]+(\\.[0-9]+)?$'
+                    then ((l.response::jsonb)->'listingPerformance'->'promoted'->>'currentBidPercentage')::numeric
+                  else null
+                end as current_bid,
+                case
+                  when coalesce((l.response::jsonb)->'listingPerformance'->'promoted'->>'suggestedBidPercentage', '') ~ '^[0-9]+(\\.[0-9]+)?$'
+                    then ((l.response::jsonb)->'listingPerformance'->'promoted'->>'suggestedBidPercentage')::numeric
+                  else null
+                end as suggested_bid
+              from listings l
+              where lower(coalesce(l.marketplace_key, '')) = 'ebay'
+                and upper(coalesce(l.status, '')) = 'ACTIVE'
+            )
+            select
+              count(*) filter (where zero_views)::int as zero_view_listings,
+              count(*) filter (where low_traffic)::int as low_traffic_listings,
+              count(*) filter (where not title_optimized)::int as title_optimization_needed,
+              count(*) filter (where missing_item_specifics)::int as item_specifics_missing,
+              count(*) filter (where current_bid is not null and suggested_bid is not null and current_bid + 0.2 < suggested_bid)::int as promoted_rate_below_suggested,
+              count(*) filter (where commercial_state = 'DEAD_LISTING')::int as dead_listing_recovery_actions,
+              count(*) filter (where commercial_state in ('COMMERCIAL_WEAK', 'DEAD_LISTING'))::int as commercially_weak_live_listings
+            from perf
+          `)
+        )[0] ?? {}
+      : {};
+  const firstSaleCandidates =
+    listingsExists && listingsHasResponse
+      ? await runQuery(`
+          select
+            l.id,
+            l.candidate_id,
+            l.title,
+            (l.response::jsonb)->'listingPerformance'->'readiness'->>'commercialState' as commercial_state,
+            (l.response::jsonb)->'listingPerformance'->'readiness'->>'firstSaleScore' as first_sale_score
+          from listings l
+          where lower(coalesce(l.marketplace_key, '')) = 'ebay'
+            and upper(coalesce(l.status, '')) = 'ACTIVE'
+            and coalesce((l.response::jsonb)->'listingPerformance'->'readiness'->>'firstSaleCandidate', 'false') = 'true'
+          order by
+            case
+              when coalesce((l.response::jsonb)->'listingPerformance'->'readiness'->>'firstSaleScore', '') ~ '^[0-9]+(\\.[0-9]+)?$'
+                then ((l.response::jsonb)->'listingPerformance'->'readiness'->>'firstSaleScore')::numeric
+              else null
+            end desc nulls last,
+            l.updated_at asc nulls first
+          limit 3
+        `)
+      : [];
   const inventoryRiskSummary =
     listingsExists && listingsHasResponse
       ? (
@@ -2082,6 +2156,20 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       },
     },
     listingThroughput,
+    listingPerformance: {
+      zeroViewListings: toNum(listingPerformanceSummary.zero_view_listings),
+      lowTrafficListings: toNum(listingPerformanceSummary.low_traffic_listings),
+      titleOptimizationNeeded: toNum(listingPerformanceSummary.title_optimization_needed),
+      itemSpecificsMissing: toNum(listingPerformanceSummary.item_specifics_missing),
+      promotedRateBelowSuggested: toNum(listingPerformanceSummary.promoted_rate_below_suggested),
+      deadListingRecoveryActions: toNum(listingPerformanceSummary.dead_listing_recovery_actions),
+      firstSaleCandidates,
+      commerciallyWeakLiveListings: toNum(listingPerformanceSummary.commercially_weak_live_listings),
+      sourceWired: {
+        listings: listingsExists,
+        response: listingsExists && listingsHasResponse,
+      },
+    },
     listingLifecycle: {
       statusCounts: listingStatuses,
       readyToPublishBacklog,

@@ -1092,6 +1092,46 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           </div>
         </Section>
 
+        <Section title="Listing Performance">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="zero-view listings"
+              value={metricOrUnknown(data.listingPerformance.zeroViewListings, data.listingPerformance.sourceWired.response)}
+            />
+            <StatCard
+              label="low-traffic listings"
+              value={metricOrUnknown(data.listingPerformance.lowTrafficListings, data.listingPerformance.sourceWired.response)}
+            />
+            <StatCard
+              label="title optimization needed"
+              value={metricOrUnknown(data.listingPerformance.titleOptimizationNeeded, data.listingPerformance.sourceWired.response)}
+            />
+            <StatCard
+              label="item specifics missing"
+              value={metricOrUnknown(data.listingPerformance.itemSpecificsMissing, data.listingPerformance.sourceWired.response)}
+            />
+            <StatCard
+              label="promoted rate below suggested"
+              value={metricOrUnknown(data.listingPerformance.promotedRateBelowSuggested, data.listingPerformance.sourceWired.response)}
+            />
+            <StatCard
+              label="dead listing recovery actions"
+              value={metricOrUnknown(data.listingPerformance.deadListingRecoveryActions, data.listingPerformance.sourceWired.response)}
+            />
+            <StatCard
+              label="commercially weak live"
+              value={metricOrUnknown(data.listingPerformance.commerciallyWeakLiveListings, data.listingPerformance.sourceWired.response)}
+            />
+            <StatCard
+              label="first-sale candidates"
+              value={data.listingPerformance.firstSaleCandidates.length}
+            />
+          </div>
+          <div className="mt-4">
+            <DataTable rows={data.listingPerformance.firstSaleCandidates} empty="No first-sale candidates identified yet." />
+          </div>
+        </Section>
+
         <Section title="Worker Health">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="worker successes (24h)" value={data.workerQueueHealth.recentSuccessCount24h ?? "n/a"} />

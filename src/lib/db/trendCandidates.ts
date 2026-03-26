@@ -31,9 +31,10 @@ async function getTrendCandidatesOrderColumn(): Promise<"created_ts" | "created_
   return "id";
 }
 
-export async function getTrendCandidates(limit = 50): Promise<TrendCandidateRow[]> {
+export async function getTrendCandidates(limit = 50, input?: { staleFirst?: boolean }): Promise<TrendCandidateRow[]> {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
   const orderBy = await getTrendCandidatesOrderColumn();
+  const staleFirst = input?.staleFirst !== false;
 
   const rows = normalizeRows<{ id: string; candidate: string | null }>(
     await db.execute(
@@ -42,7 +43,7 @@ export async function getTrendCandidates(limit = 50): Promise<TrendCandidateRow[
         FROM trend_candidates
         WHERE candidate_type = 'keyword'
           AND coalesce(trim(candidate_value), '') <> ''
-        ORDER BY ${orderBy} DESC NULLS LAST, id DESC
+        ORDER BY ${orderBy} ${staleFirst ? "ASC" : "DESC"} NULLS LAST, id DESC
         LIMIT ${safeLimit}
       `)
     )

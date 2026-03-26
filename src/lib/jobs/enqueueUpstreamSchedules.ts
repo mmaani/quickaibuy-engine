@@ -24,7 +24,7 @@ type SchedulerEntry = {
 };
 
 type StageSchedule = {
-  stage: "trend" | "supplier" | "marketplace" | "matching" | "profit";
+  stage: "trend" | "supplier" | "marketplace" | "matching" | "profit" | "listing_performance";
   jobName: string;
   jobId: string;
   everyMs: number;
@@ -68,6 +68,13 @@ const UPSTREAM_STAGE_SCHEDULES: StageSchedule[] = [
     jobId: "eval-profit-recurring-v1-4h",
     everyMs: 4 * HOUR_MS,
     payload: { limit: 100, triggerSource: "schedule" },
+  },
+  {
+    stage: "listing_performance",
+    jobName: JOB_NAMES.LISTING_OPTIMIZE,
+    jobId: "listing-optimize-recurring-v1-6h",
+    everyMs: 6 * HOUR_MS,
+    payload: { limit: 25, triggerSource: "schedule" },
   },
 ];
 

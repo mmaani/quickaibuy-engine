@@ -176,7 +176,7 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     1,
     Math.min(Number(process.env.SUPPLIER_DISCOVER_CANDIDATE_LIMIT ?? 20), 100)
   );
-  const candidates = await getTrendCandidates(candidateLimit);
+  const candidates = await getTrendCandidates(candidateLimit, { staleFirst: true });
   const focusedKeywords = buildFocusedSupplierDiscoverKeywords(candidates.map((row) => row.candidate));
 
   let insertedCount = 0;

@@ -5,7 +5,7 @@ import {
   evaluateProductPipelinePolicy,
   normalizeSupplierQuality,
 } from "@/lib/products/pipelinePolicy";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 const STOPWORDS = new Set([
   "the",
@@ -292,7 +292,7 @@ export async function runEbayMatches(input?: {
         .from(marketplacePrices)
         .innerJoin(productsRaw, eq(marketplacePrices.productRawId, productsRaw.id))
         .where(eq(marketplacePrices.marketplaceKey, "ebay"))
-        .orderBy(desc(marketplacePrices.snapshotTs))
+        .orderBy(asc(marketplacePrices.snapshotTs), desc(marketplacePrices.id))
         .limit(limit);
 
   const byProduct = new Map<string, CandidateRow[]>();

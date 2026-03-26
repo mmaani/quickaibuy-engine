@@ -125,20 +125,41 @@ export async function getLatestProductRawBySupplierProduct(input: {
 }
 
 export async function getProductsRawForMarketplaceScan(limit = 100) {
-  return db
-    .select({
-      id: productsRaw.id,
-      supplierKey: productsRaw.supplierKey,
-      supplierProductId: productsRaw.supplierProductId,
-      title: productsRaw.title,
-      currency: productsRaw.currency,
-      rawPayload: productsRaw.rawPayload,
-      sourceUrl: productsRaw.sourceUrl,
-    })
-    .from(productsRaw)
-    .where(isNotNull(productsRaw.title))
-    .orderBy(desc(productsRaw.snapshotTs))
-    .limit(limit);
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+  const result = await db.execute<{
+    id: string;
+    supplierKey: string;
+    supplierProductId: string;
+    title: string | null;
+    currency: string | null;
+    rawPayload: unknown;
+    sourceUrl: string | null;
+  }>(sql.raw(`
+    with ranked_products as (
+      select
+        id::text as id,
+        supplier_key as "supplierKey",
+        supplier_product_id as "supplierProductId",
+        title,
+        currency,
+        raw_payload as "rawPayload",
+        source_url as "sourceUrl",
+        snapshot_ts,
+        row_number() over (
+          partition by lower(supplier_key), supplier_product_id
+          order by snapshot_ts desc nulls last, id desc
+        ) as rn
+      from products_raw
+      where title is not null
+    )
+    select id, "supplierKey", "supplierProductId", title, currency, "rawPayload", "sourceUrl"
+    from ranked_products
+    where rn = 1
+    order by snapshot_ts asc nulls first, id asc
+    limit ${safeLimit}
+  `));
+
+  return result.rows ?? [];
 }
 
 export async function getProductRawById(id: string) {

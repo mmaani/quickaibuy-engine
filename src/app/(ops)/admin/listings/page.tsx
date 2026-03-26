@@ -240,9 +240,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                         "decision_status",
                         "listing eligible",
                         "preview status",
-                      "listing status",
-                      "recovery",
-                      "duplicate",
+                        "listing status",
+                        "commercial state",
+                        "recovery",
+                        "duplicate",
                     ].map((h) => <th key={h} className="border-b border-white/10 px-3 py-2 text-left text-[11px] uppercase tracking-[0.16em] text-white/55">{h}</th>)}
                     </tr>
                   </thead>
@@ -266,6 +267,7 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                           <td className="border-b border-white/5 px-3 py-3">{row.listingEligible ? "YES" : "NO"}</td>
                           <td className="border-b border-white/5 px-3 py-3">{previewBadge(row)}</td>
                           <td className="border-b border-white/5 px-3 py-3">{row.listingStatus ?? "-"}</td>
+                          <td className="border-b border-white/5 px-3 py-3">{row.commercialState ?? "-"}</td>
                           <td className="border-b border-white/5 px-3 py-3">
                             {row.recoveryState !== "NONE" ? (
                               <div>
@@ -326,6 +328,9 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Recovery next action" value={detail.item.recoveryNextAction} />
                     <KeyValue label="Duplicate warning" value={detail.item.duplicateDetected ? (detail.item.duplicateReason ?? "YES") : "NO"} />
                     <KeyValue label="Preview readiness" value={detail.item.previewStatus} />
+                    <KeyValue label="Commercial state" value={detail.item.commercialState ?? "-"} />
+                    <KeyValue label="First-sale score" value={detail.item.firstSaleScore ?? "-"} />
+                    <KeyValue label="First-sale candidate" value={detail.item.firstSaleCandidate ? "YES" : "NO"} />
                     <KeyValue label="Missing fields" value={detail.item.previewMissingFields.length ? detail.item.previewMissingFields.join(", ") : "None"} />
                     <KeyValue label="Latest listing row" value={detail.item.listingId ? `${detail.item.listingId} (${detail.item.listingStatus ?? "-"})` : "None"} />
                     <KeyValue label="Paused by inventory risk" value={detail.item.pausedByInventoryRisk ? "YES" : "NO"} />

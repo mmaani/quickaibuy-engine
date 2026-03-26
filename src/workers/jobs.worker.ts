@@ -16,6 +16,8 @@ import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSchedules";
 import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
+import { recoverMissedUpstreamFreshness } from "@/lib/jobs/freshnessRecovery";
+import { runListingPerformanceEngine } from "@/lib/listings/performanceEngine";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 console.log("[jobs.worker] booted and waiting for jobs");
@@ -39,6 +41,16 @@ void ensureUpstreamRecurringSchedules()
   })
   .catch((error) => {
     console.error("[jobs.worker] failed to ensure upstream recurring schedules", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+void recoverMissedUpstreamFreshness()
+  .then((result) => {
+    console.log("[jobs.worker] freshness recovery checked", result);
+  })
+  .catch((error) => {
+    console.error("[jobs.worker] freshness recovery failed", {
       error: error instanceof Error ? error.message : String(error),
     });
   });
@@ -639,6 +651,36 @@ export const jobsWorker = new Worker(
           fromJob: job.name,
           nextJobName: JOB_NAMES.LISTING_PREPARE,
           nextJobId: nextJob.id,
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return result;
+      }
+
+      case JOB_NAMES.LISTING_OPTIMIZE: {
+        const result = await runListingPerformanceEngine({
+          limit: Number(job.data?.limit ?? 25),
+          actorId: JOB_NAMES.LISTING_OPTIMIZE,
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.LISTING_OPTIMIZE,
+          entityType: "LISTING",
+          entityId: "batch",
+          eventType: "LISTING_PERFORMANCE_OPTIMIZED",
+          details: {
+            source: "listing-performance-engine",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
         });
 
         await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });

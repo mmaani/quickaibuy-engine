@@ -359,7 +359,19 @@ export async function runProfitEngine(input?: {
       AND lmp.marketplace_listing_id = rm.marketplace_listing_id
       AND lmp.rn = 1
     WHERE rm.rn = 1
-    ORDER BY CAST(rm.confidence AS numeric) DESC, rm.last_seen_ts DESC
+    ORDER BY
+      (
+        select min(pc.calc_ts)
+        from profitable_candidates pc
+        where pc.supplier_key = lower(rm.supplier_key)
+          and pc.supplier_product_id = rm.supplier_product_id
+          and pc.marketplace_key = rm.marketplace_key_norm
+          and pc.marketplace_listing_id = rm.marketplace_listing_id
+      ) ASC NULLS FIRST,
+      lmp.snapshot_ts ASC NULLS FIRST,
+      lp.snapshot_ts ASC NULLS FIRST,
+      rm.last_seen_ts ASC NULLS FIRST,
+      CAST(rm.confidence AS numeric) DESC
     LIMIT ${limit}
   `);
 

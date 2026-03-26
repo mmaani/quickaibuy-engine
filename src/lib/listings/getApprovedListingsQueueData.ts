@@ -110,6 +110,9 @@ export type QueueListItem = {
   rePromotionReady: boolean;
   pausedByInventoryRisk: boolean;
   pauseReason: string | null;
+  commercialState: string | null;
+  firstSaleScore: number | null;
+  firstSaleCandidate: boolean;
 };
 
 export type QueueOverview = {
@@ -155,6 +158,12 @@ function toIsoString(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string") return value;
   return null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -277,6 +286,7 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
   const listingResponse = asObject(row.listing_response);
   const inventoryRisk = asObject(listingResponse?.inventoryRisk);
   const riskAction = String(inventoryRisk?.action ?? "").toUpperCase();
+  const perfReadiness = asObject(asObject(listingResponse?.listingPerformance)?.readiness);
   const pauseReason = Array.isArray(inventoryRisk?.signals)
     ? (inventoryRisk?.signals as Array<Record<string, unknown>>)
         .map((signal) => String(signal.code ?? "").trim())
@@ -326,6 +336,9 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
       row.listing_status === LISTING_STATUSES.PAUSED
         ? pauseReason
         : null,
+    commercialState: stringOrNull(perfReadiness?.commercialState),
+    firstSaleScore: toNumber(perfReadiness?.firstSaleScore),
+    firstSaleCandidate: perfReadiness?.firstSaleCandidate === true,
   };
 }
 
