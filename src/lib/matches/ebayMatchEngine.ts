@@ -1,10 +1,6 @@
 import { db } from "@/lib/db";
 import { productsRaw, marketplacePrices, matches } from "@/lib/db/schema";
-import {
-  evaluateMatchAcceptance,
-  evaluateProductPipelinePolicy,
-  normalizeSupplierQuality,
-} from "@/lib/products/pipelinePolicy";
+import { normalizeSupplierQuality, evaluateProductPipelinePolicy } from "@/lib/products/pipelinePolicy";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 const STOPWORDS = new Set([
@@ -34,12 +30,13 @@ const STOPWORDS = new Set([
   "ebay",
 ]);
 
-const MISMATCH_PHRASES = [
-  "pet hair",
-  "motorized brush",
-  "office",
-  "air pump",
-];
+const BRANDED_TERMS = ["apple", "samsung", "nike", "sony", "lg", "xiaomi", "dyson", "tesla"];
+const GENERIC_TERMS = ["accessory", "gadget", "item", "tool", "device", "product"];
+
+type MatchStatus = "ACTIVE" | "MANUAL_REVIEW" | "REJECTED";
+
+const ACTIVE_CONFIDENCE_MIN = 0.75;
+const MANUAL_REVIEW_CONFIDENCE_MIN = 0.65;
 
 function normalizeText(input: string): string {
   return (input || "")
@@ -56,74 +53,195 @@ function tokenize(input: string): string[] {
     .filter((x) => x.length > 1 && !STOPWORDS.has(x));
 }
 
-
 function jaccardSimilarity(a: string, b: string): number {
   const aa = new Set(tokenize(a));
   const bb = new Set(tokenize(b));
   if (!aa.size || !bb.size) return 0;
 
   let intersection = 0;
-  for (const x of aa) {
-    if (bb.has(x)) intersection++;
-  }
+  for (const x of aa) if (bb.has(x)) intersection++;
 
   const union = new Set([...aa, ...bb]).size;
   return union === 0 ? 0 : intersection / union;
 }
 
-function overlapCount(a: string, b: string): number {
+function tokenOverlapRatio(a: string, b: string): number {
   const aa = new Set(tokenize(a));
   const bb = new Set(tokenize(b));
+  if (!aa.size || !bb.size) return 0;
 
   let intersection = 0;
-  for (const x of aa) {
-    if (bb.has(x)) intersection++;
+  for (const x of aa) if (bb.has(x)) intersection++;
+
+  return intersection / Math.min(aa.size, bb.size);
+}
+
+function bigramDiceSimilarity(a: string, b: string): number {
+  const left = normalizeText(a).replace(/\s+/g, "");
+  const right = normalizeText(b).replace(/\s+/g, "");
+  if (left.length < 2 || right.length < 2) return 0;
+
+  const leftBigrams = new Map<string, number>();
+  for (let i = 0; i < left.length - 1; i++) {
+    const key = left.slice(i, i + 2);
+    leftBigrams.set(key, (leftBigrams.get(key) ?? 0) + 1);
   }
 
-  return intersection;
-}
-
-function containsPhrase(text: string, phrase: string): boolean {
-  return normalizeText(text).includes(normalizeText(phrase));
-}
-
-function hasSemanticMismatch(supplierTitle: string, marketplaceTitle: string): string | null {
-  for (const phrase of MISMATCH_PHRASES) {
-    if (containsPhrase(marketplaceTitle, phrase) && !containsPhrase(supplierTitle, phrase)) {
-      return phrase;
+  let intersection = 0;
+  for (let i = 0; i < right.length - 1; i++) {
+    const key = right.slice(i, i + 2);
+    const available = leftBigrams.get(key) ?? 0;
+    if (available > 0) {
+      leftBigrams.set(key, available - 1);
+      intersection++;
     }
   }
-  return null;
+
+  return (2 * intersection) / (left.length - 1 + (right.length - 1));
 }
 
-function computeConfidence(
-  supplierTitle: string,
-  marketplaceTitle: string,
-  marketplaceScore?: string | null
-) {
-  const rescored = jaccardSimilarity(supplierTitle, marketplaceTitle);
-  const overlap = overlapCount(supplierTitle, marketplaceTitle);
-  const rawScore = marketplaceScore != null ? Number(marketplaceScore) : 0;
+function inferProductType(title: string): string {
+  const normalized = normalizeText(title);
+  if (/(lamp|light|night light|led)/.test(normalized)) return "lighting";
+  if (/(organizer|storage|holder|rack)/.test(normalized)) return "organizer";
+  if (/(fan|cooling)/.test(normalized)) return "fan";
+  if (/(charger|adapter|battery|usb)/.test(normalized)) return "electronics";
+  if (/(car|automotive|vehicle)/.test(normalized)) return "auto";
+  return "general";
+}
 
-  let confidence = (0.7 * rawScore) + (0.3 * rescored);
+function extractAttributeTokens(rawPayload: unknown, title: string): Set<string> {
+  const out = new Set<string>();
+  const textTokens = tokenize(title);
+  for (const t of textTokens) out.add(t);
 
-  if (overlap >= 2) confidence += 0.05;
-  if (overlap >= 3) confidence += 0.05;
+  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) return out;
+  const payload = rawPayload as Record<string, unknown>;
+
+  const possible = [
+    payload.brand,
+    payload.type,
+    payload.model,
+    payload.material,
+    payload.color,
+    payload.voltage,
+    payload.power,
+    payload.connectivity,
+    payload.room,
+    payload.use_case,
+    payload.country_of_origin,
+  ];
+
+  for (const value of possible) {
+    const asText = String(value ?? "").trim();
+    if (!asText) continue;
+    for (const token of tokenize(asText)) out.add(token);
+  }
+
+  return out;
+}
+
+function attributeOverlapScore(supplierRawPayload: unknown, supplierTitle: string, marketplaceTitle: string): number {
+  const supplierAttrs = extractAttributeTokens(supplierRawPayload, supplierTitle);
+  const marketAttrs = extractAttributeTokens(null, marketplaceTitle);
+  if (!supplierAttrs.size || !marketAttrs.size) return 0;
+
+  let overlap = 0;
+  for (const token of supplierAttrs) if (marketAttrs.has(token)) overlap++;
+  return overlap / Math.min(supplierAttrs.size, marketAttrs.size);
+}
+
+function priceAlignmentScore(supplierPrice: string | null, marketplacePrice: string | null): number {
+  const supplier = supplierPrice != null ? Number(supplierPrice) : NaN;
+  const market = marketplacePrice != null ? Number(marketplacePrice) : NaN;
+  if (!Number.isFinite(supplier) || !Number.isFinite(market) || supplier <= 0) return 0;
+
+  const ratio = market / supplier;
+  if (ratio >= 1.4 && ratio <= 5) return 1;
+  if (ratio >= 1.2 && ratio <= 6) return 0.65;
+  if (ratio >= 1.0 && ratio <= 7) return 0.35;
+  return 0;
+}
+
+function brandedMarketplacePenalty(supplierTitle: string, marketplaceTitle: string): number {
+  const supplier = normalizeText(supplierTitle);
+  const market = normalizeText(marketplaceTitle);
+  const supplierGeneric = GENERIC_TERMS.some((term) => supplier.includes(term)) || tokenize(supplier).length <= 3;
+  const marketplaceBranded = BRANDED_TERMS.some((brand) => market.includes(brand));
+  return supplierGeneric && marketplaceBranded ? 0.12 : 0;
+}
+
+type MatchQuality = {
+  lexicalSimilarity: number;
+  fuzzySimilarity: number;
+  tokenOverlap: number;
+  marketplaceScore: number;
+  priceAlignment: number;
+  productTypeAlignment: number;
+  attributeOverlap: number;
+  penalties: string[];
+  confidence: number;
+};
+
+function evaluateMatchQuality(row: CandidateRow): MatchQuality {
+  const supplierTitle = String(row.supplierTitle ?? "");
+  const marketplaceTitle = String(row.matchedTitle ?? "");
+
+  const lexicalSimilarity = jaccardSimilarity(supplierTitle, marketplaceTitle);
+  const fuzzySimilarity = bigramDiceSimilarity(supplierTitle, marketplaceTitle);
+  const tokenOverlap = tokenOverlapRatio(supplierTitle, marketplaceTitle);
+  const marketplaceScore = Math.max(0, Math.min(1, Number(row.finalMatchScore ?? 0) || 0));
+  const priceAlignment = priceAlignmentScore(row.supplierPrice, row.marketplacePrice);
+  const productTypeAlignment =
+    inferProductType(supplierTitle) === inferProductType(marketplaceTitle) ? 1 : 0;
+  const attributeOverlap = attributeOverlapScore(row.supplierRawPayload, supplierTitle, marketplaceTitle);
+
+  const penalties: string[] = [];
+  if (marketplaceScore < 0.5) penalties.push("WEAK_MARKETPLACE_SCORE");
+  if (fuzzySimilarity < 0.58) penalties.push("WEAK_FUZZY_SIMILARITY");
+  if (tokenOverlap < 0.45) penalties.push("LOW_TOKEN_OVERLAP");
+  if (productTypeAlignment < 1) penalties.push("PRODUCT_TYPE_MISMATCH");
+  if (attributeOverlap < 0.25) penalties.push("ATTRIBUTE_OVERLAP_WEAK");
+
+  let confidence =
+    lexicalSimilarity * 0.22 +
+    fuzzySimilarity * 0.2 +
+    tokenOverlap * 0.16 +
+    marketplaceScore * 0.16 +
+    priceAlignment * 0.12 +
+    productTypeAlignment * 0.08 +
+    attributeOverlap * 0.06;
+
+  const brandPenalty = brandedMarketplacePenalty(supplierTitle, marketplaceTitle);
+  if (brandPenalty > 0) penalties.push("BRANDED_MARKETPLACE_GENERIC_SUPPLIER");
+  confidence -= brandPenalty;
+  confidence -= penalties.filter((p) => p === "LOW_TOKEN_OVERLAP" || p === "WEAK_FUZZY_SIMILARITY").length * 0.04;
 
   confidence = Math.max(0, Math.min(1, confidence));
 
   return {
-    rawScore: Number(rawScore.toFixed(4)),
-    rescored: Number(rescored.toFixed(4)),
-    overlap,
+    lexicalSimilarity: Number(lexicalSimilarity.toFixed(4)),
+    fuzzySimilarity: Number(fuzzySimilarity.toFixed(4)),
+    tokenOverlap: Number(tokenOverlap.toFixed(4)),
+    marketplaceScore: Number(marketplaceScore.toFixed(4)),
+    priceAlignment: Number(priceAlignment.toFixed(4)),
+    productTypeAlignment,
+    attributeOverlap: Number(attributeOverlap.toFixed(4)),
+    penalties,
     confidence: Number(confidence.toFixed(4)),
   };
 }
 
+function confidenceStatus(confidence: number): MatchStatus {
+  if (confidence >= ACTIVE_CONFIDENCE_MIN) return "ACTIVE";
+  if (confidence >= MANUAL_REVIEW_CONFIDENCE_MIN) return "MANUAL_REVIEW";
+  return "REJECTED";
+}
+
 function detectMatchType(score: number): string {
-  if (score >= 0.75) return "strong_title_similarity";
-  if (score >= 0.5) return "title_similarity";
-  return "fallback_title_similarity";
+  if (score >= ACTIVE_CONFIDENCE_MIN) return "strong_title_similarity";
+  if (score >= MANUAL_REVIEW_CONFIDENCE_MIN) return "manual_review_similarity";
+  return "weak_similarity_rejected";
 }
 
 type CandidateRow = {
@@ -142,35 +260,22 @@ type CandidateRow = {
 };
 
 type RankedCandidate = CandidateRow & {
-  rawScore: number;
-  rescored: number;
-  overlap: number;
   confidence: number;
-  mismatchPhrase: string | null;
+  matchStatus: MatchStatus;
+  quality: MatchQuality;
 };
 
 function chooseBestCandidate(rows: CandidateRow[]): RankedCandidate | null {
-  const minConfidence = Number(process.env.MATCH_MIN_CONFIDENCE || "0.65");
-  const minMarketplaceScore = Number(process.env.MATCH_MIN_MARKETPLACE_SCORE || "0.42");
-  const minOverlap = Number(process.env.MATCH_MIN_OVERLAP || "2");
-
   let best: RankedCandidate | null = null;
 
   for (const row of rows) {
     const supplierTitle = String(row.supplierTitle || "");
     const matchedTitle = String(row.matchedTitle || "");
+    if (!supplierTitle || !matchedTitle || !row.marketplaceListingId || !row.marketplaceKey) continue;
 
-    if (!supplierTitle || !matchedTitle || !row.marketplaceListingId || !row.marketplaceKey) {
-      continue;
-    }
-
-    const mismatchPhrase = hasSemanticMismatch(supplierTitle, matchedTitle);
-    const scored = computeConfidence(supplierTitle, matchedTitle, row.finalMatchScore);
-
-    if (mismatchPhrase) continue;
-    if (scored.rawScore < minMarketplaceScore) continue;
-    if (scored.overlap < minOverlap) continue;
-    if (scored.confidence < minConfidence) continue;
+    const quality = evaluateMatchQuality(row);
+    const matchStatus = confidenceStatus(quality.confidence);
+    if (matchStatus === "REJECTED") continue;
 
     const supplierImages = Array.isArray(row.supplierImages)
       ? row.supplierImages.filter((value): value is string => typeof value === "string")
@@ -185,9 +290,7 @@ function chooseBestCandidate(rows: CandidateRow[]): RankedCandidate | null {
         row.supplierRawPayload &&
         typeof row.supplierRawPayload === "object" &&
         !Array.isArray(row.supplierRawPayload)
-          ? normalizeSupplierQuality(
-              String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
-            )
+          ? normalizeSupplierQuality(String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? ""))
           : null,
       telemetrySignals:
         row.supplierRawPayload &&
@@ -198,55 +301,32 @@ function chooseBestCandidate(rows: CandidateRow[]): RankedCandidate | null {
           : [],
       supplierPrice: row.supplierPrice != null ? Number(row.supplierPrice) : null,
       marketplacePrice: row.marketplacePrice != null ? Number(row.marketplacePrice) : null,
-      matchConfidence: scored.confidence,
-    });
-    const supplierPrice = row.supplierPrice != null ? Number(row.supplierPrice) : null;
-    const marketplacePrice = row.marketplacePrice != null ? Number(row.marketplacePrice) : null;
-    const priceAlignmentStrong =
-      supplierPrice != null &&
-      marketplacePrice != null &&
-      supplierPrice > 0 &&
-      marketplacePrice >= supplierPrice * 1.5 &&
-      marketplacePrice <= supplierPrice * 5;
-    const matchDecision = evaluateMatchAcceptance({
-      confidence: scored.confidence,
-      titleSimilarityStrong: scored.rescored >= 0.68 || scored.overlap >= 3,
-      priceAlignmentStrong,
-      strongMedia: pipeline.strongMedia,
-      simpleLowRisk: pipeline.simpleLowRisk,
+      matchConfidence: quality.confidence,
     });
 
-    if (!matchDecision.accepted) continue;
+    if (!pipeline.eligible && !pipeline.manualReview) continue;
 
     const candidate: RankedCandidate = {
       ...row,
-      ...scored,
-      mismatchPhrase,
+      confidence: quality.confidence,
+      matchStatus,
+      quality,
     };
 
-    if (!best) {
+    if (!best || candidate.confidence > best.confidence) {
       best = candidate;
       continue;
     }
 
-    if (candidate.confidence > best.confidence) {
+    if (candidate.confidence === best.confidence && candidate.quality.marketplaceScore > best.quality.marketplaceScore) {
       best = candidate;
-      continue;
-    }
-
-    if (candidate.confidence === best.confidence && candidate.rawScore > best.rawScore) {
-      best = candidate;
-      continue;
     }
   }
 
   return best;
 }
 
-export async function runEbayMatches(input?: {
-  limit?: number;
-  productRawId?: string;
-}) {
+export async function runEbayMatches(input?: { limit?: number; productRawId?: string }) {
   const limit = Number(input?.limit ?? 50);
 
   const rows = input?.productRawId
@@ -267,12 +347,7 @@ export async function runEbayMatches(input?: {
         })
         .from(marketplacePrices)
         .innerJoin(productsRaw, eq(marketplacePrices.productRawId, productsRaw.id))
-        .where(
-          and(
-            eq(marketplacePrices.marketplaceKey, "ebay"),
-            eq(marketplacePrices.productRawId, input.productRawId),
-          )
-        )
+        .where(and(eq(marketplacePrices.marketplaceKey, "ebay"), eq(marketplacePrices.productRawId, input.productRawId)))
         .orderBy(desc(marketplacePrices.snapshotTs))
     : await db
         .select({
@@ -306,11 +381,10 @@ export async function runEbayMatches(input?: {
   let scanned = 0;
   let inserted = 0;
   let updated = 0;
+  let rejected = 0;
+  let manualReview = 0;
+  let active = 0;
   let skippedNoQualifiedCandidate = 0;
-
-  const minConfidence = Number(process.env.MATCH_MIN_CONFIDENCE || "0.45");
-  const minMarketplaceScore = Number(process.env.MATCH_MIN_MARKETPLACE_SCORE || "0.42");
-  const minOverlap = Number(process.env.MATCH_MIN_OVERLAP || "2");
 
   for (const [, productRows] of byProduct) {
     scanned++;
@@ -342,63 +416,19 @@ export async function runEbayMatches(input?: {
     const supplierKey = String(best.supplierKey || "").toLowerCase();
     const supplierProductId = String(best.supplierProductId || "");
     const matchedTitle = String(best.matchedTitle || "");
-    const supplierImages = Array.isArray(best.supplierImages)
-      ? best.supplierImages.filter((value): value is string => typeof value === "string")
-      : [];
-    const pipeline = evaluateProductPipelinePolicy({
-      title: String(best.supplierTitle || ""),
-      marketplaceTitle: matchedTitle,
-      supplierTitle: String(best.supplierTitle || ""),
-      imageUrl: supplierImages[0] ?? null,
-      additionalImageCount: Math.max(0, supplierImages.length - 1),
-      supplierQuality:
-        best.supplierRawPayload &&
-        typeof best.supplierRawPayload === "object" &&
-        !Array.isArray(best.supplierRawPayload)
-          ? normalizeSupplierQuality(
-              String((best.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? "")
-            )
-          : null,
-      telemetrySignals:
-        best.supplierRawPayload &&
-        typeof best.supplierRawPayload === "object" &&
-        !Array.isArray(best.supplierRawPayload) &&
-        Array.isArray((best.supplierRawPayload as Record<string, unknown>).telemetrySignals)
-          ? ((best.supplierRawPayload as Record<string, unknown>).telemetrySignals as string[])
-          : [],
-      supplierPrice: best.supplierPrice != null ? Number(best.supplierPrice) : null,
-      marketplacePrice: best.marketplacePrice != null ? Number(best.marketplacePrice) : null,
-      matchConfidence: best.confidence,
-    });
-    const priceAlignmentStrong =
-      best.supplierPrice != null &&
-      best.marketplacePrice != null &&
-      Number(best.supplierPrice) > 0 &&
-      Number(best.marketplacePrice) >= Number(best.supplierPrice) * 1.5 &&
-      Number(best.marketplacePrice) <= Number(best.supplierPrice) * 5;
-    const matchDecision = evaluateMatchAcceptance({
-      confidence: best.confidence,
-      titleSimilarityStrong: best.rescored >= 0.68 || best.overlap >= 3,
-      priceAlignmentStrong,
-      strongMedia: pipeline.strongMedia,
-      simpleLowRisk: pipeline.simpleLowRisk,
-    });
+    const status = confidenceStatus(best.confidence);
 
     const evidence = {
       supplierTitle: String(best.supplierTitle || ""),
       matchedTitle,
       marketplaceKey: best.marketplaceKey,
       marketplaceListingId: best.marketplaceListingId,
-      marketplacePriceScore: best.rawScore,
-      recomputedTitleSimilarity: best.rescored,
-      overlap: best.overlap,
-      acceptedConfidence: best.confidence,
-      minConfidence,
-      minMarketplaceScore,
-      minOverlap,
+      quality: best.quality,
+      confidenceThresholds: {
+        active: ACTIVE_CONFIDENCE_MIN,
+        manualReview: MANUAL_REVIEW_CONFIDENCE_MIN,
+      },
       selectionMode: "best_per_supplier_product",
-      pipelinePolicy: pipeline,
-      matchDecision,
     };
 
     await db
@@ -435,29 +465,32 @@ export async function runEbayMatches(input?: {
           matchType: detectMatchType(best.confidence),
           confidence: String(best.confidence),
           evidence,
-          status: "ACTIVE",
+          status,
           lastSeenTs: new Date(),
         })
         .where(eq(matches.id, existing[0].id));
 
       updated++;
-      continue;
+    } else {
+      await db.insert(matches).values({
+        supplierKey,
+        supplierProductId,
+        marketplaceKey: "ebay",
+        marketplaceListingId: String(best.marketplaceListingId),
+        matchType: detectMatchType(best.confidence),
+        confidence: String(best.confidence),
+        evidence,
+        status,
+        firstSeenTs: new Date(),
+        lastSeenTs: new Date(),
+      });
+
+      inserted++;
     }
 
-    await db.insert(matches).values({
-      supplierKey,
-      supplierProductId,
-      marketplaceKey: "ebay",
-      marketplaceListingId: String(best.marketplaceListingId),
-      matchType: detectMatchType(best.confidence),
-      confidence: String(best.confidence),
-      evidence,
-      status: "ACTIVE",
-      firstSeenTs: new Date(),
-      lastSeenTs: new Date(),
-    });
-
-    inserted++;
+    if (status === "ACTIVE") active++;
+    else if (status === "MANUAL_REVIEW") manualReview++;
+    else rejected++;
   }
 
   return {
@@ -465,10 +498,14 @@ export async function runEbayMatches(input?: {
     scanned,
     inserted,
     updated,
+    active,
+    manualReview,
+    rejected,
     skippedNoQualifiedCandidate,
-    minConfidence,
-    minMarketplaceScore,
-    minOverlap,
+    confidencePolicy: {
+      activeMin: ACTIVE_CONFIDENCE_MIN,
+      manualReviewMin: MANUAL_REVIEW_CONFIDENCE_MIN,
+    },
   };
 }
 

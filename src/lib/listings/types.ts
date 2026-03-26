@@ -113,6 +113,9 @@ export type EbayListingPreviewPayload = {
   categoryId?: string | null;
   categoryConfidence?: number | null;
   categoryRuleLabel?: string | null;
+  itemSpecifics?: Record<string, string | null>;
+  pricingHint?: string | null;
+  trustFlags?: string[];
 };
 
 export type ListingPreviewOutput = {

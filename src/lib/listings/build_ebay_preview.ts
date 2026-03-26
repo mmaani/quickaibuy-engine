@@ -1,9 +1,15 @@
+import { generateListingPack, isAiListingEngineEnabled } from "@/lib/ai/generateListingPack";
 import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
 import { generateListingDescription } from "./generateListingDescription";
 import { buildListingPreviewMedia } from "./media";
 import { optimizeListingTitle } from "./optimizeListingTitle";
 import type { EbayListingPreviewPayload, ListingPreviewInput, ListingPreviewOutput } from "./types";
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
 
 function pickTitle(input: ListingPreviewInput): string {
   return optimizeListingTitle({
@@ -24,19 +30,48 @@ function pickPrice(input: ListingPreviewInput): number {
   return 0;
 }
 
-export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutput {
+function extractSupplierFeatures(rawPayload: unknown): string[] {
+  const payload = objectOrNull(rawPayload);
+  const values = Array.isArray(payload?.features)
+    ? payload.features
+    : Array.isArray(payload?.featureBullets)
+      ? payload.featureBullets
+      : [];
+
+  return values
+    .map((entry) => String(entry ?? "").trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, 10);
+}
+
+function extractSupplierVariants(rawPayload: unknown): Array<Record<string, unknown>> {
+  const payload = objectOrNull(rawPayload);
+  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  return variants.filter((entry): entry is Record<string, unknown> => Boolean(objectOrNull(entry))).slice(0, 20);
+}
+
+export async function buildEbayPreview(input: ListingPreviewInput): Promise<ListingPreviewOutput> {
   const mediaStorageMode = getMediaStorageMode();
-  const title = pickTitle(input);
+  let title = pickTitle(input);
   const price = pickPrice(input);
   const quantity = 1;
   const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
   const media = buildListingPreviewMedia(input);
   const images = media.images.map((image) => image.url);
-  const description = generateListingDescription({
+  let description = generateListingDescription({
     title,
     supplierTitle: input.supplierTitle,
     supplierRawPayload: input.supplierRawPayload,
   });
+
+  let aiMetadata: Record<string, unknown> = {
+    enabled: isAiListingEngineEnabled(),
+    listingPackGenerated: false,
+    schemaPassed: false,
+    manualReviewRequired: false,
+    reason: null,
+    trustFlags: [],
+  };
 
   const payload: EbayListingPreviewPayload = {
     dryRun: true,
@@ -77,6 +112,73 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
     categoryRuleLabel: null,
   };
 
+  if (isAiListingEngineEnabled()) {
+    const listingPack = await generateListingPack({
+      supplierTitle: input.supplierTitle,
+      supplierRawPayload: input.supplierRawPayload,
+      supplierFeatures: extractSupplierFeatures(input.supplierRawPayload),
+      supplierMediaMetadata: {
+        imageCount: images.length,
+        hasVideo: media.audit.videoDetected,
+        selectedImageKinds: media.audit.selectedImageKinds ?? [],
+      },
+      supplierVariants: extractSupplierVariants(input.supplierRawPayload),
+      matchedMarketplaceEvidence: {
+        marketplaceTitle: input.marketplaceTitle,
+        marketplacePrice: input.marketplacePrice,
+        marketplaceListingId: input.marketplaceListingId,
+      },
+      pricingEconomicsSummary: {
+        estimatedProfit: input.estimatedProfit,
+        marginPct: input.marginPct,
+        roiPct: input.roiPct,
+        supplierPrice: input.supplierPrice,
+      },
+      sellerAccountTrustProfile: {
+        feedbackScore:
+          Number(process.env.EBAY_SELLER_FEEDBACK_SCORE ?? process.env.SELLER_FEEDBACK_SCORE ?? "0") || 0,
+        accountTier: String(process.env.EBAY_SELLER_ACCOUNT_TIER ?? "standard"),
+      },
+      heuristicCategory: {
+        categoryId: input.categoryId ?? null,
+        categoryName: null,
+        confidence: null,
+      },
+    });
+
+    if (listingPack.ok) {
+      title = listingPack.pack.optimized_title;
+      description = `${listingPack.pack.description}\n\nHighlights\n${listingPack.pack.bullet_points
+        .map((bullet) => `- ${bullet}`)
+        .join("\n")}`.trim();
+      payload.title = title;
+      payload.description = description;
+      payload.categoryId = listingPack.pack.category_id || payload.categoryId;
+      payload.itemSpecifics = listingPack.pack.item_specifics;
+      payload.pricingHint = listingPack.pack.pricing_hint;
+      payload.trustFlags = listingPack.pack.trust_flags;
+      aiMetadata = {
+        enabled: true,
+        listingPackGenerated: true,
+        schemaPassed: true,
+        manualReviewRequired: true,
+        reason: "HUMAN_REVIEW_REQUIRED_V1",
+        trustFlags: listingPack.pack.trust_flags,
+        confidence: listingPack.pack.confidence,
+      };
+    } else {
+      aiMetadata = {
+        enabled: true,
+        listingPackGenerated: false,
+        schemaPassed: false,
+        manualReviewRequired: true,
+        reason: listingPack.reason,
+        trustFlags: [],
+        diagnostics: listingPack.diagnostics,
+      };
+    }
+  }
+
   return {
     marketplaceKey: "ebay",
     title,
@@ -88,7 +190,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       previewVersion: "v1",
       liveApiCalled: false,
       titleLength: title.length,
-      categoryId: input.categoryId ?? null,
+      categoryId: payload.categoryId ?? null,
       description,
       imagesSelected: media.audit.imageSelectedCount,
       imageOrder: media.images.map((image) => ({
@@ -103,6 +205,7 @@ export function buildEbayPreview(input: ListingPreviewInput): ListingPreviewOutp
       videoAttached: media.audit.videoAttached,
       videoSkipReason: media.audit.videoSkipReason,
       operatorNote: media.audit.operatorNote,
+      aiListing: aiMetadata,
       imageNormalization: {
         code: "IMAGE_NORMALIZATION_PENDING",
         ok: false,
