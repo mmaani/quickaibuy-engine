@@ -139,6 +139,30 @@ assert(
   "audit should detect category name drift"
 );
 
+const auditWithUnknowns = auditLiveEbayListing({
+  liveListing: {
+    listingId: "live-2",
+    title: "Portable USB Fan Modern Leafless Mini Fan for Travel",
+    categoryId: "10034",
+    categoryName: null,
+    description: null,
+    itemSpecifics: {
+      connectivity: null,
+    },
+  },
+  generatedPack,
+  verifiedPack: corrected.data,
+});
+
+assert(
+  !auditWithUnknowns.correctionDraft.mismatches.some((entry) => entry.field === "category_name"),
+  "unknown live category name should not create a false mismatch"
+);
+assert(
+  !auditWithUnknowns.correctionDraft.mismatches.some((entry) => entry.field === "description"),
+  "unknown live description should not create a false mismatch"
+);
+
 console.log(
   JSON.stringify(
     {
@@ -146,6 +170,7 @@ console.log(
       correctedFields: corrected.data.corrected_fields,
       removedClaims: corrected.data.removed_claims,
       auditMismatchCount: audit.correctionDraft.mismatchCount,
+      unknownFieldMismatchCount: auditWithUnknowns.correctionDraft.mismatchCount,
     },
     null,
     2

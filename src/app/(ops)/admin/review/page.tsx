@@ -15,6 +15,7 @@ import {
   type ReviewListItem,
 } from "@/lib/review/console";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
+import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -859,6 +860,9 @@ export default async function ReviewPage({
                         {renderListingPayloadSummary(detail.candidate.listingPayload)}
                       </div>
                       {renderListingResponseSummary(detail.candidate.listingResponse)}
+                      <div className="mt-4">
+                        <AiListingDiagnostics listingResponse={detail.candidate.listingResponse} />
+                      </div>
                     </>
                   ) : (
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">

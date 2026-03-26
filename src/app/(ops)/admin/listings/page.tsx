@@ -13,6 +13,7 @@ import {
 import { LISTING_STATUSES } from "@/lib/listings/statuses";
 import type { RecoveryState } from "@/lib/listings/recoveryState";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
+import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -337,6 +338,9 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Pause reason" value={detail.item.pauseReason || "-"} />
                     <KeyValue label="Listing updated" value={formatDateTime(detail.item.listingUpdatedAt)} />
                     <KeyValue label="Latest recovery audit" value={detail.latestRecoveryAudit ? `${detail.latestRecoveryAudit.eventType} @ ${formatDateTime(detail.latestRecoveryAudit.eventTs)}` : "No recovery audit event found"} />
+                  </div>
+                  <div className="mt-4">
+                    <AiListingDiagnostics listingResponse={detail.item.listingResponse} />
                   </div>
                 </section>
 

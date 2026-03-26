@@ -36,6 +36,10 @@ function valuesDiffer(left: string | null, right: string | null): boolean {
   return (left ?? null) !== (right ?? null);
 }
 
+function shouldCompareLiveValue(value: string | null): value is string {
+  return value != null;
+}
+
 export function computeListingCorrectionDraft(input: {
   liveListing: LiveListingSnapshot;
   verifiedPack: VerifiedListingPackOutput;
@@ -51,28 +55,28 @@ export function computeListingCorrectionDraft(input: {
 
   const liveTitle = normalizeValue(input.liveListing.title);
   const verifiedTitle = normalizeValue(input.verifiedPack.verified_title);
-  if (valuesDiffer(liveTitle, verifiedTitle)) {
+  if (shouldCompareLiveValue(liveTitle) && valuesDiffer(liveTitle, verifiedTitle)) {
     pushMismatch("title", liveTitle, verifiedTitle, "live title diverges from verified preview");
     riskFlags.add("LIVE_TITLE_DRIFT");
   }
 
   const liveCategoryId = normalizeValue(input.liveListing.categoryId);
   const verifiedCategoryId = normalizeValue(input.verifiedPack.verified_category_id);
-  if (valuesDiffer(liveCategoryId, verifiedCategoryId)) {
+  if (shouldCompareLiveValue(liveCategoryId) && valuesDiffer(liveCategoryId, verifiedCategoryId)) {
     pushMismatch("category_id", liveCategoryId, verifiedCategoryId, "live category differs from verified category");
     riskFlags.add("LIVE_CATEGORY_DRIFT");
   }
 
   const liveCategoryName = normalizeValue(input.liveListing.categoryName ?? null);
   const verifiedCategoryName = normalizeValue(input.verifiedPack.verified_category_name);
-  if (valuesDiffer(liveCategoryName, verifiedCategoryName)) {
+  if (shouldCompareLiveValue(liveCategoryName) && valuesDiffer(liveCategoryName, verifiedCategoryName)) {
     pushMismatch("category_name", liveCategoryName, verifiedCategoryName, "live category name differs from verified category");
     riskFlags.add("LIVE_CATEGORY_NAME_DRIFT");
   }
 
   const liveDescription = normalizeValue(input.liveListing.description);
   const verifiedDescription = normalizeValue(input.verifiedPack.verified_description);
-  if (valuesDiffer(liveDescription, verifiedDescription)) {
+  if (shouldCompareLiveValue(liveDescription) && valuesDiffer(liveDescription, verifiedDescription)) {
     pushMismatch("description", liveDescription, verifiedDescription, "live description differs from verified preview");
     riskFlags.add("LIVE_DESCRIPTION_DRIFT");
   }
@@ -81,7 +85,7 @@ export function computeListingCorrectionDraft(input: {
   for (const [key, verifiedValueRaw] of Object.entries(input.verifiedPack.verified_item_specifics)) {
     const verifiedValue = normalizeValue(verifiedValueRaw);
     const liveValue = normalizeValue(liveSpecifics[key] ?? null);
-    if (!valuesDiffer(liveValue, verifiedValue)) continue;
+    if (!shouldCompareLiveValue(liveValue) || !valuesDiffer(liveValue, verifiedValue)) continue;
     pushMismatch(`item_specifics.${key}`, liveValue, verifiedValue, "live item specific differs from verified preview");
     riskFlags.add("LIVE_ITEM_SPECIFICS_DRIFT");
   }
