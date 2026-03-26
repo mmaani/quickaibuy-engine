@@ -127,9 +127,15 @@ export function inferListingValidity(rawText: string): {
     return { status: "INVALID", reason: sliceEvidence(invalidMatch[0]) };
   }
 
-  const staleMatch = compact.match(
-    /(similar items|search result|sponsored|recommended|security verification|challenge|captcha)/i
-  );
+  const cautionMatch = compact.match(/(similar items|search result|sponsored|recommended)/i);
+  const hasProductCardSignals =
+    /(?:!\[image \d+:|https?:\/\/[^\s)]*(?:alicdn\.com|aliexpress-media\.com))/i.test(compact) &&
+    /(###\s+[^\n$]{8,220}|\$[0-9]+(?:\.[0-9]{1,2})?|\b[0-5]\.[0-9]\b|\b[0-9][0-9,]*\+?\s+sold\b)/i.test(compact);
+  if (cautionMatch && !hasProductCardSignals) {
+    return { status: "POSSIBLE_STALE", reason: sliceEvidence(cautionMatch[0]) };
+  }
+
+  const staleMatch = compact.match(/(security verification|challenge|captcha)/i);
   if (staleMatch) {
     return { status: "POSSIBLE_STALE", reason: sliceEvidence(staleMatch[0]) };
   }

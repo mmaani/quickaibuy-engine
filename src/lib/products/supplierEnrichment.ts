@@ -60,6 +60,11 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function asPositiveNumber(value: unknown): number | null {
+  const parsed = asNumber(value);
+  return parsed != null && parsed > 0 ? parsed : null;
+}
+
 function sanitizeTitle(value: string | null): string | null {
   if (!value) return null;
   const cleaned = value
@@ -133,14 +138,15 @@ function deriveShippingDetails(
   shippingConfidence: number;
 } {
   const directConfidence = normalizeAvailabilityConfidence(rawPayload.shippingConfidence);
+  const rawShippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
   const directMethod =
     asString(rawPayload.shippingMethod) ??
     asString(rawPayload.shippingBadge) ??
     asString(rawPayload.shippingEvidenceText);
   const directPrice = asString(rawPayload.shippingPriceExplicit);
   const directFree = asBoolean(rawPayload.freeShippingExplicit);
-  const directMin = asNumber(rawPayload.deliveryEstimateMinDays);
-  const directMax = asNumber(rawPayload.deliveryEstimateMaxDays);
+  const directMin = asPositiveNumber(rawPayload.deliveryEstimateMinDays);
+  const directMax = asPositiveNumber(rawPayload.deliveryEstimateMaxDays);
 
   const estimate = shippingEstimates.find((candidate) => {
     const label = String(candidate.label ?? "").toLowerCase();
@@ -163,6 +169,12 @@ function deriveShippingDetails(
   const shippingMethod = directMethod ?? label;
   const deliveryEstimateMinDays = directMin ?? estimate?.etaMinDays ?? null;
   const deliveryEstimateMaxDays = directMax ?? estimate?.etaMaxDays ?? null;
+  const hasShippingEvidence =
+    shippingPriceExplicit != null ||
+    freeShippingExplicit === true ||
+    shippingMethod != null ||
+    deliveryEstimateMinDays != null ||
+    deliveryEstimateMaxDays != null;
 
   let shippingConfidence =
     directConfidence ??
@@ -173,6 +185,10 @@ function deriveShippingDetails(
         : shippingMethod
           ? 0.62
           : 0.2);
+
+  if (!hasShippingEvidence || rawShippingSignal === "MISSING") {
+    shippingConfidence = Math.min(shippingConfidence, 0.2);
+  }
 
   if (freeShippingExplicit === true && shippingConfidence < 0.82) {
     shippingConfidence = 0.82;
