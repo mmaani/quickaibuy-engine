@@ -18,6 +18,8 @@ import {
 import { sql } from "drizzle-orm";
 import { calculateRealProfit } from "./realProfitCalculator";
 import { getPriceGuardThresholds } from "./priceGuardConfig";
+import { resolvePricingDestinationForMarketplace } from "@/lib/pricing/destinationResolver";
+import { resolveShippingCost } from "@/lib/pricing/shippingCalculator";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -53,6 +55,7 @@ type ExistingCandidateState = {
   listingEligible: boolean | null;
   listingBlockReason: string | null;
   expectedSupplierPrice: string | null;
+  expectedShipping: string | null;
 };
 
 type CandidateOption = {
@@ -65,6 +68,17 @@ type CandidateOption = {
   supplierCost: number;
   marketPrice: number;
   shipping: number;
+  shippingReserve: number;
+  destinationCountry: string;
+  shippingResolutionMode: string;
+  shippingQuoteAgeHours: number | null;
+  shippingConfidence: number | null;
+  shippingOriginCountry: string | null;
+  shippingSourceType: string | null;
+  shippingErrorReason: string | null;
+  deliveryEstimateMaxDays: number | null;
+  landedSupplierCost: number;
+  shippingDriftDetected: boolean;
   supplierSnapshotAgeHours: number | null;
   marketplaceSnapshotAgeHours: number | null;
   availabilitySignal: string;
@@ -79,6 +93,7 @@ type CandidateOption = {
   marginPct: number;
   roiPct: number;
   staleMarketplaceSnapshot: boolean;
+  shippingUnsafe: boolean;
   supplierDriftExceeded: boolean;
   availabilityUnsafe: boolean;
   availabilityManualReview: boolean;
@@ -153,6 +168,8 @@ function describeCandidateOption(option: CandidateOption): string {
     `pipeline ${option.pipeline.score}`,
     `match ${round2(option.matchConfidence)}`,
     `supplier_age ${option.supplierSnapshotAgeHours ?? "n/a"}h`,
+    `shipping ${round2(option.shipping)} + reserve ${round2(option.shippingReserve)}`,
+    `landed ${round2(option.landedSupplierCost)}`,
   ].join(" | ");
 }
 
@@ -162,9 +179,11 @@ function chooseBestSupplierOption(options: CandidateOption[]): CandidateOption {
       Number(left.listingEligible) - Number(right.listingEligible),
       Number(left.decisionStatus === "APPROVED") - Number(right.decisionStatus === "APPROVED"),
       Number(!left.staleMarketplaceSnapshot) - Number(!right.staleMarketplaceSnapshot),
+      Number(!left.shippingUnsafe) - Number(!right.shippingUnsafe),
       Number(!left.availabilityManualReview && !left.availabilityUnsafe) -
         Number(!right.availabilityManualReview && !right.availabilityUnsafe),
       compareNullableNumbersDesc(left.availabilityConfidence, right.availabilityConfidence),
+      compareNullableNumbersAsc(left.landedSupplierCost, right.landedSupplierCost),
       compareNullableNumbersDesc(left.estimatedProfit, right.estimatedProfit),
       compareNullableNumbersDesc(left.roiPct, right.roiPct),
       compareNullableNumbersDesc(left.marginPct, right.marginPct),
@@ -383,45 +402,9 @@ export async function runProfitEngine(input?: {
   let insertedOrUpdated = 0;
   let skipped = 0;
 
-  const acceptedRows: ProfitRow[] = [];
-
-  for (const row of rows) {
-    const matchConfidence = toNum(row.confidence) ?? 0;
-    if (matchConfidence < minMatchConfidence) {
-      skipped++;
-      continue;
-    }
-
-    const supplierCost = toNum(row.supplierPriceMin);
-    const marketPrice = toNum(row.marketPrice);
-    const shipping = toNum(row.shippingPrice) ?? 0;
-
-    if (supplierCost == null || marketPrice == null) {
-      skipped++;
-      continue;
-    }
-
-    const economics = calculateRealProfit({
-      marketplaceKey: row.marketplaceKey,
-      supplierPriceUsd: supplierCost,
-      marketplacePriceUsd: marketPrice,
-      shippingPriceUsd: shipping,
-    });
-
-    const roiPct = economics.roiPct;
-    const marginPct = economics.marginPct;
-
-    if (roiPct < minRoiPct || marginPct < minMarginPct) {
-      skipped++;
-      continue;
-    }
-
-    acceptedRows.push(row);
-  }
-
   const candidateOptions: CandidateOption[] = [];
 
-  for (const row of acceptedRows) {
+  for (const row of rows) {
     const now = new Date();
     const normalizedSupplierKey = String(row.supplierKey || "").toLowerCase();
     const supplierProductId = String(row.supplierProductId ?? "").trim();
@@ -429,9 +412,22 @@ export async function runProfitEngine(input?: {
     const marketplaceListingId = String(row.marketplaceListingId ?? "").trim();
 
     const matchConfidence = toNum(row.confidence) ?? 0;
-    const supplierCost = toNum(row.supplierPriceMin) ?? 0;
-    const marketPrice = toNum(row.marketPrice) ?? 0;
-    const shipping = toNum(row.shippingPrice) ?? 0;
+    const supplierCost = toNum(row.supplierPriceMin);
+    const marketPrice = toNum(row.marketPrice);
+    if (matchConfidence < minMatchConfidence || supplierCost == null || marketPrice == null) {
+      skipped++;
+      continue;
+    }
+    const destinationCountry = resolvePricingDestinationForMarketplace(marketplaceKey);
+    const shippingResolution = await resolveShippingCost({
+      supplierKey: normalizedSupplierKey,
+      supplierProductId,
+      destinationCountry,
+      shippingEstimates: row.supplierShippingEstimates,
+    });
+    const shipping = round2(shippingResolution.shippingCostUsd + shippingResolution.shippingReserveUsd);
+    const shippingReserve = shippingResolution.shippingReserveUsd;
+    const landedSupplierCost = round2(supplierCost + shipping);
     const supplierSnapshotAgeHours = computeAgeHours(now, toDate(row.supplierSnapshotTs));
     const marketplaceSnapshotAgeHours = computeAgeHours(now, toDate(row.marketSnapshotTs));
     const availability = extractAvailabilityFromRawPayload({
@@ -445,6 +441,7 @@ export async function runProfitEngine(input?: {
         pc.decision_status AS "decisionStatus",
         pc.listing_eligible AS "listingEligible",
         pc.listing_block_reason AS "listingBlockReason",
+        pc.estimated_shipping::text AS "expectedShipping",
         ps.price_min::text AS "expectedSupplierPrice"
       FROM profitable_candidates pc
       LEFT JOIN products_raw ps
@@ -457,9 +454,12 @@ export async function runProfitEngine(input?: {
     `);
     const existing = existingResult.rows?.[0];
     const expectedSupplierPrice = toNum(existing?.expectedSupplierPrice);
+    const expectedShipping = toNum(existing?.expectedShipping);
     const supplierPriceDriftPct = computePctChange(expectedSupplierPrice, supplierCost);
+    const shippingPriceDriftPct = computePctChange(expectedShipping, shipping);
     const supplierDriftExceeded =
       supplierPriceDriftPct != null && Math.abs(supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT;
+    const shippingDriftDetected = shippingPriceDriftPct != null && Math.abs(shippingPriceDriftPct) >= 8;
     const staleMarketplaceSnapshot =
       marketplaceSnapshotAgeHours != null &&
       marketplaceSnapshotAgeHours > maxMarketplaceSnapshotAgeHours;
@@ -551,6 +551,7 @@ export async function runProfitEngine(input?: {
       telemetrySignals,
     });
     const supplierEvidenceCodes = supplierEvidence.codes;
+    const shippingUnsafe = Boolean(shippingResolution.errorReason);
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const pipelineHardBlocked = pipeline.flags.some((flag) => PIPELINE_HARD_BLOCK_FLAGS.has(flag));
     const matchRoutingStatus = getMatchRoutingStatus(matchConfidence);
@@ -559,6 +560,7 @@ export async function runProfitEngine(input?: {
       !staleMarketplaceSnapshot &&
       !supplierDriftExceeded &&
       !supplierEvidence.manualReview &&
+      !shippingUnsafe &&
       !marginOrRoiFailed &&
       !pipelineHardBlocked;
     const decisionStatus =
@@ -566,7 +568,7 @@ export async function runProfitEngine(input?: {
         ? "REJECTED"
         : matchRoutingStatus === "MANUAL_REVIEW"
           ? "MANUAL_REVIEW"
-          : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview
+        : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview || shippingUnsafe
         ? "MANUAL_REVIEW"
         : marginOrRoiFailed || pipelineHardBlocked
           ? "MANUAL_REVIEW"
@@ -582,6 +584,8 @@ export async function runProfitEngine(input?: {
       ? `marketplace snapshot age ${marketplaceSnapshotAgeHours}h exceeds ${maxMarketplaceSnapshotAgeHours}h`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
+      : shippingResolution.errorReason
+      ? `shipping intelligence unresolved: ${shippingResolution.errorReason}`
       : supplierEvidence.manualReview && supplierEvidenceCodes.length
         ? formatSupplierEvidenceBlockReason(supplierEvidenceCodes)
           : marginOrRoiFailed
@@ -598,6 +602,8 @@ export async function runProfitEngine(input?: {
         ? ["STALE_MARKETPLACE_SNAPSHOT"]
         : supplierDriftExceeded
           ? ["SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT"]
+          : shippingResolution.errorReason
+            ? [shippingResolution.errorReason]
           : supplierEvidenceCodes.length
             ? Array.from(new Set([...supplierEvidenceCodes, ...pipeline.flags]))
             : marginOrRoiFailed
@@ -612,6 +618,19 @@ export async function runProfitEngine(input?: {
       fxReservePct: economics.assumptions.fxReservePct,
       shippingVariancePct: economics.assumptions.shippingVariancePct,
       costBreakdown: economics.costs,
+      shippingBreakdown: {
+        destinationCountry,
+        originCountry: shippingResolution.resolvedOriginCountry,
+        baseShippingCostUsd: shippingResolution.shippingCostUsd,
+        shippingReserveUsd: shippingResolution.shippingReserveUsd,
+        totalShippingUsd: shipping,
+        resolutionMode: shippingResolution.resolutionMode,
+        quoteAgeHours: shippingResolution.quoteAgeHours,
+        sourceConfidence: shippingResolution.sourceConfidence,
+        sourceType: shippingResolution.sourceType,
+        shippingErrorReason: shippingResolution.errorReason,
+        shippingDriftDetected,
+      },
       matchConfidence,
       matchType: row.matchType,
       selectionMode: "latest_best_active_match_per_supplier_product",
@@ -630,6 +649,8 @@ export async function runProfitEngine(input?: {
       ? `marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} > ${maxMarketplaceSnapshotAgeHours} | roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence}`
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
+      : shippingResolution.errorReason
+      ? `shipping intelligence failed | reason ${shippingResolution.errorReason} | mode ${shippingResolution.resolutionMode} | quote_age_hours ${shippingResolution.quoteAgeHours ?? "n/a"} | destination ${destinationCountry}`
       : supplierEvidence.manualReview && supplierEvidenceCodes.length
         ? `supplier evidence review required | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
       : marginOrRoiFailed
@@ -650,6 +671,17 @@ export async function runProfitEngine(input?: {
       supplierCost,
       marketPrice,
       shipping,
+      shippingReserve,
+      destinationCountry,
+      shippingResolutionMode: shippingResolution.resolutionMode,
+      shippingQuoteAgeHours: shippingResolution.quoteAgeHours,
+      shippingConfidence: shippingResolution.sourceConfidence,
+      shippingOriginCountry: shippingResolution.resolvedOriginCountry,
+      shippingSourceType: shippingResolution.sourceType,
+      shippingErrorReason: shippingResolution.errorReason,
+      deliveryEstimateMaxDays: shippingResolution.deliveryEstimateMaxDays,
+      landedSupplierCost,
+      shippingDriftDetected,
       supplierSnapshotAgeHours,
       marketplaceSnapshotAgeHours,
       availabilitySignal,
@@ -664,6 +696,7 @@ export async function runProfitEngine(input?: {
       marginPct,
       roiPct,
       staleMarketplaceSnapshot,
+      shippingUnsafe,
       supplierDriftExceeded,
       availabilityUnsafe: supplierEvidenceCodes.includes("SUPPLIER_OUT_OF_STOCK"),
       availabilityManualReview: supplierEvidence.manualReview,
@@ -752,6 +785,18 @@ export async function runProfitEngine(input?: {
     const peerOptions = candidateOptions.filter(
       (candidate) => buildSelectionGroupKey(candidate) === buildSelectionGroupKey(option)
     );
+    const landedCostRanking = [...peerOptions]
+      .sort((left, right) => left.landedSupplierCost - right.landedSupplierCost)
+      .map((candidate, index) => ({
+        rank: index + 1,
+        supplierKey: candidate.normalizedSupplierKey,
+        supplierProductId: candidate.supplierProductId,
+        landedCostUsd: round2(candidate.landedSupplierCost),
+        shippingCostUsd: round2(candidate.shipping),
+        shippingMode: candidate.shippingResolutionMode,
+        shippingErrorReason: candidate.shippingErrorReason,
+        listingEligible: candidate.listingEligible,
+      }));
     const selectionSummary = describeCandidateOption(option);
     const alternativeSourceCount = Math.max(0, peerOptions.length - 1);
     const estimatedFeesJson = {
@@ -765,6 +810,18 @@ export async function runProfitEngine(input?: {
         selectionGroupKey: buildSelectionGroupKey(option),
         selectionSummary,
         alternativeSourceCount,
+        selectedLandedCostUsd: round2(option.landedSupplierCost),
+        selectedShippingCostUsd: round2(option.shipping),
+        shippingOriginCountry: option.shippingOriginCountry,
+        shippingDestinationCountry: option.destinationCountry,
+        shippingResolutionMode: option.shippingResolutionMode,
+        shippingQuoteAgeHours: option.shippingQuoteAgeHours,
+        shippingSourceConfidence: option.shippingConfidence,
+        shippingErrorReason: option.shippingErrorReason,
+        supplierSelectionReason: option.listingEligible
+          ? "CHEAPEST_VIABLE_LANDED_COST"
+          : "NO_FULLY_VIABLE_SUPPLIER_MANUAL_REVIEW",
+        landedCostRanking,
         consideredSources: peerOptions
           .map((candidate) => candidate.normalizedSupplierKey)
           .sort((left, right) => left.localeCompare(right)),

@@ -316,6 +316,16 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     />
                     <KeyValue label="Marketplace" value={`${detail.item.marketplaceKey} / ${detail.item.marketplaceListingId}`} />
                     <KeyValue label="Estimated profit" value={formatMoney(detail.item.estimatedProfit)} />
+                    <KeyValue label="Shipping cost component" value={formatMoney(detail.item.shippingCostComponent)} />
+                    <KeyValue
+                      label="Shipping route"
+                      value={`${detail.item.shippingOriginCountry ?? "?"} → ${detail.item.shippingDestinationCountry ?? "?"}`}
+                    />
+                    <KeyValue
+                      label="Shipping quote age"
+                      value={detail.item.shippingQuoteAgeHours == null ? "-" : `${detail.item.shippingQuoteAgeHours}h`}
+                    />
+                    <KeyValue label="Shipping mode" value={detail.item.shippingResolutionMode ?? "-"} />
                     <KeyValue label="Margin / ROI" value={`${formatPercent(detail.item.marginPct)} / ${formatPercent(detail.item.roiPct)}`} />
                     <KeyValue label="Approved at" value={formatDateTime(detail.item.approvedTs)} />
                     <KeyValue label="Approved by" value={detail.item.approvedBy ?? "-"} />
@@ -337,6 +347,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Paused by inventory risk" value={detail.item.pausedByInventoryRisk ? "YES" : "NO"} />
                     <KeyValue label="Pause reason" value={detail.item.pauseReason || "-"} />
                     <KeyValue label="Listing updated" value={formatDateTime(detail.item.listingUpdatedAt)} />
+                    <KeyValue label="Reprice action" value={detail.item.repriceAction ?? "-"} />
+                    <KeyValue label="Reprice reason" value={detail.item.repriceLastReason ?? "-"} />
+                    <KeyValue label="Last reprice eval" value={formatDateTime(detail.item.repriceLastEvaluatedTs)} />
+                    <KeyValue label="Last reprice applied" value={formatDateTime(detail.item.repriceLastAppliedTs)} />
                     <KeyValue label="Latest recovery audit" value={detail.latestRecoveryAudit ? `${detail.latestRecoveryAudit.eventType} @ ${formatDateTime(detail.latestRecoveryAudit.eventTs)}` : "No recovery audit event found"} />
                   </div>
                   <div className="mt-4">
