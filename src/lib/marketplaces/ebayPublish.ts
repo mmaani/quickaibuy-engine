@@ -22,7 +22,6 @@ export type EbayPublishResult = {
   raw?: unknown;
   errorMessage?: string | null;
 };
-
 export type EbayPublishConfig = {
   websiteUrl: string;
   clientId: string;
@@ -690,6 +689,44 @@ function resolveShippingTransparency(payload: Record<string, unknown>, shipFromC
   return null;
 }
 
+export function validateEbayPublishPayloadRequirements(payloadInput: unknown): {
+  ok: boolean;
+  shipFromCountry: string | null;
+  shippingTransparency: {
+    handlingDaysMin: number;
+    handlingDaysMax: number;
+    shippingDaysMin: number;
+    shippingDaysMax: number;
+    mode: "international";
+    source: "cn-default" | "payload";
+  } | null;
+  errors: string[];
+} {
+  const payload = sanitizeEbayPayload(payloadInput);
+  const shipFromCountry = resolveShipFromCountry(payload);
+  const shippingTransparency = resolveShippingTransparency(payload, shipFromCountry);
+  const errors: string[] = [];
+
+  if (!shipFromCountry) {
+    errors.push(
+      "Missing normalized supplier ship-from country. Provide supplier_warehouse_country (preferred) or ship_from_country so eBay publish can set item origin explicitly."
+    );
+  }
+
+  if (!shippingTransparency) {
+    errors.push(
+      "Missing shipping transparency for supplier fulfillment. Provide handling/shipping timing or keep supplier country clear enough for fail-closed defaults."
+    );
+  }
+
+  return {
+    ok: errors.length === 0,
+    shipFromCountry,
+    shippingTransparency,
+    errors,
+  };
+}
+
 function resolveMerchantLocationForShipFromCountry(input: {
   config: EbayPublishConfig;
   shipFromCountry: string | null;
@@ -1222,26 +1259,15 @@ function resolveCategoryId(payload: Record<string, unknown>, config: EbayPublish
 
 export async function validateEbayPublishPreflight(payloadInput: unknown): Promise<EbayPublishPreflightResult> {
   const payload = sanitizeEbayPayload(payloadInput);
-  const shipFromCountry = resolveShipFromCountry(payload);
-  const shippingTransparency = resolveShippingTransparency(payload, shipFromCountry);
+  const payloadRequirements = validateEbayPublishPayloadRequirements(payload);
+  const shipFromCountry = payloadRequirements.shipFromCountry;
+  const shippingTransparency = payloadRequirements.shippingTransparency;
 
   const envValidation = buildEbayPublishConfigValidation();
-  const errors = [...envValidation.errors];
+  const errors = [...envValidation.errors, ...payloadRequirements.errors];
   const warnings: string[] = [];
   let resolvedMerchantLocationKey: string | null = null;
   let resolvedMerchantLocationSource: "configured-default" | null = null;
-
-  if (!shipFromCountry) {
-    errors.push(
-      "Missing normalized supplier ship-from country. Provide supplier_warehouse_country (preferred) or ship_from_country so eBay publish can set item origin explicitly."
-    );
-  }
-
-  if (!shippingTransparency) {
-    errors.push(
-      "Missing shipping transparency for supplier fulfillment. Provide handling/shipping timing or keep supplier country clear enough for fail-closed defaults."
-    );
-  }
 
   let inventoryLocationFound = false;
   let inventoryLocations: EbayInventoryLocationSummary[] = [];

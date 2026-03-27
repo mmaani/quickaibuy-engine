@@ -52,12 +52,67 @@ function extractSupplierVariants(rawPayload: unknown): Array<Record<string, unkn
   return variants.filter((entry): entry is Record<string, unknown> => Boolean(objectOrNull(entry))).slice(0, 20);
 }
 
+function toPositiveInt(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function extractShippingEstimateBounds(rawPayload: unknown): {
+  shippingDaysMin: number | null;
+  shippingDaysMax: number | null;
+} {
+  const payload = objectOrNull(rawPayload);
+  const directMin =
+    toPositiveInt(payload?.deliveryEstimateMinDays) ??
+    toPositiveInt(payload?.delivery_estimate_min_days) ??
+    toPositiveInt(payload?.shippingTimeMinDays) ??
+    toPositiveInt(payload?.shipping_time_min_days);
+  const directMax =
+    toPositiveInt(payload?.deliveryEstimateMaxDays) ??
+    toPositiveInt(payload?.delivery_estimate_max_days) ??
+    toPositiveInt(payload?.shippingTimeMaxDays) ??
+    toPositiveInt(payload?.shipping_time_max_days);
+
+  if (directMin && directMax) {
+    return {
+      shippingDaysMin: directMin,
+      shippingDaysMax: directMax,
+    };
+  }
+
+  const estimates = Array.isArray(payload?.shippingEstimates)
+    ? payload.shippingEstimates
+    : Array.isArray(payload?.shipping_estimates)
+      ? payload.shipping_estimates
+      : [];
+  const firstEstimate = estimates.find(
+    (entry) =>
+      Boolean(objectOrNull(entry)) &&
+      (toPositiveInt((entry as Record<string, unknown>).etaMinDays) ||
+        toPositiveInt((entry as Record<string, unknown>).etaMaxDays) ||
+        toPositiveInt((entry as Record<string, unknown>).eta_min_days) ||
+        toPositiveInt((entry as Record<string, unknown>).eta_max_days))
+  ) as Record<string, unknown> | undefined;
+
+  return {
+    shippingDaysMin:
+      toPositiveInt(firstEstimate?.etaMinDays) ?? toPositiveInt(firstEstimate?.eta_min_days),
+    shippingDaysMax:
+      toPositiveInt(firstEstimate?.etaMaxDays) ??
+      toPositiveInt(firstEstimate?.eta_max_days) ??
+      toPositiveInt(firstEstimate?.etaMinDays) ??
+      toPositiveInt(firstEstimate?.eta_min_days),
+  };
+}
+
 export async function buildEbayPreview(input: ListingPreviewInput): Promise<ListingPreviewOutput> {
   const mediaStorageMode = getMediaStorageMode();
   let title = pickTitle(input);
   const price = pickPrice(input);
   const quantity = 1;
   const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
+  const shippingEstimate = extractShippingEstimateBounds(input.supplierRawPayload);
   const media = buildListingPreviewMedia(input);
   const images = media.images.map((image) => image.url);
   let description = generateListingDescription({
@@ -84,6 +139,10 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
     quantity,
     condition: "NEW",
     shipFromCountry,
+    handlingDaysMin: shipFromCountry ? 2 : null,
+    handlingDaysMax: shipFromCountry ? 3 : null,
+    shippingDaysMin: shippingEstimate.shippingDaysMin,
+    shippingDaysMax: shippingEstimate.shippingDaysMax,
     images,
     media,
     description,

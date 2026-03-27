@@ -89,6 +89,10 @@ export type EbayListingPreviewPayload = {
   quantity: number;
   condition: "NEW";
   shipFromCountry: string | null;
+  handlingDaysMin?: number | null;
+  handlingDaysMax?: number | null;
+  shippingDaysMin?: number | null;
+  shippingDaysMax?: number | null;
   images?: string[];
   media?: ListingPreviewMedia;
   description?: string | null;

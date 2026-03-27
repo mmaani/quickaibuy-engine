@@ -5,7 +5,10 @@ import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePol
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
-import { validateEbayImageHosting } from "@/lib/marketplaces/ebayPublish";
+import {
+  validateEbayImageHosting,
+  validateEbayPublishPayloadRequirements,
+} from "@/lib/marketplaces/ebayPublish";
 import {
   LISTING_ACTIVE_PATH_STATUSES,
   LISTING_PREVIEW_STATUS,
@@ -248,6 +251,45 @@ export async function markListingReadyToPublish(
       marketplaceKey,
       previousStatus,
       reason: imageState.reason,
+    };
+  }
+
+  const publishPayloadGate = validateEbayPublishPayloadRequirements(payload);
+  if (!publishPayloadGate.ok) {
+    const reason = `ebay publish payload gate failed: ${publishPayloadGate.errors.join(" | ")}`;
+
+    await db.execute(sql`
+      UPDATE profitable_candidates
+      SET
+        listing_eligible = FALSE,
+        listing_block_reason = ${`LISTING_PUBLISH_PAYLOAD_GATE_FAILED: ${publishPayloadGate.errors.join(" | ")}`},
+        listing_eligible_ts = NOW()
+      WHERE id = ${candidateId}
+    `);
+
+    await writeAuditLog({
+      actorType,
+      actorId,
+      entityType: "LISTING",
+      entityId: input.listingId,
+      eventType: "LISTING_READY_BLOCKED_PUBLISH_PAYLOAD",
+      details: {
+        listingId: input.listingId,
+        candidateId,
+        marketplaceKey,
+        errors: publishPayloadGate.errors,
+        shipFromCountry: publishPayloadGate.shipFromCountry,
+        shippingTransparency: publishPayloadGate.shippingTransparency,
+      },
+    });
+
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason,
     };
   }
 

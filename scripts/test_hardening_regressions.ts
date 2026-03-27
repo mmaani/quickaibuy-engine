@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import { getInventoryRiskRecurringJobId, getInventoryRiskScheduleSnapshotFromEntries, INVENTORY_RISK_SCAN_EVERY_MS } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
 import { computeRecoveryState } from "@/lib/listings/recoveryState";
-import { sanitizeEbayPayload } from "@/lib/marketplaces/ebayPublish";
+import { sanitizeEbayPayload, validateEbayPublishPayloadRequirements } from "@/lib/marketplaces/ebayPublish";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -20,7 +20,7 @@ function testFollowUpJobIds() {
     productRawId: "raw-456",
     limit: 25,
   });
-  assert(productScoped === "MATCH_PRODUCT:raw-456", `unexpected product-scoped id: ${productScoped}`);
+  assert(productScoped === "MATCH_PRODUCT-raw-456", `unexpected product-scoped id: ${productScoped}`);
 
   const batchScoped = buildFollowUpJobId({
     jobName: "EVAL_PROFIT",
@@ -28,7 +28,7 @@ function testFollowUpJobIds() {
     limit: 50,
   });
   assert(
-    batchScoped === "EVAL_PROFIT:from:match-789:limit:50",
+    batchScoped === "EVAL_PROFIT-from-match-789-limit-50",
     `unexpected batch-scoped id: ${batchScoped}`
   );
 }
@@ -104,11 +104,38 @@ function testSanitizeEbayPayloadSourceFields() {
   );
 }
 
+function testEbayPublishPayloadRequirements() {
+  const blocked = validateEbayPublishPayloadRequirements({
+    title: "Test",
+    source: {
+      supplierWarehouseCountry: null,
+      shipFromCountry: null,
+    },
+  });
+  assert(!blocked.ok, "payload without ship-from/transparency must fail");
+  assert(
+    blocked.errors.some((error) => error.includes("ship-from country")),
+    "missing ship-from country error should be reported"
+  );
+  assert(
+    blocked.errors.some((error) => error.includes("shipping transparency")),
+    "missing shipping transparency error should be reported"
+  );
+
+  const allowed = validateEbayPublishPayloadRequirements({
+    title: "Test",
+    shipFromCountry: "CN",
+  });
+  assert(allowed.ok, "CN ship-from payload should pass with fail-closed CN transparency defaults");
+  assert(allowed.shippingTransparency?.shippingDaysMin === 7, "expected CN default shipping transparency");
+}
+
 async function main() {
   testFollowUpJobIds();
   testInventoryRiskScheduleSnapshot();
   testRecoveryStateClassification();
   testSanitizeEbayPayloadSourceFields();
+  testEbayPublishPayloadRequirements();
   console.log(JSON.stringify({ ok: true, script: "test_hardening_regressions" }, null, 2));
 }
 
