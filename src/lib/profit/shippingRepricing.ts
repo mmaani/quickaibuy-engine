@@ -21,6 +21,7 @@ type ActiveListingCandidateRow = {
   supplierProductId: string;
   supplierPriceMin: string | null;
   supplierShippingEstimates: unknown;
+  supplierRawPayload: unknown;
   previousEstimatedShipping: string | null;
   previousEstimatedCogs: string | null;
   previousRepriceEvalTs: Date | string | null;
@@ -66,6 +67,7 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
       pc.supplier_product_id AS "supplierProductId",
       pr.price_min::text AS "supplierPriceMin",
       pr.shipping_estimates AS "supplierShippingEstimates",
+      pr.raw_payload AS "supplierRawPayload",
       pc.estimated_shipping::text AS "previousEstimatedShipping",
       pc.estimated_cogs::text AS "previousEstimatedCogs",
       (l.response -> 'shippingRepricing' ->> 'lastEvaluatedTs')::timestamp AS "previousRepriceEvalTs",
@@ -110,6 +112,7 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
       supplierProductId: row.supplierProductId,
       destinationCountry,
       shippingEstimates: row.supplierShippingEstimates,
+      rawPayload: row.supplierRawPayload,
     });
 
     if (shipping.errorReason) {

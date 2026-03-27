@@ -1,12 +1,14 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { getShippingConfig } from "@/lib/pricing/shippingConfig";
+import { inferShippingFromEvidence, type SupplierShippingProfile } from "@/lib/pricing/shippingInference";
 
 export type ShippingResolutionMode =
   | "EXACT_QUOTE"
   | "SUPPLIER_DEFAULT"
-  | "SNAPSHOT_ESTIMATE"
-  | "SAFE_DEFAULT"
+  | "INFERRED_STRONG"
+  | "INFERRED_WEAK"
+  | "FALLBACK_DEFAULT"
   | "UNRESOLVED";
 
 export type ShippingResolutionError =
@@ -45,6 +47,16 @@ type SupplierShippingQuoteRow = {
   serviceLevel: string;
 };
 
+type ShippingProfileRow = {
+  sampleCount: number;
+  averageCostUsd: string | null;
+  averageMinDays: string | null;
+  averageMaxDays: string | null;
+  dominantOriginCountry: string | null;
+  historicalConfidence: string | null;
+  preferredMethods: unknown;
+};
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -61,46 +73,12 @@ function toDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function getSnapshotShippingEstimateUsd(shippingEstimates: unknown, destinationCountry: string): number | null {
-  if (!shippingEstimates) return null;
-
-  if (typeof shippingEstimates === "number") {
-    return Number.isFinite(shippingEstimates) ? shippingEstimates : null;
-  }
-
-  if (typeof shippingEstimates === "string") {
-    const parsed = Number(shippingEstimates.replace(/[^0-9.\-]/g, ""));
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  if (Array.isArray(shippingEstimates)) {
-    const candidates = shippingEstimates
-      .map((entry) => {
-        if (!entry || typeof entry !== "object") return null;
-        const item = entry as Record<string, unknown>;
-        const country = String(item.destinationCountry ?? item.country ?? "").toUpperCase();
-        const cost = toNum(item.shippingCost ?? item.cost ?? item.price);
-        if (country && country !== destinationCountry) return null;
-        return cost;
-      })
-      .filter((value): value is number => value != null && value >= 0);
-    return candidates.length ? Math.min(...candidates) : null;
-  }
-
-  if (typeof shippingEstimates === "object") {
-    const object = shippingEstimates as Record<string, unknown>;
-    const direct = toNum(object[destinationCountry] ?? object.shippingCost ?? object.cost ?? object.price);
-    if (direct != null) return direct;
-  }
-
-  return null;
-}
-
 export async function resolveShippingCost(input: {
   supplierKey: string;
   supplierProductId: string;
   destinationCountry: string;
   shippingEstimates?: unknown;
+  rawPayload?: unknown;
 }): Promise<ShippingResolution> {
   const config = getShippingConfig();
   const destinationCountry = input.destinationCountry.toUpperCase();
@@ -129,9 +107,62 @@ export async function resolveShippingCost(input: {
     LIMIT 1
   `);
 
+  const profileResult = await db.execute<ShippingProfileRow>(sql`
+    SELECT
+      count(*)::int AS "sampleCount",
+      avg(shipping_cost)::text AS "averageCostUsd",
+      avg(estimated_min_days)::text AS "averageMinDays",
+      avg(estimated_max_days)::text AS "averageMaxDays",
+      (
+        SELECT origin_country
+        FROM supplier_shipping_quotes sq2
+        WHERE lower(sq2.supplier_key) = lower(${input.supplierKey})
+          AND upper(sq2.destination_country) = ${destinationCountry}
+          AND sq2.origin_country IS NOT NULL
+        GROUP BY origin_country
+        ORDER BY count(*) DESC, origin_country ASC
+        LIMIT 1
+      ) AS "dominantOriginCountry",
+      avg(confidence)::text AS "historicalConfidence",
+      COALESCE(
+        jsonb_agg(DISTINCT source_type) FILTER (WHERE source_type IS NOT NULL),
+        '[]'::jsonb
+      ) AS "preferredMethods"
+    FROM supplier_shipping_quotes
+    WHERE lower(supplier_key) = lower(${input.supplierKey})
+      AND upper(destination_country) = ${destinationCountry}
+      AND confidence >= 0.45
+      AND source_type NOT IN ('fallback_seed', 'shipping_fallback_default')
+  `);
+
+  const profileRow = profileResult.rows?.[0];
+  const profile: SupplierShippingProfile | null =
+    profileRow && Number(profileRow.sampleCount) > 0
+      ? {
+          supplierKey: input.supplierKey,
+          destinationCountry,
+          sampleCount: Number(profileRow.sampleCount),
+          averageCostUsd: toNum(profileRow.averageCostUsd),
+          averageMinDays: toNum(profileRow.averageMinDays),
+          averageMaxDays: toNum(profileRow.averageMaxDays),
+          dominantOriginCountry: profileRow.dominantOriginCountry,
+          historicalConfidence: toNum(profileRow.historicalConfidence),
+          preferredMethods: Array.isArray(profileRow.preferredMethods)
+            ? profileRow.preferredMethods.map((value) => String(value))
+            : [],
+          consistencyScore: Number(profileRow.sampleCount) >= 4 ? 0.92 : Number(profileRow.sampleCount) >= 2 ? 0.78 : 0.62,
+        }
+      : null;
+
   const row = rowsResult.rows?.[0];
   const candidateCost = row ? toNum(row.shippingCost) : null;
-  const snapshotCost = getSnapshotShippingEstimateUsd(input.shippingEstimates, destinationCountry);
+  const inferred = inferShippingFromEvidence({
+    supplierKey: input.supplierKey,
+    destinationCountry,
+    shippingEstimates: input.shippingEstimates,
+    rawPayload: input.rawPayload,
+    profile,
+  });
 
   let resolutionMode: ShippingResolutionMode = "UNRESOLVED";
   let baseShippingUsd: number | null = null;
@@ -158,11 +189,27 @@ export async function resolveShippingCost(input: {
     } else {
       stale = true;
     }
-  } else if (snapshotCost != null && snapshotCost >= 0) {
-    baseShippingUsd = snapshotCost;
-    resolutionMode = "SNAPSHOT_ESTIMATE";
-    confidence = 0.35;
-    sourceType = "supplier_snapshot";
+  }
+
+  const exactQuoteWeak =
+    baseShippingUsd != null &&
+    !stale &&
+    confidence != null &&
+    confidence < config.minShippingConfidence &&
+    inferred.shippingCostUsd != null &&
+    inferred.confidence != null &&
+    inferred.confidence > confidence;
+
+  if (baseShippingUsd == null || exactQuoteWeak) {
+    baseShippingUsd = inferred.shippingCostUsd;
+    resolutionMode = inferred.mode;
+    confidence = inferred.confidence;
+    sourceType = inferred.sourceType;
+    minDays = inferred.estimatedMinDays;
+    maxDays = inferred.estimatedMaxDays;
+    originCountry = inferred.originCountry;
+    stale = false;
+    quoteAgeHours = 0;
   }
 
   let errorReason: ShippingResolutionError = null;
@@ -185,16 +232,18 @@ export async function resolveShippingCost(input: {
   }
 
   if (stale) errorReason = "STALE_SHIPPING_QUOTE";
-  if (!errorReason && confidence != null && confidence < config.minShippingConfidence) {
+  if (!errorReason && confidence != null && confidence < config.minShippingConfidence && resolutionMode !== "INFERRED_STRONG") {
     errorReason = "SHIPPING_CONFIDENCE_TOO_LOW";
   }
   if (!errorReason && maxDays != null && maxDays > config.maxAllowedDeliveryDaysForV1) {
     errorReason = "SHIPPING_DELIVERY_WINDOW_TOO_LONG";
   }
 
+  const reservePctMultiplier =
+    resolutionMode === "INFERRED_STRONG" ? 1.25 : resolutionMode === "INFERRED_WEAK" ? 1.45 : 1;
   const shippingReserveUsd = Math.max(
     config.minimumShippingReserveUsd,
-    round2((baseShippingUsd * config.shippingCostBufferPct) / 100)
+    round2(((baseShippingUsd * config.shippingCostBufferPct) / 100) * reservePctMultiplier)
   );
 
   return {

@@ -4,7 +4,7 @@ const MAX_EVIDENCE_TEXT_LENGTH = 220;
 
 export type SupplierListingValidity = "VALID" | "POSSIBLE_STALE" | "INVALID";
 export type SupplierPriceSignal = "DIRECT" | "RANGE" | "FALLBACK" | "MISSING";
-export type SupplierShippingSignal = "DIRECT" | "INFERRED" | "MISSING";
+export type SupplierShippingSignal = "DIRECT" | "PARTIAL" | "INFERRED" | "MISSING";
 
 function normalizeCountryCode(value: string): string | null {
   const normalized = compactText(value).toUpperCase();
@@ -96,16 +96,20 @@ export function extractShippingEvidence(rawText: string): {
   }
 
   const shippingTextMatch = compact.match(
-    /(free shipping|shipping[:=]?\s*\$?\d+(?:\.\d{1,2})?|delivery[:=]?\s*\d+\s*(?:-|to)\s*\d+\s*days|ships within\s+\d+\s+days|arrives? (?:by|in)\s+[a-z0-9 ,\-]+|fast delivery|choice)/i
+    /(free shipping|shipping[:=]?\s*\$?\d+(?:\.\d{1,2})?|delivery[:=]?\s*\d+\s*(?:-|to)\s*\d+\s*(?:business\s*)?days|ships within\s+\d+\s+(?:business\s*)?days|arrives? (?:by|in|within)\s+[a-z0-9 ,\-]+|fast delivery|choice|aliexpress standard shipping|cainiao|e[- ]?packet|dollar express|standard shipping|us warehouse delivery)/i
   );
   const shipsFromMatch = compact.match(/ships from\s+([a-z][a-z ,.\-]{1,40})/i);
+  const shipFromCountryMatch = compact.match(/ship(?:s|ping)? from\s+(united states|usa|us|china|cn|poland|pl|germany|de)\b/i);
   const warehouseMatch = compact.match(
     /(warehouse(?:s)?(?: in| service for product preparation, including warehouses in)?\s+[a-z][a-z ,.\-]{1,80})/i
   );
   const etaMatch = compact.match(
-    /(?:delivery|ships within|arrives? in)\s*(?:within\s*)?(\d{1,2})(?:\s*(?:-|to)\s*(\d{1,2}))?\s*days/i
+    /(?:delivery|ships within|arrives? in|arrival time(?: is)? within|estimated delivery time(?: in [a-z ]+)?(?: is|:)?|processing time(?: is|:)?|delivery time(?: is|:)?)\s*(?:within\s*)?(\d{1,2})(?:\s*(?:-|to)\s*(\d{1,2}))?\s*(?:business\s*)?days/i
   );
   const shippingCostMatch = compact.match(/shipping[:=]?\s*\$([0-9]+(?:\.[0-9]{1,2})?)/i);
+  const methodMatch = compact.match(
+    /(aliexpress standard shipping|cainiao[^|,.;]*|e[- ]?packet|dollar express|choice|us warehouse delivery|standard shipping|express shipping|fedex|ups|usps|dhl)/i
+  );
   const freeShipping = /free shipping/i.test(compact);
   const shippingGuaranteeMatch = compact.match(
     /(buyer protection|refund if[^\s,.;]+|free returns|delivery guarantee|on-time guarantee)/i
@@ -115,12 +119,16 @@ export function extractShippingEvidence(rawText: string): {
     : warehouseMatch?.[1]
       ? sliceEvidence(warehouseMatch[1], 120)
       : null;
-  const shipFromCountry = normalizeCountryCode(shipFromLocation ?? "");
+  const shipFromCountry = normalizeCountryCode(shipFromCountryMatch?.[1] ?? shipFromLocation ?? "");
 
   const estimate: ShippingEstimate | null =
-    shippingTextMatch || etaMatch || shippingCostMatch || shipsFromMatch
+    shippingTextMatch || etaMatch || shippingCostMatch || shipsFromMatch || methodMatch || shipFromCountryMatch
       ? {
-          label: shippingTextMatch?.[0] ? sliceEvidence(shippingTextMatch[0]) : "shipping signal",
+          label: methodMatch?.[1]
+            ? sliceEvidence(methodMatch[1])
+            : shippingTextMatch?.[0]
+              ? sliceEvidence(shippingTextMatch[0])
+              : "shipping signal",
           cost: freeShipping ? "0" : shippingCostMatch?.[1] ?? null,
           currency: freeShipping || shippingCostMatch ? "USD" : null,
           etaMinDays: etaMatch ? Number(etaMatch[1]) : null,
@@ -140,6 +148,8 @@ export function extractShippingEvidence(rawText: string): {
     signal: estimate
       ? etaMatch || shippingCostMatch || freeShipping
         ? "DIRECT"
+        : shipFromCountry || methodMatch
+          ? "PARTIAL"
         : "INFERRED"
       : "MISSING",
   };

@@ -54,6 +54,14 @@ function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 }
 
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, round2(value)));
+}
+
 function collectEvidenceStrings(value: unknown, acc: string[], depth = 0): void {
   if (depth > 4 || value == null) return;
   if (typeof value === "string") {
@@ -277,16 +285,40 @@ export function applyEvidenceBackedListingCorrections(rawPack: unknown, input: V
     ])
   );
   const removedClaims = unsupportedClaims;
-  const riskFlags = Array.from(new Set([...validation.data.risk_flags, ...category.riskFlags]));
+  const verifiedCategoryMatchesGenerated =
+    cleanString(category.verifiedCategoryId) === cleanString(input.generatedPack.category_id) &&
+    cleanString(category.verifiedCategoryName) === cleanString(input.generatedPack.category_name);
+  const riskFlags = Array.from(
+    new Set(
+      [...validation.data.risk_flags, ...category.riskFlags].filter((flag) => {
+        if (!verifiedCategoryMatchesGenerated) return true;
+        return flag !== "CATEGORY_EVIDENCE_CONFLICT";
+      })
+    )
+  );
   const supportedSpecificCount = LISTING_SPECIFIC_KEYS.filter((key) => Boolean(sanitizedSpecifics.itemSpecifics[key])).length;
   const supportedSpecificRatio = supportedSpecificCount / LISTING_SPECIFIC_KEYS.length;
-  const verificationConfidence = Math.min(
-    validation.data.verification_confidence,
-    Math.max(0.35, supportedSpecificRatio)
+  const generatedOverallConfidence = clamp01(input.generatedPack.confidence.overall);
+  const generatedSpecificsConfidence = clamp01(input.generatedPack.confidence.specifics);
+  const coverageConfidence = clamp01(
+    0.35 +
+      Math.min(0.2, sanitizedText.bulletPoints.length * 0.03) +
+      Math.min(0.2, supportedSpecificRatio * 0.4) +
+      (verifiedCategoryMatchesGenerated ? 0.15 : 0) +
+      (removedClaims.length <= 2 ? 0.1 : removedClaims.length <= 4 ? 0.05 : 0)
+  );
+  const verificationConfidence = clamp01(
+    validation.data.verification_confidence * 0.2 +
+      generatedOverallConfidence * 0.4 +
+      generatedSpecificsConfidence * 0.2 +
+      coverageConfidence * 0.2
   );
   if (verificationConfidence < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD) {
     riskFlags.push("VERIFICATION_CONFIDENCE_LOW");
   }
+  const reviewRequired = verificationConfidence < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD
+    || riskFlags.includes("CATEGORY_EVIDENCE_WEAK")
+    || riskFlags.includes("LISTING_VERIFICATION_FAILED");
 
   return {
     ok: true as const,
@@ -302,7 +334,7 @@ export function applyEvidenceBackedListingCorrections(rawPack: unknown, input: V
       corrected_fields: correctedFields,
       risk_flags: Array.from(new Set(riskFlags)),
       verification_confidence: verificationConfidence,
-      review_required: true,
+      review_required: reviewRequired,
     },
   };
 }

@@ -44,6 +44,40 @@ type MutableSupplierSourceBreakdown = SupplierSourceBreakdown & {
   rejection_reason_counts: Map<string, number>;
 };
 
+const LIGHTWEIGHT_POSITIVE_HINTS = [
+  "organizer",
+  "pen holder",
+  "desk",
+  "lamp",
+  "night light",
+  "mount",
+  "fan",
+  "storage box",
+  "holder",
+];
+
+const LIGHTWEIGHT_NEGATIVE_HINTS = [
+  "furniture",
+  "nightstand",
+  "cabinet",
+  "wardrobe",
+  "chair",
+  "table",
+  "shelf",
+  "bookcase",
+];
+
+const SIMPLE_VARIANT_NEGATIVE_HINTS = [
+  "set of",
+  "bundle",
+  "kit",
+  "wholesale",
+  "custom",
+  "personalized",
+  "multi size",
+  "multi-size",
+];
+
 function canonicalSupplierSource(source: string | null | undefined): string {
   const normalized = String(source ?? "").trim().toLowerCase();
   if (normalized === "cj dropshipping" || normalized === "cjdropshipping") return "cjdropshipping";
@@ -171,6 +205,47 @@ function shouldPersistParsedSnapshot(input: {
   return true;
 }
 
+function isShippingSignalUsable(item: SupplierProduct): boolean {
+  const shippingSignal = String(item.raw?.shippingSignal ?? "").trim().toUpperCase();
+  const shippingConfidence = typeof item.raw?.shippingConfidence === "number" ? item.raw.shippingConfidence : null;
+  const estimates = Array.isArray(item.shippingEstimates) ? item.shippingEstimates : [];
+  const hasStructuredEstimate = estimates.some(
+    (estimate) =>
+      estimate.cost != null ||
+      estimate.etaMinDays != null ||
+      estimate.etaMaxDays != null ||
+      Boolean(estimate.ship_from_country) ||
+      Boolean(estimate.label)
+  );
+  const deliveryMax = estimates.reduce<number | null>(
+    (max, estimate) =>
+      estimate.etaMaxDays != null ? (max == null ? estimate.etaMaxDays : Math.max(max, estimate.etaMaxDays)) : max,
+    null
+  );
+
+  if (deliveryMax != null && deliveryMax > 25) return false;
+  if (shippingSignal === "MISSING" && !hasStructuredEstimate) return false;
+  if (shippingConfidence != null && shippingConfidence < 0.45 && !hasStructuredEstimate) return false;
+  return hasStructuredEstimate || shippingSignal === "DIRECT" || shippingSignal === "PARTIAL" || shippingSignal === "INFERRED";
+}
+
+function isTargetedDiscoveryFriendly(item: SupplierProduct): boolean {
+  const text = `${item.title ?? ""} ${item.keyword ?? ""}`.toLowerCase();
+  const hasPositive = LIGHTWEIGHT_POSITIVE_HINTS.some((hint) => text.includes(hint));
+  const hasNegative = LIGHTWEIGHT_NEGATIVE_HINTS.some((hint) => text.includes(hint));
+  const variantHeavy = SIMPLE_VARIANT_NEGATIVE_HINTS.some((hint) => text.includes(hint));
+  const price = item.price ? Number(item.price) : null;
+  const imageCount = Array.isArray(item.images) ? item.images.length : 0;
+  return (
+    hasPositive &&
+    !hasNegative &&
+    !variantHeavy &&
+    imageCount >= 3 &&
+    (price == null || price <= 35) &&
+    item.availabilitySignal !== "UNKNOWN"
+  );
+}
+
 export async function runSupplierDiscover(limitPerKeyword = 20): Promise<SupplierDiscoverResult> {
   const candidateLimit = Math.max(
     1,
@@ -248,12 +323,17 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
         ...item.raw,
         pipelinePolicy: quality,
       };
+      const shippingUsable = isShippingSignalUsable(item);
+      const targetedFriendly = isTargetedDiscoveryFriendly(item);
       if (quality.eligible) {
         scoredProducts++;
         sourceCounter.eligible_count += 1;
         productsToPersist.push(item);
       } else {
-        const shouldPersist = shouldPersistParsedSnapshot({ item, normalizedRow, policy: quality });
+        const shouldPersist =
+          shippingUsable &&
+          targetedFriendly &&
+          shouldPersistParsedSnapshot({ item, normalizedRow, policy: quality });
         if (shouldPersist) {
           productsToPersist.push(item);
         }

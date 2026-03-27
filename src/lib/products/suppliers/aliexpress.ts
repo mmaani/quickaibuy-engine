@@ -296,7 +296,7 @@ function deriveAliExpressShipping(
   shipFromCountry: string | null;
   shipFromLocation: string | null;
   shippingGuarantee: string | null;
-  signal: "DIRECT" | "INFERRED" | "MISSING";
+  signal: "DIRECT" | "PARTIAL" | "INFERRED" | "MISSING";
   shippingConfidence: number;
   shippingMethod: string | null;
 } {
@@ -305,6 +305,10 @@ function deriveAliExpressShipping(
   const shippingConfidence =
     shipping.signal === "DIRECT"
       ? 0.9
+      : shipping.signal === "PARTIAL"
+        ? shipping.shipFromCountry === "US"
+          ? 0.84
+          : 0.58
       : merchandising.shippingBadge && /(dollar express|choice|free shipping|fast delivery)/i.test(merchandising.shippingBadge)
         ? 0.78
         : shipping.signal === "INFERRED"

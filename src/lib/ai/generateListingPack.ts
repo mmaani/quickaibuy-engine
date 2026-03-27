@@ -25,6 +25,77 @@ type GenerateListingPackInput = {
   };
 };
 
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function inferCountryOfOrigin(input: GenerateListingPackInput): string | null {
+  const supplier = objectOrNull(input.supplierRawPayload);
+  const marketplace = objectOrNull(input.matchedMarketplaceEvidence.marketplaceRawPayload);
+  return (
+    cleanString(supplier?.ship_from_country) ??
+    cleanString(supplier?.shipFromCountry) ??
+    cleanString(supplier?.supplier_warehouse_country) ??
+    cleanString(supplier?.supplierWarehouseCountry) ??
+    cleanString(objectOrNull(marketplace?.itemLocation)?.country)
+  );
+}
+
+function inferType(input: GenerateListingPackInput): string | null {
+  const combined = [
+    input.supplierTitle,
+    cleanString(input.matchedMarketplaceEvidence.marketplaceTitle),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  if (combined.includes("storage box")) return "Storage Box";
+  if (combined.includes("organizer")) return "Organizer";
+  if (combined.includes("pen holder")) return "Pen Holder";
+  if (combined.includes("lamp")) return "Lamp";
+  if (combined.includes("mount")) return "Mount";
+  if (combined.includes("fan")) return "Fan";
+  return null;
+}
+
+function inferRoom(input: GenerateListingPackInput): string | null {
+  const combined = [
+    input.supplierTitle,
+    cleanString(input.matchedMarketplaceEvidence.marketplaceTitle),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  if (combined.includes("desk") || combined.includes("office")) return "Office";
+  if (combined.includes("bedside") || combined.includes("nightstand")) return "Bedroom";
+  if (combined.includes("car")) return "Car";
+  return null;
+}
+
+function enrichGeneratedListingPack(raw: unknown, input: GenerateListingPackInput): unknown {
+  const record = objectOrNull(raw);
+  if (!record) return raw;
+
+  const itemSpecifics = objectOrNull(record.item_specifics) ?? {};
+  const enrichedSpecifics = {
+    ...itemSpecifics,
+    country_of_origin: cleanString(itemSpecifics.country_of_origin) ?? inferCountryOfOrigin(input),
+    type: cleanString(itemSpecifics.type) ?? inferType(input),
+    room: cleanString(itemSpecifics.room) ?? inferRoom(input),
+  };
+
+  return {
+    ...record,
+    item_specifics: enrichedSpecifics,
+  };
+}
+
 export type GenerateListingPackResult =
   | {
       ok: true;
@@ -163,7 +234,8 @@ export async function generateListingPack(input: GenerateListingPackInput): Prom
   try {
     const prompt = buildEbayListingPrompt(input);
     const raw = await callOpenAi(prompt);
-    const validation = validateListingPackOutput(raw);
+    const enriched = enrichGeneratedListingPack(raw, input);
+    const validation = validateListingPackOutput(enriched);
 
     if (!validation.ok) {
       return {

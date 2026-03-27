@@ -12,6 +12,46 @@ import { fetchSupplierPageWithFallback } from "./fetchWithFallback";
 
 const MAX_RESULTS = 20;
 
+function deriveAlibabaShipping(nearbyText: string): {
+  shippingEstimates: SupplierProduct["shippingEstimates"];
+  evidenceText: string | null;
+  shipsFromHint: string | null;
+  shipFromCountry: string | null;
+  shipFromLocation: string | null;
+  shippingGuarantee: string | null;
+  signal: "DIRECT" | "PARTIAL" | "INFERRED" | "MISSING";
+  shippingConfidence: number;
+  shippingMethod: string | null;
+} {
+  const shipping = extractShippingEvidence(nearbyText);
+  const shippingMethod = shipping.evidenceText ?? shipping.shippingGuarantee ?? null;
+  const shipsFromUs = shipping.shipFromCountry === "US";
+  const shippingConfidence =
+    shipping.signal === "DIRECT"
+      ? shipsFromUs
+        ? 0.88
+        : 0.74
+      : shipping.signal === "PARTIAL"
+        ? shipsFromUs
+          ? 0.72
+          : 0.56
+      : shipping.signal === "INFERRED"
+        ? 0.5
+        : 0.2;
+
+  return {
+    shippingEstimates: shipping.shippingEstimates,
+    evidenceText: shipping.evidenceText,
+    shipsFromHint: shipping.shipsFromHint,
+    shipFromCountry: shipping.shipFromCountry,
+    shipFromLocation: shipping.shipFromLocation,
+    shippingGuarantee: shipping.shippingGuarantee,
+    signal: shipping.signal,
+    shippingConfidence,
+    shippingMethod,
+  };
+}
+
 function looksLikeAlibabaChallengePage(text: string): boolean {
   const compact = compactText(text).toLowerCase();
   if (!compact) return false;
@@ -154,7 +194,7 @@ async function enrichAlibabaProductWithDetail(product: SupplierProduct): Promise
 
     const inferredAvailability = inferAvailabilityFromText(fetched.text);
     const evidence = extractAvailabilityEvidence(fetched.text);
-    const shipping = extractShippingEvidence(fetched.text);
+    const shipping = deriveAlibabaShipping(fetched.text);
     const priceEvidence = extractPriceEvidence(fetched.text);
     const listingValidity = inferListingValidity(fetched.text);
     if (listingValidity.status === "INVALID") {
@@ -203,7 +243,9 @@ async function enrichAlibabaProductWithDetail(product: SupplierProduct): Promise
         priceText: priceEvidence.priceText,
         priceSignal: priceEvidence.signal,
         shippingSignal: shipping.signal,
+        shippingConfidence: shipping.shippingConfidence,
         shippingEvidenceText: shipping.evidenceText,
+        shippingMethod: shipping.shippingMethod,
         shipsFromHint: shipping.shipsFromHint,
         shipFromCountry: shipping.shipFromCountry,
         ship_from_country: shipping.shipFromCountry,
@@ -242,7 +284,7 @@ function parseAlibabaText(text: string, keyword: string, snapshotTs: string): Su
     const nearbyText = text.slice(Math.max(0, idx - 520), idx + 520);
     const inferredAvailability = inferAvailabilityFromText(nearbyText);
     const evidence = extractAvailabilityEvidence(nearbyText);
-    const shipping = extractShippingEvidence(nearbyText);
+    const shipping = deriveAlibabaShipping(nearbyText);
     const priceEvidence = extractPriceEvidence(nearbyText);
     const listingValidity = inferListingValidity(nearbyText);
     const evidenceQuality = inferredAvailability.signal === "UNKNOWN" ? "MEDIUM" : "HIGH";
@@ -281,7 +323,9 @@ function parseAlibabaText(text: string, keyword: string, snapshotTs: string): Su
         priceText: priceEvidence.priceText,
         priceSignal: priceEvidence.signal,
         shippingSignal: shipping.signal,
+        shippingConfidence: shipping.shippingConfidence,
         shippingEvidenceText: shipping.evidenceText,
+        shippingMethod: shipping.shippingMethod,
         shipsFromHint: shipping.shipsFromHint,
         shipFromCountry: shipping.shipFromCountry,
         ship_from_country: shipping.shipFromCountry,

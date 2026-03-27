@@ -284,6 +284,7 @@ export async function reevaluateActiveListingSuppliers(input: {
       supplierProductId,
       destinationCountry,
       shippingEstimates: row.supplierShippingEstimates,
+      rawPayload: row.supplierRawPayload,
     });
     const totalShippingUsd = round2(
       shippingResolution.shippingCostUsd + shippingResolution.shippingReserveUsd

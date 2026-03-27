@@ -424,6 +424,7 @@ export async function runProfitEngine(input?: {
       supplierProductId,
       destinationCountry,
       shippingEstimates: row.supplierShippingEstimates,
+      rawPayload: row.supplierRawPayload,
     });
     const shipping = round2(shippingResolution.shippingCostUsd + shippingResolution.shippingReserveUsd);
     const shippingReserve = shippingResolution.shippingReserveUsd;

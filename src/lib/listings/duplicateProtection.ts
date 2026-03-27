@@ -33,6 +33,8 @@ type DuplicateQueryRow = {
   title: string | null;
   supplierKey: string | null;
   supplierProductId: string | null;
+  candidateDecisionStatus: string | null;
+  candidateListingEligible: boolean | null;
   supplierProductMatch: boolean;
   titleFingerprintMatch: boolean;
 };
@@ -84,6 +86,8 @@ export async function findListingDuplicatesForCandidate(input: {
       l.title,
       pc.supplier_key AS "supplierKey",
       pc.supplier_product_id AS "supplierProductId",
+      pc.decision_status AS "candidateDecisionStatus",
+      pc.listing_eligible AS "candidateListingEligible",
       (
         ${canMatchBySupplier}
         AND LOWER(COALESCE(pc.supplier_key, '')) = ${supplierKey}
@@ -98,6 +102,14 @@ export async function findListingDuplicatesForCandidate(input: {
       ON pc.id = l.candidate_id
     WHERE LOWER(l.marketplace_key) = ${marketplaceKey}
       AND l.status IN (${statusSql})
+      AND (
+        l.status <> ${LISTING_STATUSES.PREVIEW}
+        OR (
+          pc.id IS NOT NULL
+          AND pc.decision_status = 'APPROVED'
+          AND pc.listing_eligible = TRUE
+        )
+      )
       AND (${excludeListingId} = '' OR l.id::text <> ${excludeListingId})
       AND (
         (

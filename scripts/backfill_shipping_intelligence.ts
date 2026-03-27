@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
+import { inferShippingFromEvidence } from "@/lib/pricing/shippingInference";
 
 function toNum(value: unknown): number | null {
   if (value == null) return null;
@@ -7,28 +8,9 @@ function toNum(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function asObject(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
 function normalizeSupplierKey(value: string): string {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "cj dropshipping" ? "cjdropshipping" : normalized;
-}
-
-function normalizeCountryCode(value: unknown): string | null {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  if (/^[A-Z]{2}$/.test(normalized)) return normalized;
-  if (normalized === "USA" || normalized === "UNITED STATES") return "US";
-  if (normalized === "CHINA") return "CN";
-  return null;
-}
-
-function deriveConfidenceFromSignal(signal: string | null, explicitConfidence: number | null): number {
-  if (explicitConfidence != null) return explicitConfidence;
-  if (signal === "DIRECT" || signal === "PRESENT") return 0.78;
-  if (signal === "PARTIAL" || signal === "INFERRED") return 0.58;
-  return 0.4;
 }
 
 function extractShippingSnapshotDetails(
@@ -42,59 +24,21 @@ function extractShippingSnapshotDetails(
   confidence: number;
   sourceType: string;
 } {
-  const payload = asObject(rawPayload) ?? {};
-  const rawSignal = String(payload.shippingSignal ?? "").trim().toUpperCase() || null;
-  const rawConfidence = toNum(payload.shippingConfidence);
-  const rawOriginCountry =
-    normalizeCountryCode(payload.shipFromCountry) ??
-    normalizeCountryCode(payload.ship_from_country) ??
-    normalizeCountryCode(payload.supplierWarehouseCountry) ??
-    normalizeCountryCode(payload.supplier_warehouse_country);
-  const rawMinDays = toNum(payload.deliveryEstimateMinDays);
-  const rawMaxDays = toNum(payload.deliveryEstimateMaxDays);
-
-  const candidates = Array.isArray(shippingEstimates)
-    ? shippingEstimates
-    : asObject(shippingEstimates)
-      ? [shippingEstimates]
-      : [];
-
-  let shippingCost: number | null = null;
-  let originCountry = rawOriginCountry;
-  let estimatedMinDays = rawMinDays;
-  let estimatedMaxDays = rawMaxDays;
-
-  for (const candidate of candidates) {
-    const item = asObject(candidate);
-    if (!item) continue;
-    const cost = toNum(item.cost ?? item.shippingCost ?? item.price);
-    const label = String(item.label ?? "").trim().toLowerCase();
-    const minDays = toNum(item.etaMinDays ?? item.estimatedMinDays);
-    const maxDays = toNum(item.etaMaxDays ?? item.estimatedMaxDays);
-    const shipFromCountry = normalizeCountryCode(item.ship_from_country ?? item.shipFromCountry);
-    if (shippingCost == null && cost != null && cost >= 0) shippingCost = cost;
-    if (estimatedMinDays == null && minDays != null) estimatedMinDays = minDays;
-    if (estimatedMaxDays == null && maxDays != null) estimatedMaxDays = maxDays;
-    if (originCountry == null && shipFromCountry) originCountry = shipFromCountry;
-    if (shippingCost != null && estimatedMinDays != null && estimatedMaxDays != null && originCountry != null) {
-      break;
-    }
-    if (shippingCost == null && label.includes("free shipping")) {
-      shippingCost = 0;
-    }
-  }
-
-  const confidence = deriveConfidenceFromSignal(rawSignal, rawConfidence);
-  const sourceType =
-    shippingCost != null ? "supplier_snapshot" : rawSignal ? "supplier_signal_seed" : "fallback_seed";
+  const inferred = inferShippingFromEvidence({
+    supplierKey: "seed",
+    destinationCountry: "US",
+    shippingEstimates,
+    rawPayload,
+    defaultShippingUsd: null,
+  });
 
   return {
-    shippingCost,
-    originCountry,
-    estimatedMinDays,
-    estimatedMaxDays,
-    confidence,
-    sourceType,
+    shippingCost: inferred.shippingCostUsd,
+    originCountry: inferred.originCountry,
+    estimatedMinDays: inferred.estimatedMinDays,
+    estimatedMaxDays: inferred.estimatedMaxDays,
+    confidence: inferred.confidence ?? 0.4,
+    sourceType: inferred.sourceType,
   };
 }
 
