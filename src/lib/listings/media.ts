@@ -597,6 +597,7 @@ function dedupeAndRankImages(candidates: MediaCandidate[], context: ProductMedia
   imageHostingMode: ListingPreviewMediaHostingMode | null;
   selectedKinds: string[];
   selectedSlots: string[];
+  qualityEligibleCount: number;
 } {
   const exactSeen = new Set<string>();
   const fingerprintSeen = new Set<string>();
@@ -618,6 +619,13 @@ function dedupeAndRankImages(candidates: MediaCandidate[], context: ProductMedia
     Array.from(modeCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const mixedImageHostingModesDropped = modeCounts.size > 1;
   const sameMode = deduped.filter((candidate) => (imageHostingMode ? candidate.hostingMode === imageHostingMode : true));
+  const qualityEligiblePool = sameMode.filter(
+    (candidate) =>
+      candidate.qualityFloor >= 20 &&
+      !candidate.isTextHeavy &&
+      !candidate.isCollage &&
+      (!candidate.isPackaging || context.multiPart)
+  );
 
   const hero = selectTopCandidates(
     sameMode.filter((candidate) => !candidate.isPackaging && !candidate.isTextHeavy && !candidate.isCollage),
@@ -655,8 +663,26 @@ function dedupeAndRankImages(candidates: MediaCandidate[], context: ProductMedia
     (candidate) => scoreOptionalSupportCandidate(candidate, context),
     "slot-7-plus-support"
   ).filter((candidate) => scoreOptionalSupportCandidate(candidate, context) >= 40);
+  for (const candidate of support) used.add(candidate.normalizedUrl);
 
-  const orderedCandidates = [...hero, ...core, ...contextImages, ...support].slice(0, Math.min(EBAY_TARGET_IMAGE_COUNT, EBAY_MAX_IMAGES));
+  const fallbackFill = selectTopCandidates(
+    remaining.filter(
+      (candidate) =>
+        !used.has(candidate.normalizedUrl) &&
+        candidate.qualityFloor >= 20 &&
+        !candidate.isTextHeavy &&
+        !candidate.isCollage &&
+        (!candidate.isPackaging || context.multiPart)
+    ),
+    Math.max(0, 8 - hero.length - core.length - contextImages.length - support.length),
+    (candidate) => scoreOptionalSupportCandidate(candidate, context),
+    "slot-fallback-quality-fill"
+  );
+
+  const orderedCandidates = [...hero, ...core, ...contextImages, ...support, ...fallbackFill].slice(
+    0,
+    Math.min(EBAY_TARGET_IMAGE_COUNT, EBAY_MAX_IMAGES)
+  );
 
   const normalized = orderedCandidates.map<ListingPreviewMediaImage>((candidate, index) => ({
       url: candidate.url,
@@ -680,6 +706,7 @@ function dedupeAndRankImages(candidates: MediaCandidate[], context: ProductMedia
       if (entry.rank <= 6) return "slot-5-6-context";
       return "slot-7-plus-support";
     }),
+    qualityEligibleCount: qualityEligiblePool.length,
   };
 }
 
@@ -778,6 +805,7 @@ export function buildListingPreviewMedia(input: ListingPreviewInput): ListingPre
       selectedImageUrls: ranked.selectedUrls,
       selectedImageKinds: ranked.selectedKinds,
       selectedImageSlots: ranked.selectedSlots,
+      imageQualityEligibleCount: ranked.qualityEligibleCount,
       videoDetected: Boolean(video),
       videoAttached: Boolean(video?.attachOnPublish),
       videoSkipped: !video?.attachOnPublish,

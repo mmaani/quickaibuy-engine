@@ -29,6 +29,7 @@ export type ListingPreviewMediaAudit = {
   imageCandidateCount: number;
   imageSelectedCount: number;
   imageSkippedCount: number;
+  imageQualityEligibleCount?: number;
   imageHostingMode: ListingPreviewMediaHostingMode | null;
   mixedImageHostingModesDropped: boolean;
   selectedImageUrls: string[];

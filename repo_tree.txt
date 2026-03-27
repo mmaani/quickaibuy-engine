@@ -80,7 +80,8 @@
 │   ├── 20260311f_add_manual_overrides.sql
 │   ├── 20260322_add_seller_account_metrics.sql
 │   ├── 20260324_add_ebay_image_normalizations.sql
-│   └── 20260324_add_lead_submissions.sql
+│   ├── 20260324_add_lead_submissions.sql
+│   └── 20260327_add_supplier_shipping_quotes.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -134,6 +135,8 @@
 ├── quickaibuy_diag_clean.sh
 ├── quickaibuy_diag_clean_20260326_082657.log
 ├── railway.json
+├── railway_worker.env
+├── railway_worker.env.example
 ├── repo_tree.txt
 ├── review_files
 │   ├── db.ts
@@ -144,12 +147,15 @@
 ├── scripts
 │   ├── README.md
 │   ├── apply_sql_file.ts
+│   ├── apply_supplier_shipping_quotes_migration.ts
 │   ├── approve_profitable_candidate.ts
 │   ├── approve_single_candidate_ready.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
 │   ├── backfill_listing_previews_for_approved.ts
+│   ├── backfill_shipping_intelligence.ts
 │   ├── backfill_supplier_snapshot_quality.ts
 │   ├── bootstrap_drizzle_ledger.ts
+│   ├── build_railway_worker_env.ts
 │   ├── check-db-tables.mjs
 │   ├── check-products-raw.mjs
 │   ├── check_active_missing_external_id_rows.mjs
@@ -195,6 +201,7 @@
 │   ├── check_revenue_enablement_truth.ts
 │   ├── check_runtime_db_fingerprint.mjs
 │   ├── check_schema_drift.ts
+│   ├── check_shipping_pricing_readiness.ts
 │   ├── check_stale_publish_in_progress_rows.mjs
 │   ├── check_supplier_quality_metrics.ts
 │   ├── check_supplier_queue.ts
@@ -216,6 +223,7 @@
 │   ├── db_inspect.mjs
 │   ├── debug_marketplace_scan.ts
 │   ├── debug_profit_join.mjs
+│   ├── detect_repricing_candidates.ts
 │   ├── enqueue_inventory_risk_scan.ts
 │   ├── enqueue_listing_optimize.ts
 │   ├── enqueue_listing_prepare.ts
@@ -240,6 +248,7 @@
 │   │   ├── orderAutomationSchemaCheck.ts
 │   │   ├── pgRetry.mjs
 │   │   ├── preflightMutation.sh
+│   │   ├── railwayWorkerEnv.ts
 │   │   ├── runtimeDiagnostics.ts
 │   │   └── runtimeEnv.mjs
 │   ├── load_env_local.sh
@@ -255,6 +264,7 @@
 │   ├── patch_marketplace_scan_summary_labels_v2.py
 │   ├── patch_marketplace_scan_summary_labels_v3.py
 │   ├── peek-products-raw.mjs
+│   ├── persist_post_publish_ebay_audit.ts
 │   ├── pipeline_dashboard.mjs
 │   ├── preflight_runtime_dependencies.ts
 │   ├── prepare_controlled_cj_candidate_ready.ts
@@ -267,6 +277,7 @@
 │   ├── queue_namespace_diagnostics.ts
 │   ├── recheck_single_candidate.ts
 │   ├── reclassify_legacy_dry_run_active_listings.ts
+│   ├── recompute_landed_cost_candidates.ts
 │   ├── refresh_listing_price_guard_readiness.ts
 │   ├── refresh_matched_supplier_rows.ts
 │   ├── refresh_single_supplier_product.ts
@@ -332,6 +343,7 @@
 │   ├── test_ebay_token.sh
 │   ├── test_ebay_tracking_sync.ts
 │   ├── test_hardening_regressions.ts
+│   ├── test_listing_verification_and_audit.ts
 │   ├── test_paused_listing_lifecycle_guardrails.ts
 │   ├── test_product_discover.mjs
 │   ├── test_product_matcher.mjs
@@ -342,6 +354,7 @@
 │   ├── validate_inventory_risk_scenarios.ts
 │   ├── validate_listing_schema_alignment.mjs
 │   ├── validate_live_media_api_cutover.ts
+│   ├── validate_railway_worker_env.ts
 │   ├── verify_profit_pipeline.ts
 │   ├── watch_repo_tree.mjs
 │   └── workers
@@ -445,6 +458,9 @@
 │   │   │   └── page.tsx
 │   │   ├── robots.ts
 │   │   └── sitemap.ts
+│   ├── components
+│   │   └── admin
+│   │       └── AiListingDiagnostics.tsx
 │   ├── db
 │   │   ├── client.ts
 │   │   ├── migrations
@@ -452,6 +468,14 @@
 │   ├── lib
 │   │   ├── admin
 │   │   │   └── requirePipelineAdmin.ts
+│   │   ├── ai
+│   │   │   ├── generateListingPack.ts
+│   │   │   ├── prompts
+│   │   │   │   ├── ebayListing.ts
+│   │   │   │   └── verifyEbayListing.ts
+│   │   │   ├── rankProducts.ts
+│   │   │   ├── schemas.ts
+│   │   │   └── verifyListingPack.ts
 │   │   ├── audit
 │   │   │   └── writeAuditLog.ts
 │   │   ├── bull.ts
@@ -491,10 +515,12 @@
 │   │   ├── leads
 │   │   │   └── notifications.ts
 │   │   ├── listings
+│   │   │   ├── auditLiveEbayListing.ts
 │   │   │   ├── build_amazon_preview.ts
 │   │   │   ├── build_ebay_preview.ts
 │   │   │   ├── build_listing_preview.ts
 │   │   │   ├── checkDailyListingCap.ts
+│   │   │   ├── computeListingCorrectionDraft.ts
 │   │   │   ├── duplicateProtection.ts
 │   │   │   ├── ebayCategoryClassifier.ts
 │   │   │   ├── enqueueReadyToPublishListings.ts
@@ -508,6 +534,7 @@
 │   │   │   ├── normalizeEbayImages.ts
 │   │   │   ├── optimizeListingTitle.ts
 │   │   │   ├── performanceEngine.ts
+│   │   │   ├── persistPostPublishEbayAudit.ts
 │   │   │   ├── prepareListingPreviews.ts
 │   │   │   ├── publishIdempotency.ts
 │   │   │   ├── publishRateLimiter.ts
@@ -535,6 +562,7 @@
 │   │   ├── media
 │   │   │   └── storage.ts
 │   │   ├── orders
+│   │   │   ├── autoPurchase.ts
 │   │   │   ├── ebayFetchOrders.ts
 │   │   │   ├── getAdminOrdersPageData.ts
 │   │   │   ├── index.ts
@@ -542,6 +570,8 @@
 │   │   │   ├── operatorConsole.ts
 │   │   │   ├── orderEvents.ts
 │   │   │   ├── purchaseSafety.ts
+│   │   │   ├── reconcileTrackingSync.ts
+│   │   │   ├── repairSupplierLinkage.ts
 │   │   │   ├── statuses.ts
 │   │   │   ├── syncEbayOrders.ts
 │   │   │   ├── syncTrackingToEbay.ts
@@ -549,6 +579,10 @@
 │   │   │   ├── transitions.ts
 │   │   │   ├── types.ts
 │   │   │   └── updateOrderStatus.ts
+│   │   ├── pricing
+│   │   │   ├── destinationResolver.ts
+│   │   │   ├── shippingCalculator.ts
+│   │   │   └── shippingConfig.ts
 │   │   ├── products
 │   │   │   ├── discoverProducts.ts
 │   │   │   ├── pipelinePolicy.ts
@@ -569,11 +603,13 @@
 │   │   │       ├── temu.ts
 │   │   │       └── types.ts
 │   │   ├── profit
+│   │   │   ├── activeSupplierReevaluation.ts
 │   │   │   ├── priceGuard.ts
 │   │   │   ├── priceGuardConfig.ts
 │   │   │   ├── profitAssumptions.ts
 │   │   │   ├── profitEngine.ts
-│   │   │   └── realProfitCalculator.ts
+│   │   │   ├── realProfitCalculator.ts
+│   │   │   └── shippingRepricing.ts
 │   │   ├── queryBudget
 │   │   │   └── allocator.ts
 │   │   ├── queue
@@ -590,6 +626,9 @@
 │   │   ├── runtime
 │   │   ├── server
 │   │   │   └── controlPanelData.ts
+│   │   ├── suppliers
+│   │   │   ├── cjApi.ts
+│   │   │   └── cjTracking.ts
 │   │   └── trends
 │   │       ├── expandTrendSignal.ts
 │   │       └── pullTrendSignals.ts
@@ -597,14 +636,16 @@
 │   ├── types
 │   │   └── next-headers-js.d.ts
 │   └── workers
+│       ├── autoPurchase.worker.ts
 │       ├── engine.bootstrap.ts
 │       ├── engine.worker.ts
 │       ├── inventoryRisk.worker.ts
 │       ├── jobs.worker.ts
 │       ├── listingExecute.worker.ts
 │       ├── listingMonitor.worker.ts
-│       └── orderSync.worker.ts
+│       ├── orderSync.worker.ts
+│       └── trackingSync.worker.ts
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-86 directories, 522 files
+92 directories, 557 files

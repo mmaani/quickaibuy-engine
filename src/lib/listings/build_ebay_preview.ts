@@ -5,7 +5,7 @@ import { getMediaStorageMode } from "@/lib/media/storage";
 import { normalizeWarehouseCountry } from "@/lib/marketplaces/ebay/normalizeWarehouseCountry";
 import { generateListingDescription } from "./generateListingDescription";
 import { buildListingPreviewMedia } from "./media";
-import { optimizeListingTitle } from "./optimizeListingTitle";
+import { optimizeListingTitle, sanitizeTitleForEbay } from "./optimizeListingTitle";
 import type { EbayListingPreviewPayload, ListingPreviewInput, ListingPreviewOutput } from "./types";
 
 function objectOrNull(value: unknown): Record<string, unknown> | null {
@@ -204,7 +204,10 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
           };
       const lowVerificationConfidence =
         verifiedPack.verification_confidence < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD || verifiedPack.risk_flags.includes("VERIFICATION_CONFIDENCE_LOW");
-      title = verifiedPack.verified_title;
+      title = sanitizeTitleForEbay(
+        verifiedPack.verified_title,
+        input.supplierTitle ?? input.marketplaceTitle ?? undefined
+      );
       description = `${verifiedPack.verified_description}\n\nHighlights\n${verifiedPack.verified_bullet_points
         .map((bullet) => `- ${bullet}`)
         .join("\n")}`.trim();
@@ -218,12 +221,14 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
         enabled: true,
         listingPackGenerated: true,
         schemaPassed: true,
-        manualReviewRequired: true,
+        manualReviewRequired: lowVerificationConfidence || lowConfidence || verifiedPack.review_required,
         reason: lowVerificationConfidence
           ? "LISTING_VERIFICATION_LOW_CONFIDENCE"
           : lowConfidence
             ? "LISTING_PACK_LOW_CONFIDENCE"
-            : "HUMAN_REVIEW_REQUIRED_V1",
+            : verifiedPack.review_required
+              ? "LISTING_VERIFICATION_REVIEW_REQUIRED"
+              : null,
         trustFlags: listingPack.pack.trust_flags,
         confidence: listingPack.pack.confidence,
         generatedPack: listingPack.pack,

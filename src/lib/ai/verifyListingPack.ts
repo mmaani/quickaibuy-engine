@@ -7,6 +7,7 @@ import {
   type VerifiedListingPackOutput,
   validateVerifiedListingPackOutput,
 } from "./schemas";
+import { sanitizeTitleForEbay } from "@/lib/listings/optimizeListingTitle";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
@@ -194,7 +195,12 @@ function sanitizeTextFields(input: {
     }
   }
 
-  return { title, bulletPoints, description, correctedFields };
+  return {
+    title: sanitizeTitleForEbay(title, description),
+    bulletPoints,
+    description,
+    correctedFields,
+  };
 }
 
 function chooseVerifiedCategory(

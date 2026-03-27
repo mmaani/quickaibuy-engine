@@ -351,6 +351,23 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Reprice reason" value={detail.item.repriceLastReason ?? "-"} />
                     <KeyValue label="Last reprice eval" value={formatDateTime(detail.item.repriceLastEvaluatedTs)} />
                     <KeyValue label="Last reprice applied" value={formatDateTime(detail.item.repriceLastAppliedTs)} />
+                    <KeyValue label="Supplier reevaluation" value={detail.item.supplierReevaluationStatus ?? "-"} />
+                    <KeyValue
+                      label="Best alternate supplier"
+                      value={
+                        detail.item.supplierReevaluationBestSupplierKey
+                          ? `${detail.item.supplierReevaluationBestSupplierKey} / ${detail.item.supplierReevaluationBestSupplierProductId ?? "-"}`
+                          : "-"
+                      }
+                    />
+                    <KeyValue
+                      label="Current vs best landed"
+                      value={`${formatMoney(detail.item.supplierReevaluationCurrentLandedCostUsd)} / ${formatMoney(detail.item.supplierReevaluationBestLandedCostUsd)}`}
+                    />
+                    <KeyValue
+                      label="Supplier reevaluation ts"
+                      value={formatDateTime(detail.item.supplierReevaluationEvaluatedTs)}
+                    />
                     <KeyValue label="Latest recovery audit" value={detail.latestRecoveryAudit ? `${detail.latestRecoveryAudit.eventType} @ ${formatDateTime(detail.latestRecoveryAudit.eventTs)}` : "No recovery audit event found"} />
                   </div>
                   <div className="mt-4">

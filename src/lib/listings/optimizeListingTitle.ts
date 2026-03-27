@@ -6,6 +6,7 @@ type OptimizeListingTitleInput = {
 };
 
 const TITLE_LIMIT = 80;
+const TITLE_MIN = 45;
 
 const NOISE_PATTERNS = [
   /\bnew\b/gi,
@@ -80,6 +81,46 @@ function cleanTitle(input: string): string {
     .slice(0, TITLE_LIMIT);
 }
 
+function tidyTitleEnding(input: string): string {
+  return input
+    .replace(/[\s,./&-]+$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+export function sanitizeTitleForEbay(input: string, fallback?: string): string {
+  const cleaned = cleanTitle(input);
+  if (!cleaned) {
+    return cleanTitle(fallback ?? "Home Decor Gift Item");
+  }
+  if (cleaned.length <= TITLE_LIMIT) {
+    return tidyTitleEnding(cleaned);
+  }
+
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  const kept: string[] = [];
+  for (const word of words) {
+    const next = tidyTitleEnding([...kept, word].join(" "));
+    if (next.length > TITLE_LIMIT) break;
+    kept.push(word);
+  }
+
+  let result = tidyTitleEnding(kept.join(" "));
+  if (!result) result = tidyTitleEnding(cleaned.slice(0, TITLE_LIMIT));
+
+  if (result.length < TITLE_MIN && fallback) {
+    const fallbackWords = cleanTitle(fallback).split(/\s+/).filter(Boolean);
+    for (const word of fallbackWords) {
+      const next = tidyTitleEnding(`${result} ${word}`.trim());
+      if (next.length > TITLE_LIMIT) break;
+      result = next;
+      if (result.length >= TITLE_MIN) break;
+    }
+  }
+
+  return result;
+}
+
 function titleCase(word: string): string {
   return word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word;
 }
@@ -141,5 +182,5 @@ export function optimizeListingTitle(input: OptimizeListingTitleInput): string {
     optimized = composed.join(" ").trim();
   }
 
-  return cleanTitle(optimized);
+  return sanitizeTitleForEbay(optimized, "Home Desk Decor Gift");
 }

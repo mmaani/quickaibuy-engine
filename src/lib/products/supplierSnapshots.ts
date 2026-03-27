@@ -8,6 +8,12 @@ import {
 import { buildSupplierEnrichment } from "@/lib/products/supplierEnrichment";
 import { resolveSupplierQualityPayload } from "@/lib/products/supplierQuality";
 
+function normalizeSupplierKey(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "cj dropshipping") return "cjdropshipping";
+  return normalized;
+}
+
 function buildPersistedShippingEstimates(
   productShippingEstimates: SupplierProduct["shippingEstimates"],
   enrichment: ReturnType<typeof buildSupplierEnrichment>
@@ -161,7 +167,7 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
           : "STUB";
 
   return {
-    supplierKey: String(product.platform ?? "").trim().toLowerCase(),
+    supplierKey: normalizeSupplierKey(String(product.platform ?? "")),
     supplierProductId: product.supplierProductId ?? product.sourceUrl,
     sourceUrl: product.sourceUrl,
     title: enrichedTitle,

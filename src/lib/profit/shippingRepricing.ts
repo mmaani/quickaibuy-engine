@@ -1,10 +1,13 @@
 import { db } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
+import { reevaluateActiveListingSuppliers } from "@/lib/profit/activeSupplierReevaluation";
+import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { resolvePricingDestinationForMarketplace } from "@/lib/pricing/destinationResolver";
 import { getShippingConfig } from "@/lib/pricing/shippingConfig";
 import { resolveShippingCost } from "@/lib/pricing/shippingCalculator";
 import { calculateRealProfit } from "@/lib/profit/realProfitCalculator";
 import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 
 type ActiveListingCandidateRow = {
   listingId: string;
@@ -13,6 +16,7 @@ type ActiveListingCandidateRow = {
   listingPrice: string;
   listingTitle: string | null;
   marketplaceKey: string;
+  marketplaceListingId: string;
   supplierKey: string;
   supplierProductId: string;
   supplierPriceMin: string | null;
@@ -20,6 +24,8 @@ type ActiveListingCandidateRow = {
   previousEstimatedShipping: string | null;
   previousEstimatedCogs: string | null;
   previousRepriceEvalTs: Date | string | null;
+  previousFingerprint: string | null;
+  previousAppliedFingerprint: string | null;
 };
 
 function toNum(value: unknown): number | null {
@@ -37,6 +43,10 @@ function pctDelta(base: number, target: number): number {
   return round2(((target - base) / base) * 100);
 }
 
+function buildCostStateFingerprint(input: Record<string, unknown>): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
 export async function runShippingRepricingMonitor(input?: { limit?: number; apply?: boolean; actorId?: string }) {
   const limit = Math.max(1, Number(input?.limit ?? 50));
   const apply = Boolean(input?.apply);
@@ -51,13 +61,16 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
       l.price::text AS "listingPrice",
       l.title AS "listingTitle",
       pc.marketplace_key AS "marketplaceKey",
+      pc.marketplace_listing_id AS "marketplaceListingId",
       pc.supplier_key AS "supplierKey",
       pc.supplier_product_id AS "supplierProductId",
       pr.price_min::text AS "supplierPriceMin",
       pr.shipping_estimates AS "supplierShippingEstimates",
       pc.estimated_shipping::text AS "previousEstimatedShipping",
       pc.estimated_cogs::text AS "previousEstimatedCogs",
-      (l.response -> 'shippingRepricing' ->> 'lastEvaluatedTs')::timestamp AS "previousRepriceEvalTs"
+      (l.response -> 'shippingRepricing' ->> 'lastEvaluatedTs')::timestamp AS "previousRepriceEvalTs",
+      l.response -> 'shippingRepricing' ->> 'lastFingerprint' AS "previousFingerprint",
+      l.response -> 'shippingRepricing' ->> 'lastAppliedFingerprint' AS "previousAppliedFingerprint"
     FROM listings l
     INNER JOIN profitable_candidates pc
       ON pc.id = l.candidate_id
@@ -139,6 +152,13 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
     const materialPriceDelta =
       Math.abs(priceDeltaUsd) >= config.repriceMinDeltaUsd || Math.abs(priceDeltaPct) >= config.repriceMinDeltaPct;
 
+    const supplierReevaluation = await reevaluateActiveListingSuppliers({
+      marketplaceKey: row.marketplaceKey,
+      marketplaceListingId: row.marketplaceListingId,
+      currentSupplierKey: row.supplierKey,
+      currentSupplierProductId: row.supplierProductId,
+    });
+
     const previousEval = row.previousRepriceEvalTs ? new Date(row.previousRepriceEvalTs) : null;
     const now = new Date();
     const cooldownHours =
@@ -147,13 +167,80 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
         : Number.POSITIVE_INFINITY;
     const cooldownBlocked = cooldownHours < config.repriceCooldownHours;
 
-    const action = materialShippingDrift && materialPriceDelta && !cooldownBlocked ? "QUEUE" : "NO_ACTION";
+    const dailyAppliedResult = await db.execute<{ appliedCount: number }>(sql`
+      SELECT COUNT(*)::int AS "appliedCount"
+      FROM audit_log
+      WHERE entity_type = 'LISTING'
+        AND entity_id = ${row.listingId}
+        AND event_type = 'LISTING_REPRICE_APPLIED'
+        AND event_ts >= date_trunc('day', now() at time zone 'UTC')
+    `);
+    const dailyAppliedCount = Number(dailyAppliedResult.rows?.[0]?.appliedCount ?? 0);
+    const dailyCapBlocked = dailyAppliedCount >= config.maxRepricesPerListingPerDay;
+
+    const costStateFingerprint = buildCostStateFingerprint({
+      listingId: row.listingId,
+      candidateId: row.candidateId,
+      supplierKey: row.supplierKey,
+      supplierProductId: row.supplierProductId,
+      destinationCountry,
+      supplierPrice,
+      shippingCostUsd: shipping.shippingCostUsd,
+      shippingReserveUsd: shipping.shippingReserveUsd,
+      totalShipping,
+      shippingResolutionMode: shipping.resolutionMode,
+      shippingQuoteAgeHours: shipping.quoteAgeHours,
+      recommendedPriceUsd: targetPrice,
+      reevaluationStatus: supplierReevaluation.status,
+      currentLandedCostUsd: supplierReevaluation.currentOption?.landedSupplierCostUsd ?? null,
+      bestSupplierKey: supplierReevaluation.bestOption?.supplierKey ?? null,
+      bestSupplierProductId: supplierReevaluation.bestOption?.supplierProductId ?? null,
+      bestLandedCostUsd: supplierReevaluation.bestOption?.landedSupplierCostUsd ?? null,
+    });
+    const identicalState =
+      costStateFingerprint === (row.previousFingerprint ?? "") ||
+      costStateFingerprint === (row.previousAppliedFingerprint ?? "");
+
+    const currentSupplierEligible =
+      supplierReevaluation.currentOption?.listingEligible === true &&
+      supplierReevaluation.currentOption?.decisionStatus === "APPROVED";
+    const alternateSupplierBetter = supplierReevaluation.status === "ALTERNATE_SUPPLIER_BETTER";
+    const currentSupplierNonViable =
+      supplierReevaluation.status === "CURRENT_SUPPLIER_NON_VIABLE" ||
+      supplierReevaluation.status === "NO_VIABLE_SUPPLIER" ||
+      supplierReevaluation.status === "CURRENT_SUPPLIER_NOT_FOUND";
+    const priceGuard = await validateProfitSafety({
+      candidateId: row.candidateId,
+      listingId: row.listingId,
+      mode: "publish",
+    });
+    const guardrailBlocked = !priceGuard.allow;
+
+    let action = "NO_ACTION";
+    let lastReason =
+      shippingDeltaUsd >= 0 ? "SHIPPING_COST_INCREASE" : "SHIPPING_COST_DECREASE";
+
+    if (alternateSupplierBetter) {
+      action = "MANUAL_REVIEW";
+      lastReason = "SUPPLIER_SWITCH_LANDED_COST_OPTIMIZATION";
+    } else if (currentSupplierNonViable) {
+      action = "MANUAL_REVIEW";
+      lastReason = "CURRENT_SUPPLIER_NON_VIABLE";
+    } else if (identicalState) {
+      lastReason = "REPRICE_IDENTICAL_COST_STATE";
+    } else if (dailyCapBlocked) {
+      lastReason = "REPRICE_MAX_DAILY_CAP_REACHED";
+    } else if (guardrailBlocked || !currentSupplierEligible) {
+      lastReason = "REPRICE_GUARDRAIL_RECHECK_FAILED";
+    } else if (materialShippingDrift && materialPriceDelta && !cooldownBlocked) {
+      action = "QUEUE";
+    }
     if (action === "QUEUE") queued++;
 
     const responsePatch = {
       shippingRepricing: {
         lastEvaluatedTs: now.toISOString(),
-        lastReason: shippingDeltaUsd >= 0 ? "SHIPPING_COST_INCREASE" : "SHIPPING_COST_DECREASE",
+        lastReason,
         shippingDeltaUsd,
         shippingDeltaPct,
         priceDeltaUsd,
@@ -161,8 +248,27 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
         materialShippingDrift,
         materialPriceDelta,
         cooldownBlocked,
+        dailyCapBlocked,
+        dailyAppliedCount,
+        currentSupplierEligible,
+        guardrailBlocked,
+        lastFingerprint: costStateFingerprint,
         recommendedPriceUsd: targetPrice,
         action,
+      },
+      supplierReevaluation: {
+        evaluatedAt: supplierReevaluation.evaluatedAt,
+        status: supplierReevaluation.status,
+        destinationCountry: supplierReevaluation.destinationCountry,
+        alternativesCount: supplierReevaluation.alternativesCount,
+        currentSupplierKey: supplierReevaluation.currentSupplierKey,
+        currentSupplierProductId: supplierReevaluation.currentSupplierProductId,
+        currentLandedCostUsd: supplierReevaluation.currentOption?.landedSupplierCostUsd ?? null,
+        currentShippingCostUsd: supplierReevaluation.currentOption?.totalShippingUsd ?? null,
+        bestSupplierKey: supplierReevaluation.bestOption?.supplierKey ?? null,
+        bestSupplierProductId: supplierReevaluation.bestOption?.supplierProductId ?? null,
+        bestLandedCostUsd: supplierReevaluation.bestOption?.landedSupplierCostUsd ?? null,
+        bestShippingCostUsd: supplierReevaluation.bestOption?.totalShippingUsd ?? null,
       },
     };
 
@@ -179,7 +285,12 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
       actorId,
       entityType: "LISTING",
       entityId: row.listingId,
-      eventType: action === "QUEUE" ? "LISTING_REPRICE_QUEUED" : "LISTING_REPRICE_SKIPPED_THRESHOLD",
+      eventType:
+        action === "QUEUE"
+          ? "LISTING_REPRICE_QUEUED"
+          : action === "MANUAL_REVIEW"
+            ? "LISTING_REPRICE_SKIPPED_SUPPLIER_REEVALUATION"
+            : "LISTING_REPRICE_SKIPPED_THRESHOLD",
       details: {
         listingId: row.listingId,
         candidateId: row.candidateId,
@@ -192,20 +303,45 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
         priceDeltaUsd,
         priceDeltaPct,
         cooldownBlocked,
+        dailyCapBlocked,
+        dailyAppliedCount,
+        identicalState,
+        fingerprint: costStateFingerprint,
+        supplierReevaluation,
+        priceGuardDecision: priceGuard.decision,
+        priceGuardReasons: priceGuard.reasons,
+        currentSupplierEligible,
+        guardrailBlocked,
       },
     });
 
     if (apply && action === "QUEUE") {
-      await db.execute(sql`
+      if (row.listingStatus !== "ACTIVE") {
+        skipped++;
+        continue;
+      }
+      const applyResult = await db.execute<{ listingId: string }>(sql`
         UPDATE listings
         SET
           price = ${String(targetPrice)},
           updated_at = now(),
           response = COALESCE(response, '{}'::jsonb) || ${JSON.stringify({
-            shippingRepricing: { lastAppliedTs: now.toISOString(), appliedPriceUsd: targetPrice },
+            shippingRepricing: {
+              ...responsePatch.shippingRepricing,
+              lastAppliedTs: now.toISOString(),
+              appliedPriceUsd: targetPrice,
+              lastAppliedFingerprint: costStateFingerprint,
+            },
+            supplierReevaluation: responsePatch.supplierReevaluation,
           })}::jsonb
         WHERE id = ${row.listingId}
+          AND upper(coalesce(status, '')) = 'ACTIVE'
+        RETURNING id::text AS "listingId"
       `);
+      if ((applyResult.rows?.length ?? 0) === 0) {
+        skipped++;
+        continue;
+      }
       applied++;
       await writeAuditLog({
         actorType: "WORKER",
@@ -216,7 +352,8 @@ export async function runShippingRepricingMonitor(input?: { limit?: number; appl
         details: {
           oldPriceUsd: listingPrice,
           newPriceUsd: targetPrice,
-          reason: shippingDeltaUsd >= 0 ? "SHIPPING_COST_INCREASE" : "SHIPPING_COST_DECREASE",
+          reason: lastReason,
+          fingerprint: costStateFingerprint,
         },
       });
     }

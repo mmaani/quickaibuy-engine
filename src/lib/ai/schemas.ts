@@ -89,9 +89,11 @@ export function validateListingPackOutput(value: unknown): ListingPackValidation
   const record = value as Record<string, unknown>;
   const errors: string[] = [];
 
-  const optimizedTitle = cleanString(record.optimized_title);
+  const optimizedTitle = sanitizeTitleForEbay(
+    cleanString(record.optimized_title),
+    cleanString(record.category_name) || "Home Decor Gift Item"
+  );
   if (!optimizedTitle) errors.push("optimized_title is required");
-  if (optimizedTitle.length > 80) errors.push("optimized_title must be <= 80 chars");
 
   const categoryId = cleanString(record.category_id);
   if (!categoryId) errors.push("category_id is required");
@@ -198,9 +200,11 @@ export function validateVerifiedListingPackOutput(value: unknown): VerifiedListi
   const record = value as Record<string, unknown>;
   const errors: string[] = [];
 
-  const verifiedTitle = cleanString(record.verified_title);
+  const verifiedTitle = sanitizeTitleForEbay(
+    cleanString(record.verified_title),
+    cleanString(record.verified_category_name) || "Home Decor Gift Item"
+  );
   if (!verifiedTitle) errors.push("verified_title is required");
-  if (verifiedTitle.length > 80) errors.push("verified_title must be <= 80 chars");
 
   const categoryId = cleanString(record.verified_category_id);
   if (!categoryId) errors.push("verified_category_id is required");
@@ -270,3 +274,4 @@ export function validateVerifiedListingPackOutput(value: unknown): VerifiedListi
     },
   };
 }
+import { sanitizeTitleForEbay } from "@/lib/listings/optimizeListingTitle";

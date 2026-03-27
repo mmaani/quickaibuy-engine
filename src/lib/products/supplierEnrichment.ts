@@ -194,6 +194,8 @@ function deriveShippingDetails(
       candidate.cost != null ||
       candidate.etaMinDays != null ||
       candidate.etaMaxDays != null ||
+      candidate.ship_from_country != null ||
+      candidate.ship_from_location != null ||
       label.includes("free shipping") ||
       label.includes("choice") ||
       label.includes("express")
@@ -225,13 +227,17 @@ function deriveShippingDetails(
     directConfidence ??
     (deliveryEstimateMinDays != null || deliveryEstimateMaxDays != null || shippingPriceExplicit != null
       ? 0.9
+      : rawShippingSignal === "DIRECT" || rawShippingSignal === "PRESENT"
+        ? 0.78
+        : rawShippingSignal === "PARTIAL" || shipFromCountry != null || shipFromLocation != null
+          ? 0.58
       : shippingMethod && /(dollar express|choice|free shipping|fast delivery|express)/i.test(shippingMethod)
         ? 0.78
         : shippingMethod
           ? 0.62
           : 0.2);
 
-  if (!hasShippingEvidence || rawShippingSignal === "MISSING") {
+  if (!hasShippingEvidence) {
     shippingConfidence = Math.min(shippingConfidence, 0.2);
   }
 
@@ -239,7 +245,10 @@ function deriveShippingDetails(
     shippingConfidence = 0.82;
   }
 
-  const shippingSignal = rawShippingSignal || (hasShippingEvidence ? "DIRECT" : "MISSING");
+  const shippingSignal =
+    rawShippingSignal === "MISSING" && hasShippingEvidence
+      ? "PARTIAL"
+      : rawShippingSignal || (hasShippingEvidence ? "DIRECT" : "MISSING");
   const shippingStability =
     shippingConfidence >= 0.85 && (deliveryEstimateMinDays != null || shipFromCountry != null)
       ? "HIGH"

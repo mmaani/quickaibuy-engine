@@ -62,13 +62,18 @@ export function validateListingPreview(preview: ListingPreviewOutput) {
     }
     const selectedImageCount = Number(mediaAudit?.imageSelectedCount ?? images.length);
     const skippedImageCount = Number(mediaAudit?.imageSkippedCount ?? 0);
+    const qualityEligibleCount = Number(
+      mediaAudit?.imageQualityEligibleCount ?? selectedImageCount + skippedImageCount
+    );
     if (Number.isFinite(selectedImageCount) && selectedImageCount < 5) {
       errors.push("ebay media audit selected fewer than 5 images");
     }
     if (
       Number.isFinite(selectedImageCount) &&
       Number.isFinite(skippedImageCount) &&
-      skippedImageCount > selectedImageCount &&
+      Number.isFinite(qualityEligibleCount) &&
+      qualityEligibleCount > 0 &&
+      qualityEligibleCount > selectedImageCount &&
       selectedImageCount < 8
     ) {
       errors.push("ebay media quality gate failed due to low-quality media dominance");

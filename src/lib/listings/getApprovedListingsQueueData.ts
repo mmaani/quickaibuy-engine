@@ -58,6 +58,12 @@ type ListingQueueRow = {
   reprice_last_reason: string | null;
   reprice_last_evaluated_ts: string | null;
   reprice_last_applied_ts: string | null;
+  supplier_reeval_status: string | null;
+  supplier_reeval_best_supplier_key: string | null;
+  supplier_reeval_best_supplier_product_id: string | null;
+  supplier_reeval_current_landed_cost_usd: string | number | null;
+  supplier_reeval_best_landed_cost_usd: string | number | null;
+  supplier_reeval_evaluated_ts: string | null;
 };
 
 export type ListingsQueueFilters = {
@@ -120,6 +126,12 @@ export type QueueListItem = {
   repriceLastReason: string | null;
   repriceLastEvaluatedTs: string | null;
   repriceLastAppliedTs: string | null;
+  supplierReevaluationStatus: string | null;
+  supplierReevaluationBestSupplierKey: string | null;
+  supplierReevaluationBestSupplierProductId: string | null;
+  supplierReevaluationCurrentLandedCostUsd: number | null;
+  supplierReevaluationBestLandedCostUsd: number | null;
+  supplierReevaluationEvaluatedTs: string | null;
   recoveryState: RecoveryState;
   recoveryNextAction: string;
   recoveryBlockReasonCode: string | null;
@@ -359,6 +371,12 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     repriceLastReason: row.reprice_last_reason ?? null,
     repriceLastEvaluatedTs: row.reprice_last_evaluated_ts ?? null,
     repriceLastAppliedTs: row.reprice_last_applied_ts ?? null,
+    supplierReevaluationStatus: row.supplier_reeval_status ?? null,
+    supplierReevaluationBestSupplierKey: row.supplier_reeval_best_supplier_key ?? null,
+    supplierReevaluationBestSupplierProductId: row.supplier_reeval_best_supplier_product_id ?? null,
+    supplierReevaluationCurrentLandedCostUsd: toNumber(row.supplier_reeval_current_landed_cost_usd),
+    supplierReevaluationBestLandedCostUsd: toNumber(row.supplier_reeval_best_landed_cost_usd),
+    supplierReevaluationEvaluatedTs: row.supplier_reeval_evaluated_ts ?? null,
     recoveryState: recovery.recoveryState,
     recoveryNextAction: recovery.recoveryNextAction,
     recoveryBlockReasonCode: recovery.recoveryBlockReasonCode,
@@ -630,6 +648,12 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       l.response -> 'shippingRepricing' ->> 'lastReason' AS reprice_last_reason,
       l.response -> 'shippingRepricing' ->> 'lastEvaluatedTs' AS reprice_last_evaluated_ts,
       l.response -> 'shippingRepricing' ->> 'lastAppliedTs' AS reprice_last_applied_ts,
+      l.response -> 'supplierReevaluation' ->> 'status' AS supplier_reeval_status,
+      l.response -> 'supplierReevaluation' ->> 'bestSupplierKey' AS supplier_reeval_best_supplier_key,
+      l.response -> 'supplierReevaluation' ->> 'bestSupplierProductId' AS supplier_reeval_best_supplier_product_id,
+      l.response -> 'supplierReevaluation' ->> 'currentLandedCostUsd' AS supplier_reeval_current_landed_cost_usd,
+      l.response -> 'supplierReevaluation' ->> 'bestLandedCostUsd' AS supplier_reeval_best_landed_cost_usd,
+      l.response -> 'supplierReevaluation' ->> 'evaluatedAt' AS supplier_reeval_evaluated_ts,
       l.created_at AS listing_created_at,
       l.updated_at AS listing_updated_at,
       (COALESCE(dup.conflict_count, 0) > 0) AS duplicate_detected,
