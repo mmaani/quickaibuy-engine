@@ -674,11 +674,40 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
   const wrapped = (await res.json()) as CjWrappedResponse<CjSearchResponse>;
   const content = Array.isArray(wrapped.data?.content) ? wrapped.data.content : [];
   const products = content.flatMap((entry) => (Array.isArray(entry.productList) ? entry.productList : []));
-
-  return products
+  const mappedProducts = products
     .map((product) => mapSearchProductToSupplierProduct(product, trimmedKeyword))
     .filter((product): product is SupplierProduct => product != null)
-    .slice(0, pageSize);
+    .slice(0, pageSize)
+    .map((product) => ({
+      ...product,
+      raw: {
+        ...product.raw,
+        searchUrl: url.toString(),
+        fetchStatus: res.status,
+        apiResponseCode: wrapped.code ?? null,
+        apiResponseMessage: wrapped.message ?? null,
+        resultCount: products.length,
+        pageSize,
+      },
+    }));
+
+  if (!mappedProducts.length) {
+    console.info(
+      JSON.stringify({
+        supplier: "cjdropshipping",
+        event: "CJ_SEARCH_NO_RESULTS",
+        keyword: trimmedKeyword,
+        searchUrl: url.toString(),
+        fetchStatus: res.status,
+        apiResponseCode: wrapped.code ?? null,
+        apiResponseMessage: wrapped.message ?? null,
+        resultCount: products.length,
+        pageSize,
+      })
+    );
+  }
+
+  return mappedProducts;
 }
 
 export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectProductResult> {
