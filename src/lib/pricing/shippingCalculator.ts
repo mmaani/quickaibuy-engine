@@ -1,0 +1,214 @@
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { getShippingConfig } from "@/lib/pricing/shippingConfig";
+
+export type ShippingResolutionMode =
+  | "EXACT_QUOTE"
+  | "SUPPLIER_DEFAULT"
+  | "SNAPSHOT_ESTIMATE"
+  | "SAFE_DEFAULT"
+  | "UNRESOLVED";
+
+export type ShippingResolutionError =
+  | "MISSING_SHIPPING_INTELLIGENCE"
+  | "STALE_SHIPPING_QUOTE"
+  | "SHIPPING_DELIVERY_WINDOW_TOO_LONG"
+  | "SHIPPING_COST_UNRESOLVED"
+  | "SHIPPING_CONFIDENCE_TOO_LOW"
+  | null;
+
+export type ShippingResolution = {
+  resolvedOriginCountry: string | null;
+  destinationCountry: string;
+  shippingCostUsd: number;
+  shippingReserveUsd: number;
+  deliveryEstimateMinDays: number | null;
+  deliveryEstimateMaxDays: number | null;
+  sourceConfidence: number | null;
+  resolutionMode: ShippingResolutionMode;
+  stale: boolean;
+  quoteAgeHours: number | null;
+  sourceType: string | null;
+  errorReason: ShippingResolutionError;
+};
+
+type SupplierShippingQuoteRow = {
+  originCountry: string | null;
+  destinationCountry: string;
+  shippingCost: string;
+  currency: string;
+  estimatedMinDays: number | null;
+  estimatedMaxDays: number | null;
+  confidence: string | null;
+  sourceType: string | null;
+  lastVerifiedAt: Date | string | null;
+  serviceLevel: string;
+};
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function toNum(value: unknown): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getSnapshotShippingEstimateUsd(shippingEstimates: unknown, destinationCountry: string): number | null {
+  if (!shippingEstimates) return null;
+
+  if (typeof shippingEstimates === "number") {
+    return Number.isFinite(shippingEstimates) ? shippingEstimates : null;
+  }
+
+  if (typeof shippingEstimates === "string") {
+    const parsed = Number(shippingEstimates.replace(/[^0-9.\-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (Array.isArray(shippingEstimates)) {
+    const candidates = shippingEstimates
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") return null;
+        const item = entry as Record<string, unknown>;
+        const country = String(item.destinationCountry ?? item.country ?? "").toUpperCase();
+        const cost = toNum(item.shippingCost ?? item.cost ?? item.price);
+        if (country && country !== destinationCountry) return null;
+        return cost;
+      })
+      .filter((value): value is number => value != null && value >= 0);
+    return candidates.length ? Math.min(...candidates) : null;
+  }
+
+  if (typeof shippingEstimates === "object") {
+    const object = shippingEstimates as Record<string, unknown>;
+    const direct = toNum(object[destinationCountry] ?? object.shippingCost ?? object.cost ?? object.price);
+    if (direct != null) return direct;
+  }
+
+  return null;
+}
+
+export async function resolveShippingCost(input: {
+  supplierKey: string;
+  supplierProductId: string;
+  destinationCountry: string;
+  shippingEstimates?: unknown;
+}): Promise<ShippingResolution> {
+  const config = getShippingConfig();
+  const destinationCountry = input.destinationCountry.toUpperCase();
+  const now = new Date();
+
+  const rowsResult = await db.execute<SupplierShippingQuoteRow>(sql`
+    SELECT
+      origin_country AS "originCountry",
+      destination_country AS "destinationCountry",
+      shipping_cost::text AS "shippingCost",
+      currency,
+      estimated_min_days AS "estimatedMinDays",
+      estimated_max_days AS "estimatedMaxDays",
+      confidence::text AS "confidence",
+      source_type AS "sourceType",
+      last_verified_at AS "lastVerifiedAt",
+      service_level AS "serviceLevel"
+    FROM supplier_shipping_quotes
+    WHERE lower(supplier_key) = lower(${input.supplierKey})
+      AND supplier_product_id = ${input.supplierProductId}
+      AND upper(destination_country) IN (${destinationCountry}, 'DEFAULT')
+    ORDER BY
+      CASE WHEN upper(destination_country) = ${destinationCountry} THEN 0 ELSE 1 END,
+      CASE WHEN upper(service_level) = 'STANDARD' THEN 0 ELSE 1 END,
+      last_verified_at DESC
+    LIMIT 1
+  `);
+
+  const row = rowsResult.rows?.[0];
+  const candidateCost = row ? toNum(row.shippingCost) : null;
+  const snapshotCost = getSnapshotShippingEstimateUsd(input.shippingEstimates, destinationCountry);
+
+  let resolutionMode: ShippingResolutionMode = "UNRESOLVED";
+  let baseShippingUsd: number | null = null;
+  let confidence: number | null = null;
+  let sourceType: string | null = null;
+  let minDays: number | null = null;
+  let maxDays: number | null = null;
+  let originCountry: string | null = null;
+  let stale = false;
+  let quoteAgeHours: number | null = null;
+
+  if (row && row.currency.toUpperCase() === "USD" && candidateCost != null && candidateCost >= 0) {
+    baseShippingUsd = candidateCost;
+    resolutionMode = row.destinationCountry.toUpperCase() === destinationCountry ? "EXACT_QUOTE" : "SUPPLIER_DEFAULT";
+    confidence = toNum(row.confidence);
+    sourceType = row.sourceType ?? "supplier_quote";
+    minDays = row.estimatedMinDays;
+    maxDays = row.estimatedMaxDays;
+    originCountry = row.originCountry;
+    const verifiedAt = toDate(row.lastVerifiedAt);
+    if (verifiedAt) {
+      quoteAgeHours = round2((now.getTime() - verifiedAt.getTime()) / (1000 * 60 * 60));
+      stale = quoteAgeHours > config.maxShippingQuoteAgeHours;
+    } else {
+      stale = true;
+    }
+  } else if (snapshotCost != null && snapshotCost >= 0) {
+    baseShippingUsd = snapshotCost;
+    resolutionMode = "SNAPSHOT_ESTIMATE";
+    confidence = 0.35;
+    sourceType = "supplier_snapshot";
+  }
+
+  let errorReason: ShippingResolutionError = null;
+
+  if (baseShippingUsd == null) {
+    return {
+      resolvedOriginCountry: originCountry,
+      destinationCountry,
+      shippingCostUsd: 0,
+      shippingReserveUsd: 0,
+      deliveryEstimateMinDays: minDays,
+      deliveryEstimateMaxDays: maxDays,
+      sourceConfidence: confidence,
+      resolutionMode,
+      stale,
+      quoteAgeHours,
+      sourceType,
+      errorReason: "MISSING_SHIPPING_INTELLIGENCE",
+    };
+  }
+
+  if (stale) errorReason = "STALE_SHIPPING_QUOTE";
+  if (!errorReason && confidence != null && confidence < config.minShippingConfidence) {
+    errorReason = "SHIPPING_CONFIDENCE_TOO_LOW";
+  }
+  if (!errorReason && maxDays != null && maxDays > config.maxAllowedDeliveryDaysForV1) {
+    errorReason = "SHIPPING_DELIVERY_WINDOW_TOO_LONG";
+  }
+
+  const shippingReserveUsd = Math.max(
+    config.minimumShippingReserveUsd,
+    round2((baseShippingUsd * config.shippingCostBufferPct) / 100)
+  );
+
+  return {
+    resolvedOriginCountry: originCountry,
+    destinationCountry,
+    shippingCostUsd: round2(baseShippingUsd),
+    shippingReserveUsd,
+    deliveryEstimateMinDays: minDays,
+    deliveryEstimateMaxDays: maxDays,
+    sourceConfidence: confidence,
+    resolutionMode,
+    stale,
+    quoteAgeHours,
+    sourceType,
+    errorReason,
+  };
+}

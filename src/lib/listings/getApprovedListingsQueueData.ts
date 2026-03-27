@@ -49,6 +49,15 @@ type ListingQueueRow = {
   selection_mode: string | null;
   selection_summary: string | null;
   considered_sources: string[] | null;
+  shipping_cost_component: string | number | null;
+  shipping_origin_country: string | null;
+  shipping_destination_country: string | null;
+  shipping_quote_age_hours: string | number | null;
+  shipping_resolution_mode: string | null;
+  reprice_action: string | null;
+  reprice_last_reason: string | null;
+  reprice_last_evaluated_ts: string | null;
+  reprice_last_applied_ts: string | null;
 };
 
 export type ListingsQueueFilters = {
@@ -102,6 +111,15 @@ export type QueueListItem = {
   selectionMode: string | null;
   selectionSummary: string | null;
   consideredSources: string[];
+  shippingCostComponent: number | null;
+  shippingOriginCountry: string | null;
+  shippingDestinationCountry: string | null;
+  shippingQuoteAgeHours: number | null;
+  shippingResolutionMode: string | null;
+  repriceAction: string | null;
+  repriceLastReason: string | null;
+  repriceLastEvaluatedTs: string | null;
+  repriceLastAppliedTs: string | null;
   recoveryState: RecoveryState;
   recoveryNextAction: string;
   recoveryBlockReasonCode: string | null;
@@ -332,6 +350,15 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     selectionMode: row.selection_mode ?? null,
     selectionSummary: row.selection_summary ?? null,
     consideredSources: row.considered_sources ?? [],
+    shippingCostComponent: toNumber(row.shipping_cost_component),
+    shippingOriginCountry: row.shipping_origin_country ?? null,
+    shippingDestinationCountry: row.shipping_destination_country ?? null,
+    shippingQuoteAgeHours: toNumber(row.shipping_quote_age_hours),
+    shippingResolutionMode: row.shipping_resolution_mode ?? null,
+    repriceAction: row.reprice_action ?? null,
+    repriceLastReason: row.reprice_last_reason ?? null,
+    repriceLastEvaluatedTs: row.reprice_last_evaluated_ts ?? null,
+    repriceLastAppliedTs: row.reprice_last_applied_ts ?? null,
     recoveryState: recovery.recoveryState,
     recoveryNextAction: recovery.recoveryNextAction,
     recoveryBlockReasonCode: recovery.recoveryBlockReasonCode,
@@ -585,6 +612,11 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
           COALESCE(pc.estimated_fees -> 'selectedSupplierOption' -> 'consideredSources', '[]'::jsonb)
         )
       ) AS considered_sources,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'selectedShippingCostUsd' AS shipping_cost_component,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingOriginCountry' AS shipping_origin_country,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingDestinationCountry' AS shipping_destination_country,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingQuoteAgeHours' AS shipping_quote_age_hours,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingResolutionMode' AS shipping_resolution_mode,
       pc.approved_ts,
       pc.approved_by,
       l.id AS listing_id,
@@ -594,6 +626,10 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       l.quantity AS listing_quantity,
       l.payload AS listing_payload,
       l.response AS listing_response,
+      l.response -> 'shippingRepricing' ->> 'action' AS reprice_action,
+      l.response -> 'shippingRepricing' ->> 'lastReason' AS reprice_last_reason,
+      l.response -> 'shippingRepricing' ->> 'lastEvaluatedTs' AS reprice_last_evaluated_ts,
+      l.response -> 'shippingRepricing' ->> 'lastAppliedTs' AS reprice_last_applied_ts,
       l.created_at AS listing_created_at,
       l.updated_at AS listing_updated_at,
       (COALESCE(dup.conflict_count, 0) > 0) AS duplicate_detected,

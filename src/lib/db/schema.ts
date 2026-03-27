@@ -112,6 +112,48 @@ export const marketplacePrices = pgTable(
   })
 );
 
+export const supplierShippingQuotes = pgTable(
+  "supplier_shipping_quotes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    supplierKey: text("supplier_key").notNull(),
+    supplierProductId: text("supplier_product_id").notNull(),
+    originCountry: text("origin_country"),
+    destinationCountry: text("destination_country").notNull(),
+    destinationRegion: text("destination_region"),
+    serviceLevel: text("service_level").notNull().default("STANDARD"),
+    shippingCost: numeric("shipping_cost", { precision: 12, scale: 2 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+    estimatedMinDays: integer("estimated_min_days"),
+    estimatedMaxDays: integer("estimated_max_days"),
+    confidence: numeric("confidence", { precision: 5, scale: 4 }),
+    sourceType: text("source_type").notNull().default("supplier_snapshot"),
+    weightTier: text("weight_tier"),
+    sizeTier: text("size_tier"),
+    lastVerifiedAt: timestamp("last_verified_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    supplierShippingQuotesLookupIdx: index("supplier_shipping_quotes_lookup_idx").on(
+      t.supplierKey,
+      t.supplierProductId,
+      t.destinationCountry,
+      t.serviceLevel
+    ),
+    supplierShippingQuotesDestinationIdx: index("supplier_shipping_quotes_destination_idx").on(
+      t.destinationCountry,
+      t.lastVerifiedAt
+    ),
+    supplierShippingQuotesUnique: uniqueIndex("supplier_shipping_quotes_unique").on(
+      t.supplierKey,
+      t.supplierProductId,
+      t.destinationCountry,
+      t.serviceLevel
+    ),
+  })
+);
+
 export const matches = pgTable("matches", {
   id: uuid("id").defaultRandom().primaryKey(),
   supplierKey: text("supplier_key").notNull(),
