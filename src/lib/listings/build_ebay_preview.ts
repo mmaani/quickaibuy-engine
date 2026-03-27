@@ -106,6 +106,30 @@ function extractShippingEstimateBounds(rawPayload: unknown): {
   };
 }
 
+function extractShipFromMetadata(rawPayload: unknown): {
+  shipFromLocation: string | null;
+  shipFromConfidence: number | null;
+  shippingOriginEvidenceSource: string | null;
+  shippingSignal: string | null;
+  shippingConfidence: number | null;
+  shippingStability: string | null;
+} {
+  const payload = objectOrNull(rawPayload);
+  const shipFromLocation =
+    String(payload?.shipFromLocation ?? payload?.ship_from_location ?? "").trim() || null;
+  const shipFromConfidenceRaw = Number(payload?.shipFromConfidence);
+  const shippingConfidenceRaw = Number(payload?.shippingConfidence);
+  return {
+    shipFromLocation,
+    shipFromConfidence: Number.isFinite(shipFromConfidenceRaw) ? shipFromConfidenceRaw : null,
+    shippingOriginEvidenceSource:
+      String(payload?.shippingOriginEvidenceSource ?? "").trim() || null,
+    shippingSignal: String(payload?.shippingSignal ?? "").trim() || null,
+    shippingConfidence: Number.isFinite(shippingConfidenceRaw) ? shippingConfidenceRaw : null,
+    shippingStability: String(payload?.shippingStability ?? "").trim() || null,
+  };
+}
+
 export async function buildEbayPreview(input: ListingPreviewInput): Promise<ListingPreviewOutput> {
   const mediaStorageMode = getMediaStorageMode();
   let title = pickTitle(input);
@@ -113,6 +137,7 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
   const quantity = 1;
   const shipFromCountry = normalizeWarehouseCountry(input.supplierWarehouseCountry ?? input.shipFromCountry);
   const shippingEstimate = extractShippingEstimateBounds(input.supplierRawPayload);
+  const shipFromMetadata = extractShipFromMetadata(input.supplierRawPayload);
   const media = buildListingPreviewMedia(input);
   const images = media.images.map((image) => image.url);
   let description = generateListingDescription({
@@ -139,6 +164,12 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
     quantity,
     condition: "NEW",
     shipFromCountry,
+    shipFromLocation: input.shipFromLocation ?? shipFromMetadata.shipFromLocation,
+    shipFromConfidence: shipFromMetadata.shipFromConfidence,
+    shippingOriginEvidenceSource: shipFromMetadata.shippingOriginEvidenceSource,
+    shippingSignal: shipFromMetadata.shippingSignal,
+    shippingConfidence: shipFromMetadata.shippingConfidence,
+    shippingStability: shipFromMetadata.shippingStability,
     handlingDaysMin: shipFromCountry ? 2 : null,
     handlingDaysMax: shipFromCountry ? 3 : null,
     shippingDaysMin: shippingEstimate.shippingDaysMin,
@@ -156,6 +187,12 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
       supplierImages: input.supplierImages ?? [],
       supplierWarehouseCountry: input.supplierWarehouseCountry,
       shipFromCountry: input.shipFromCountry,
+      shipFromLocation: input.shipFromLocation ?? shipFromMetadata.shipFromLocation,
+      shipFromConfidence: shipFromMetadata.shipFromConfidence,
+      shippingOriginEvidenceSource: shipFromMetadata.shippingOriginEvidenceSource,
+      shippingSignal: shipFromMetadata.shippingSignal,
+      shippingConfidence: shipFromMetadata.shippingConfidence,
+      shippingStability: shipFromMetadata.shippingStability,
     },
     matchedMarketplace: {
       marketplaceKey: input.marketplaceKey,

@@ -422,6 +422,8 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
         priceSignal: priceEvidence.signal,
         shippingSignal: shipping.signal,
         shippingEvidenceText: shipping.evidenceText,
+        shippingOriginEvidenceSource:
+          shipping.shipFromCountry != null || shipping.shipFromLocation != null ? "detail_shipping_text" : null,
         shipsFromHint: shipping.shipsFromHint,
         shipFromCountry: shipping.shipFromCountry,
         ship_from_country: shipping.shipFromCountry,
@@ -514,6 +516,8 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
         shippingBadge: merchandising.shippingBadge,
         shippingMethod: shipping.shippingMethod,
         shippingConfidence: shipping.shippingConfidence,
+        shippingOriginEvidenceSource:
+          shipping.shipFromCountry != null || shipping.shipFromLocation != null ? "search_shipping_text" : null,
         shipsFromHint: shipping.shipsFromHint,
         shipFromCountry: shipping.shipFromCountry,
         ship_from_country: shipping.shipFromCountry,

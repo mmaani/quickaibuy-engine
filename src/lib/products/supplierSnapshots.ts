@@ -146,6 +146,8 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     ship_from_country: enrichment.shipFromCountry,
     shipFromLocation: enrichment.shipFromLocation,
     ship_from_location: enrichment.shipFromLocation,
+    shipFromConfidence: enrichment.shipFromConfidence,
+    shippingOriginEvidenceSource: enrichment.shippingOriginEvidenceSource,
     stockCount: enrichment.stockCount,
     evidenceSource: enrichment.evidenceSource,
     detailQuality: enrichment.detailQuality,

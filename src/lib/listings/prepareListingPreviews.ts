@@ -68,6 +68,7 @@ type CandidatePreviewSourceRow = {
   supplierRawPayload: unknown;
   supplierWarehouseCountry: string | null;
   shipFromCountry: string | null;
+  shipFromLocation: string | null;
   marketplaceImageUrl: string | null;
   marketplaceTitle: string | null;
   marketplaceRawPayload: unknown;
@@ -123,16 +124,23 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
 function extractSupplierShipFromCountry(row: CandidatePreviewSourceRow): {
   supplierWarehouseCountry: string | null;
   shipFromCountry: string | null;
+  shipFromLocation: string | null;
 } {
   const fromColumns = {
     supplierWarehouseCountry: cleanString(row.supplierWarehouseCountry),
     shipFromCountry: cleanString(row.shipFromCountry),
+    shipFromLocation: cleanString(row.shipFromLocation),
   };
 
   const payload = objectOrNull(row.supplierRawPayload);
   if (!payload) return fromColumns;
 
-  const shippingEstimates = objectOrNull(payload.shipping_estimates);
+  const shippingEstimate =
+    Array.isArray(payload.shippingEstimates) && payload.shippingEstimates.length > 0
+      ? objectOrNull(payload.shippingEstimates[0])
+      : Array.isArray(payload.shipping_estimates) && payload.shipping_estimates.length > 0
+        ? objectOrNull(payload.shipping_estimates[0])
+        : objectOrNull(payload.shipping_estimates);
   const shipping = objectOrNull(payload.shipping);
 
   return {
@@ -143,10 +151,16 @@ function extractSupplierShipFromCountry(row: CandidatePreviewSourceRow): {
       cleanString(payload.warehouse_country),
     shipFromCountry:
       fromColumns.shipFromCountry ??
-      cleanString(payload.ship_from_country) ??
       cleanString(payload.shipFromCountry) ??
-      cleanString(shippingEstimates?.ship_from_country) ??
+      cleanString(payload.ship_from_country) ??
+      cleanString(shippingEstimate?.ship_from_country) ??
       cleanString(shipping?.ship_from_country),
+    shipFromLocation:
+      fromColumns.shipFromLocation ??
+      cleanString(payload.shipFromLocation) ??
+      cleanString(payload.ship_from_location) ??
+      cleanString(shippingEstimate?.ship_from_location) ??
+      cleanString(shipping?.ship_from_location),
   };
 }
 
@@ -234,8 +248,9 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
       supplierSourceUrl: productsRaw.sourceUrl,
       supplierImages: productsRaw.images,
       supplierRawPayload: productsRaw.rawPayload,
-      supplierWarehouseCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'supplier_warehouse_country'), '')`,
-      shipFromCountry: sql<string | null>`NULLIF(BTRIM(${productsRaw.rawPayload} ->> 'ship_from_country'), '')`,
+      supplierWarehouseCountry: sql<string | null>`NULLIF(BTRIM(COALESCE(${productsRaw.rawPayload} ->> 'supplierWarehouseCountry', ${productsRaw.rawPayload} ->> 'supplier_warehouse_country', ${productsRaw.rawPayload} ->> 'warehouse_country')), '')`,
+      shipFromCountry: sql<string | null>`NULLIF(BTRIM(COALESCE(${productsRaw.rawPayload} ->> 'shipFromCountry', ${productsRaw.rawPayload} ->> 'ship_from_country')), '')`,
+      shipFromLocation: sql<string | null>`NULLIF(BTRIM(COALESCE(${productsRaw.rawPayload} ->> 'shipFromLocation', ${productsRaw.rawPayload} ->> 'ship_from_location')), '')`,
       marketplaceImageUrl: sql<string | null>`NULLIF(BTRIM(COALESCE(${marketplacePrices.imageUrl}, ${marketplacePrices.rawPayload} -> 'image' ->> 'imageUrl')), '')`,
       marketplaceTitle: sql<string | null>`NULLIF(BTRIM(${marketplacePrices.rawPayload} ->> 'title'), '')`,
       marketplaceRawPayload: marketplacePrices.rawPayload,
@@ -486,6 +501,7 @@ async function processCandidatePreviewRows(
       supplierPrice: toNum(row.supplierPrice),
       supplierWarehouseCountry: supplierCountry.supplierWarehouseCountry,
       shipFromCountry: supplierCountry.shipFromCountry,
+      shipFromLocation: supplierCountry.shipFromLocation,
       marketplaceImageUrl: cleanString(row.marketplaceImageUrl),
       marketplaceKey: row.marketplaceKey,
       marketplaceListingId: row.marketplaceListingId,

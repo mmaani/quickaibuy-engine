@@ -3,6 +3,7 @@ import {
   normalizeAvailabilitySignal,
   type AvailabilitySignal,
 } from "./supplierAvailability";
+import { normalizeShipFromCountry } from "./shipFromCountry";
 import type { ShippingEstimate } from "./suppliers/types";
 
 export type SupplierRowDecision = "ACTIONABLE" | "MANUAL_REVIEW" | "BLOCKED";
@@ -36,6 +37,8 @@ export type SupplierEnrichment = {
   shippingCurrency: string | null;
   shipFromCountry: string | null;
   shipFromLocation: string | null;
+  shipFromConfidence: number;
+  shippingOriginEvidenceSource: string | null;
   stockCount: number | null;
   evidenceSource: string | null;
   detailQuality: string | null;
@@ -73,17 +76,6 @@ function asNumber(value: unknown): number | null {
 function asPositiveNumber(value: unknown): number | null {
   const parsed = asNumber(value);
   return parsed != null && parsed > 0 ? parsed : null;
-}
-
-function normalizeCountryCode(value: unknown): string | null {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  if (/^[A-Z]{2}$/.test(normalized)) return normalized;
-  if (normalized === "USA" || normalized === "UNITED STATES") return "US";
-  if (normalized === "UK" || normalized === "UNITED KINGDOM") return "GB";
-  if (normalized === "CHINA") return "CN";
-  if (normalized === "POLAND") return "PL";
-  if (normalized === "GERMANY") return "DE";
-  return null;
 }
 
 function sanitizeTitle(value: string | null): string | null {
@@ -162,6 +154,8 @@ function deriveShippingDetails(
   shippingCurrency: string | null;
   shipFromCountry: string | null;
   shipFromLocation: string | null;
+  shipFromConfidence: number;
+  shippingOriginEvidenceSource: string | null;
   shippingGuarantees: string | null;
 } {
   const directConfidence = normalizeAvailabilityConfidence(rawPayload.shippingConfidence);
@@ -176,14 +170,17 @@ function deriveShippingDetails(
   const directMin = asPositiveNumber(rawPayload.deliveryEstimateMinDays);
   const directMax = asPositiveNumber(rawPayload.deliveryEstimateMaxDays);
   const directShipFromCountry =
-    normalizeCountryCode(rawPayload.shipFromCountry) ??
-    normalizeCountryCode(rawPayload.ship_from_country) ??
-    normalizeCountryCode(rawPayload.supplierWarehouseCountry) ??
-    normalizeCountryCode(rawPayload.supplier_warehouse_country);
+    normalizeShipFromCountry(rawPayload.shipFromCountry) ??
+    normalizeShipFromCountry(rawPayload.ship_from_country) ??
+    normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
+    normalizeShipFromCountry(rawPayload.supplier_warehouse_country);
   const directShipFromLocation =
     asString(rawPayload.shipFromLocation) ??
     asString(rawPayload.ship_from_location) ??
     asString(rawPayload.shipsFromHint);
+  const directSupplierWarehouseCountry =
+    normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
+    normalizeShipFromCountry(rawPayload.supplier_warehouse_country);
   const directShippingGuarantees =
     asString(rawPayload.shippingGuarantees) ??
     asString(rawPayload.shippingGuarantee);
@@ -212,8 +209,21 @@ function deriveShippingDetails(
   const shippingMethod = directMethod ?? label;
   const deliveryEstimateMinDays = directMin ?? estimate?.etaMinDays ?? null;
   const deliveryEstimateMaxDays = directMax ?? estimate?.etaMaxDays ?? null;
-  const shipFromCountry = directShipFromCountry ?? normalizeCountryCode(estimate?.ship_from_country);
+  const shipFromCountry = directShipFromCountry ?? normalizeShipFromCountry(estimate?.ship_from_country);
   const shipFromLocation = directShipFromLocation ?? asString(estimate?.ship_from_location);
+  const parseMode = asString(rawPayload.parseMode)?.toLowerCase();
+  const evidenceSource = asString(rawPayload.shippingOriginEvidenceSource);
+  const shippingOriginEvidenceSource =
+    evidenceSource ??
+    (directShipFromCountry != null || directShipFromLocation != null
+      ? parseMode === "detail" || asString(rawPayload.detailQuality) != null
+        ? "supplier_detail"
+        : directSupplierWarehouseCountry != null
+          ? "supplier_warehouse"
+          : "supplier_search"
+      : estimate?.ship_from_country != null || estimate?.ship_from_location != null
+        ? "shipping_estimate"
+        : null);
   const hasShippingEvidence =
     shippingPriceExplicit != null ||
     freeShippingExplicit === true ||
@@ -255,6 +265,29 @@ function deriveShippingDetails(
       : shippingConfidence >= 0.6
         ? "MEDIUM"
         : "LOW";
+  const shipFromConfidence = clamp01(
+    shipFromCountry == null && shipFromLocation == null
+      ? 0
+      : shippingOriginEvidenceSource === "supplier_detail"
+        ? shipFromCountry != null
+          ? 0.92
+          : 0.72
+        : shippingOriginEvidenceSource === "supplier_warehouse"
+          ? shipFromCountry != null
+            ? 0.86
+            : 0.68
+          : shippingOriginEvidenceSource === "supplier_search"
+            ? shipFromCountry != null
+              ? 0.74
+              : 0.58
+            : shippingOriginEvidenceSource === "shipping_estimate"
+              ? shipFromCountry != null
+                ? 0.76
+                : 0.56
+              : shipFromCountry != null
+                ? 0.62
+                : 0.48
+  );
 
   return {
     shippingPriceExplicit,
@@ -267,6 +300,8 @@ function deriveShippingDetails(
     shippingCurrency,
     shipFromCountry,
     shipFromLocation,
+    shipFromConfidence,
+    shippingOriginEvidenceSource,
     shippingGuarantees: directShippingGuarantees,
     shippingConfidence: clamp01(shippingConfidence),
   };
@@ -345,6 +380,8 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
     shippingCurrency: shipping.shippingCurrency,
     shipFromCountry: shipping.shipFromCountry,
     shipFromLocation: shipping.shipFromLocation,
+    shipFromConfidence: shipping.shipFromConfidence,
+    shippingOriginEvidenceSource: shipping.shippingOriginEvidenceSource,
     stockCount,
     evidenceSource,
     detailQuality,

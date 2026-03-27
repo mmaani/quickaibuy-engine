@@ -1,4 +1,5 @@
 import type { ShippingEstimate } from "@/lib/products/suppliers/types";
+import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 
 export type ShippingInferenceMode =
   | "EXACT_QUOTE"
@@ -144,17 +145,6 @@ function compactText(value: unknown): string {
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-function normalizeCountryCode(value: unknown): string | null {
-  const normalized = compactText(value).toUpperCase();
-  if (/^[A-Z]{2}$/.test(normalized)) return normalized;
-  if (normalized === "USA" || normalized === "UNITED STATES") return "US";
-  if (normalized === "UK" || normalized === "UNITED KINGDOM") return "GB";
-  if (normalized === "CHINA") return "CN";
-  if (normalized === "POLAND") return "PL";
-  if (normalized === "GERMANY") return "DE";
-  return null;
 }
 
 function median(values: Array<number | null | undefined>): number | null {
@@ -313,11 +303,15 @@ export function inferShippingFromEvidence(input: {
     ...shippingEstimates.map((estimate) => toNum(estimate.etaMaxDays)),
   ]);
   const originCountry =
-    normalizeCountryCode(rawPayload.shipFromCountry) ??
-    normalizeCountryCode(rawPayload.ship_from_country) ??
-    normalizeCountryCode(rawPayload.supplierWarehouseCountry) ??
-    normalizeCountryCode(rawPayload.supplier_warehouse_country) ??
-    shippingEstimates.map((estimate) => normalizeCountryCode(estimate.ship_from_country)).find(Boolean) ??
+    normalizeShipFromCountry(rawPayload.shipFromCountry) ??
+    normalizeShipFromCountry(rawPayload.ship_from_country) ??
+    normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
+    normalizeShipFromCountry(rawPayload.supplier_warehouse_country) ??
+    normalizeShipFromCountry(rawPayload.shipFromLocation) ??
+    normalizeShipFromCountry(rawPayload.ship_from_location) ??
+    shippingEstimates
+      .map((estimate) => normalizeShipFromCountry(estimate.ship_from_country ?? estimate.ship_from_location))
+      .find(Boolean) ??
     null;
   const methodKey = detectMethod(signalText || null);
   const template = findTemplate(methodKey);

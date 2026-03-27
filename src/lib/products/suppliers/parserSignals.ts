@@ -1,21 +1,11 @@
 import type { ShippingEstimate } from "./types";
+import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 
 const MAX_EVIDENCE_TEXT_LENGTH = 220;
 
 export type SupplierListingValidity = "VALID" | "POSSIBLE_STALE" | "INVALID";
 export type SupplierPriceSignal = "DIRECT" | "RANGE" | "FALLBACK" | "MISSING";
 export type SupplierShippingSignal = "DIRECT" | "PARTIAL" | "INFERRED" | "MISSING";
-
-function normalizeCountryCode(value: string): string | null {
-  const normalized = compactText(value).toUpperCase();
-  if (/^[A-Z]{2}$/.test(normalized)) return normalized;
-  if (normalized === "USA" || normalized === "UNITED STATES") return "US";
-  if (normalized === "UK" || normalized === "UNITED KINGDOM") return "GB";
-  if (normalized === "CHINA") return "CN";
-  if (normalized === "POLAND") return "PL";
-  if (normalized === "GERMANY") return "DE";
-  return null;
-}
 
 export function compactText(value: string): string {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -119,7 +109,7 @@ export function extractShippingEvidence(rawText: string): {
     : warehouseMatch?.[1]
       ? sliceEvidence(warehouseMatch[1], 120)
       : null;
-  const shipFromCountry = normalizeCountryCode(shipFromCountryMatch?.[1] ?? shipFromLocation ?? "");
+  const shipFromCountry = normalizeShipFromCountry(shipFromCountryMatch?.[1] ?? shipFromLocation ?? "");
 
   const estimate: ShippingEstimate | null =
     shippingTextMatch || etaMatch || shippingCostMatch || shipsFromMatch || methodMatch || shipFromCountryMatch

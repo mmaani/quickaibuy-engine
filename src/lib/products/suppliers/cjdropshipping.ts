@@ -1,4 +1,5 @@
 import type { ProductVariant, ShippingEstimate, SupplierProduct } from "./types";
+import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 
 type CjInventoryEntry = {
   areaEn?: string;
@@ -421,12 +422,7 @@ function parseDayRangeFromText(
 }
 
 function deriveShipFromCountry(text: string, warehouseCountry: string | null): string | null {
-  if (/\b(us|usa|united states)\b/i.test(text)) return "US";
-  if (/\bpoland\b/i.test(text)) return "PL";
-  if (/\bgermany\b/i.test(text)) return "DE";
-  if (/\b(united kingdom|uk)\b/i.test(text)) return "GB";
-  if (/\bchina\b/i.test(text)) return "CN";
-  return warehouseCountry;
+  return normalizeShipFromCountry(text) ?? normalizeShipFromCountry(warehouseCountry);
 }
 
 function buildCjDetailShippingEvidence(
@@ -812,6 +808,11 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       ship_from_country: shippingEvidence.shipFromCountry,
       shipFromLocation: shippingEvidence.shipFromCountry ? `${shippingEvidence.shipFromCountry} warehouse` : null,
       ship_from_location: shippingEvidence.shipFromCountry ? `${shippingEvidence.shipFromCountry} warehouse` : null,
+      shippingOriginEvidenceSource: shippingEvidence.shipFromCountry
+        ? warehouseCountry
+          ? "warehouse_inventory"
+          : "detail_shipping_text"
+        : null,
       shippingSignal: shippingEvidence.signal,
       shippingEvidenceText: shippingEvidence.evidenceText,
       evidenceSource: "api_detail",

@@ -63,6 +63,7 @@ export type ListingPreviewInput = {
   supplierRawPayload?: unknown;
   supplierWarehouseCountry: string | null;
   shipFromCountry: string | null;
+  shipFromLocation?: string | null;
   marketplaceImageUrl: string | null;
 
   marketplaceKey: string;
@@ -89,6 +90,12 @@ export type EbayListingPreviewPayload = {
   quantity: number;
   condition: "NEW";
   shipFromCountry: string | null;
+  shipFromLocation?: string | null;
+  shipFromConfidence?: number | null;
+  shippingOriginEvidenceSource?: string | null;
+  shippingSignal?: string | null;
+  shippingConfidence?: number | null;
+  shippingStability?: string | null;
   handlingDaysMin?: number | null;
   handlingDaysMax?: number | null;
   shippingDaysMin?: number | null;
@@ -106,6 +113,12 @@ export type EbayListingPreviewPayload = {
     supplierImages?: string[];
     supplierWarehouseCountry: string | null;
     shipFromCountry: string | null;
+    shipFromLocation?: string | null;
+    shipFromConfidence?: number | null;
+    shippingOriginEvidenceSource?: string | null;
+    shippingSignal?: string | null;
+    shippingConfidence?: number | null;
+    shippingStability?: string | null;
   };
   matchedMarketplace: {
     marketplaceKey: string;

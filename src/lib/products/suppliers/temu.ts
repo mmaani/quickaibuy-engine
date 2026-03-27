@@ -272,6 +272,8 @@ async function enrichTemuProductWithDetail(product: SupplierProduct): Promise<Su
         shippingConfidence: shipping.shippingConfidence,
         shippingEvidenceText: shipping.evidenceText,
         shippingMethod: shipping.shippingMethod,
+        shippingOriginEvidenceSource:
+          shipping.shipFromCountry != null || shipping.shipFromLocation != null ? "detail_shipping_text" : null,
         shipsFromHint: shipping.shipsFromHint,
         shipFromCountry: shipping.shipFromCountry,
         ship_from_country: shipping.shipFromCountry,
@@ -353,6 +355,8 @@ function parseTemuText(text: string, keyword: string, snapshotTs: string): Suppl
         shippingConfidence: shipping.shippingConfidence,
         shippingEvidenceText: shipping.evidenceText,
         shippingMethod: shipping.shippingMethod,
+        shippingOriginEvidenceSource:
+          shipping.shipFromCountry != null || shipping.shipFromLocation != null ? "search_shipping_text" : null,
         shipsFromHint: shipping.shipsFromHint,
         shipFromCountry: shipping.shipFromCountry,
         ship_from_country: shipping.shipFromCountry,
