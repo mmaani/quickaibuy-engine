@@ -27,6 +27,9 @@ export type OrderPurchaseSafetyStatus = {
   candidateId: string | null;
   listingId: string | null;
   futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION";
+  economics_hard_pass: boolean;
+  economics_block_reason: string | null;
+  economics_verified_at: string | null;
 };
 
 function uniqueStrings(values: string[]): string[] {
@@ -78,7 +81,8 @@ function statusFromReasons(reasons: string[]): OrderPurchaseSafetyStatusCode {
     reasons.includes("INCOMPLETE_ECONOMICS") ||
     reasons.includes("MISSING_SUPPLIER_PRICE") ||
     reasons.includes("MISSING_MARKETPLACE_PRICE") ||
-    reasons.includes("MISSING_SHIPPING_DATA");
+    reasons.includes("MISSING_SHIPPING_DATA") ||
+    reasons.includes("MISSING_FEE_ASSUMPTIONS");
   if (hasEconomicsBlock) return "BLOCKED_ECONOMICS_OUT_OF_BOUNDS";
 
   if (reasons.length > 0) return "MANUAL_REVIEW_REQUIRED";
@@ -180,6 +184,9 @@ function buildSafetyCheckEventPayload(input: {
     candidateId: input.status.candidateId,
     listingId: input.status.listingId,
     futureExecutionHook: input.status.futureExecutionHook,
+    economics_hard_pass: input.status.economics_hard_pass,
+    economics_block_reason: input.status.economics_block_reason,
+    economics_verified_at: input.status.economics_verified_at,
   };
 }
 
@@ -316,6 +323,9 @@ export async function getOrderPurchaseSafetyStatus(
       candidateId: null,
       listingId: null,
       futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
+      economics_hard_pass: false,
+      economics_block_reason: "ORDER_SUPPLIER_LINKAGE_REQUIRED",
+      economics_verified_at: null,
     };
   }
 
@@ -335,6 +345,9 @@ export async function getOrderPurchaseSafetyStatus(
       candidateId: null,
       listingId: null,
       futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
+      economics_hard_pass: false,
+      economics_block_reason: strictReasons.join(","),
+      economics_verified_at: new Date().toISOString(),
     };
   }
 
@@ -353,6 +366,9 @@ export async function getOrderPurchaseSafetyStatus(
       candidateId: null,
       listingId: null,
       futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
+      economics_hard_pass: false,
+      economics_block_reason: "ORDER_CANDIDATE_LINK_REQUIRED",
+      economics_verified_at: null,
     };
   }
 
@@ -380,6 +396,9 @@ export async function getOrderPurchaseSafetyStatus(
       candidateId: link.candidateId,
       listingId: link.listingId,
       futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
+      economics_hard_pass: priceGuard.economics_hard_pass,
+      economics_block_reason: priceGuard.economics_block_reason,
+      economics_verified_at: priceGuard.economics_verified_at,
     };
   } catch {
     const presentation = mapStatusPresentation("VALIDATION_NEEDED");
@@ -395,6 +414,9 @@ export async function getOrderPurchaseSafetyStatus(
       candidateId: link.candidateId,
       listingId: link.listingId,
       futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
+      economics_hard_pass: false,
+      economics_block_reason: "ORDER_SAFETY_CHECK_FAILED",
+      economics_verified_at: null,
     };
   }
 }

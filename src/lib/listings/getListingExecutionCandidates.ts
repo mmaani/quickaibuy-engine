@@ -56,6 +56,7 @@ export async function getListingExecutionCandidates(
           AND pc.marketplace_key = ${marketplace}
           AND pc.decision_status = 'APPROVED'
           AND pc.listing_eligible = TRUE
+          AND COALESCE((l.response::jsonb)->>'economics_hard_pass', 'false') = 'true'
         )
         OR (
           ${targetedListingLookup} = TRUE
@@ -67,6 +68,7 @@ export async function getListingExecutionCandidates(
           AND pc.marketplace_key = ${marketplace}
           AND pc.decision_status = 'APPROVED'
           AND pc.listing_eligible = TRUE
+          AND COALESCE((l.response::jsonb)->>'economics_hard_pass', 'false') = 'true'
         )
       )
     ORDER BY l.updated_at ASC, l.created_at ASC

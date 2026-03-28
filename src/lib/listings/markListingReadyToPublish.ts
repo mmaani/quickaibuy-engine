@@ -414,7 +414,6 @@ export async function markListingReadyToPublish(
 
   if (failClosed) {
     const shouldManualReview =
-      priceGuard.decision === "MANUAL_REVIEW" ||
       priceGuard.reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
       !driftMetricAvailable ||
       !supplierSnapshotAgeAvailable;
@@ -431,6 +430,17 @@ export async function markListingReadyToPublish(
         listing_block_reason = ${listingBlockReason},
         listing_eligible_ts = NOW()
       WHERE id = ${candidateId}
+    `);
+    await db.execute(sql`
+      UPDATE listings
+      SET
+        response = COALESCE(response, '{}'::jsonb) || jsonb_build_object(
+          'economics_hard_pass', false,
+          'economics_block_reason', ${listingBlockReason},
+          'economics_verified_at', ${priceGuard.economics_verified_at}
+        ),
+        updated_at = NOW()
+      WHERE id = ${input.listingId}
     `);
 
     if (priceGuard.reasons.includes("STALE_MARKETPLACE_SNAPSHOT")) {
@@ -614,6 +624,17 @@ export async function markListingReadyToPublish(
       newStatus: LISTING_PUBLISH_ENTRY_STATUS,
     },
   });
+  await db.execute(sql`
+    UPDATE listings
+    SET
+      response = COALESCE(response, '{}'::jsonb) || jsonb_build_object(
+        'economics_hard_pass', true,
+        'economics_block_reason', NULL,
+        'economics_verified_at', ${priceGuard.economics_verified_at}
+      ),
+      updated_at = NOW()
+    WHERE id = ${input.listingId}
+  `);
 
   return {
     ok: true,

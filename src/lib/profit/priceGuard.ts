@@ -2,16 +2,16 @@ import { db } from "@/lib/db";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { sql } from "drizzle-orm";
 import { getPriceGuardThresholds, type PriceGuardThresholds } from "./priceGuardConfig";
-import { calculateRealProfit } from "./realProfitCalculator";
 import { getProfitAssumptions, type ProfitAssumptions } from "./profitAssumptions";
+import { evaluateProfitHardGate } from "./hardProfitGate";
 import {
   extractAvailabilityFromRawPayload,
   normalizeAvailabilitySignal,
   type AvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
 
-export type PriceGuardDecision = "ALLOW" | "BLOCK" | "MANUAL_REVIEW";
-export type PriceGuardReasonSeverity = "BLOCK" | "MANUAL_REVIEW";
+export type PriceGuardDecision = "ALLOW" | "BLOCK";
+export type PriceGuardReasonSeverity = "BLOCK";
 
 export type PriceGuardReasonCode =
   | "MISSING_SUPPLIER_PRICE"
@@ -30,11 +30,8 @@ export type PriceGuardReasonCode =
   | "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE"
   | "INCOMPLETE_ECONOMICS"
   | "PROFIT_BELOW_MINIMUM"
-  | "PROFIT_NEAR_MINIMUM"
   | "MARGIN_BELOW_MINIMUM"
-  | "MARGIN_NEAR_MINIMUM"
-  | "ROI_BELOW_MINIMUM"
-  | "ROI_NEAR_MINIMUM";
+  | "ROI_BELOW_MINIMUM";
 
 export type PriceGuardReason = {
   code: PriceGuardReasonCode;
@@ -74,6 +71,9 @@ export type PriceGuardResult = {
   reasonSummary: string;
   metrics: PriceGuardMetrics;
   thresholds: PriceGuardThresholds;
+  economics_hard_pass: boolean;
+  economics_block_reason: string | null;
+  economics_verified_at: string;
   context: {
     candidateId: string;
     listingId: string | null;
@@ -200,9 +200,7 @@ function computePctChange(original: number | null, latest: number | null): numbe
 }
 
 function decideFromReasons(reasonDetails: PriceGuardReason[]): PriceGuardDecision {
-  if (reasonDetails.some((reason) => reason.severity === "BLOCK")) return "BLOCK";
-  if (reasonDetails.some((reason) => reason.severity === "MANUAL_REVIEW")) return "MANUAL_REVIEW";
-  return "ALLOW";
+  return reasonDetails.length > 0 ? "BLOCK" : "ALLOW";
 }
 
 function addReason(
@@ -321,27 +319,23 @@ export async function validateProfitSafety(input: {
   const originalMarketPrice = toNumber(row.originalMarketPrice);
   const latestMarketPrice = toNumber(row.latestMarketPrice) ?? originalMarketPrice;
 
-  const originalMarketShipping = toNumber(row.originalMarketShipping);
-  const latestMarketShipping = toNumber(row.latestMarketShipping);
-
   const shippingCost =
-    toNumber(row.estimatedShipping) ??
-    latestMarketShipping ??
-    originalMarketShipping ??
-    null;
+    toNumber(row.estimatedShipping) ?? null;
 
   const assumptions = buildAssumptionsFromStoredFees(row.marketplaceKey, feeAssumptions);
 
-  const economics =
-    latestMarketPrice != null && latestSupplierPrice != null && shippingCost != null
-      ? calculateRealProfit({
-          marketplaceKey: row.marketplaceKey,
-          marketplacePriceUsd: latestMarketPrice,
-          supplierPriceUsd: latestSupplierPrice,
-          shippingPriceUsd: shippingCost,
-          assumptions,
-        })
-      : null;
+  const hardGate = evaluateProfitHardGate({
+    marketplaceKey: row.marketplaceKey,
+    supplierPriceUsd: latestSupplierPrice,
+    marketplacePriceUsd: latestMarketPrice,
+    shippingCostUsd: shippingCost,
+    assumptions,
+    assumptionsDeterministic: assumptionsLookDeterministic(assumptions),
+    supplierSnapshotAgeHours: hoursBetween(now, toDate(row.latestSupplierSnapshotTs)),
+    marketplaceSnapshotAgeHours: hoursBetween(now, toDate(row.latestMarketSnapshotTs)),
+    thresholds,
+  });
+  const economics = hardGate.economics;
 
   const estimatedFees = economics?.estimatedFeesUsd ?? feeAssumptions.feeUsd ?? null;
   const estimatedCogs = economics?.estimatedCogsUsd ?? null;
@@ -380,15 +374,15 @@ export async function validateProfitSafety(input: {
   if (!assumptionsLookDeterministic(assumptions) || estimatedFees == null) {
     addReason(reasonDetails, {
       code: "MISSING_FEE_ASSUMPTIONS",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Fee assumptions are incomplete for deterministic recomputation.",
     });
   }
 
-  if (shippingCost == null && thresholds.requireShippingData) {
+  if (shippingCost == null) {
     addReason(reasonDetails, {
       code: "MISSING_SHIPPING_DATA",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Shipping data is required but missing.",
     });
   }
@@ -396,13 +390,13 @@ export async function validateProfitSafety(input: {
   if (supplierSnapshotAgeHours == null) {
     addReason(reasonDetails, {
       code: "SUPPLIER_SNAPSHOT_AGE_UNAVAILABLE",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Supplier snapshot age is unavailable for fail-closed validation.",
     });
   } else if (supplierSnapshotAgeHours > thresholds.maxSupplierSnapshotAgeHours) {
     addReason(reasonDetails, {
       code: "STALE_SUPPLIER_SNAPSHOT",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Supplier snapshot is stale and should be reviewed.",
       meta: {
         ageHours: supplierSnapshotAgeHours,
@@ -414,13 +408,13 @@ export async function validateProfitSafety(input: {
   if (marketplaceSnapshotAgeHours == null) {
     addReason(reasonDetails, {
       code: "MARKETPLACE_SNAPSHOT_AGE_UNAVAILABLE",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Marketplace snapshot age is unavailable for fail-closed validation.",
     });
   } else if (marketplaceSnapshotAgeHours > thresholds.maxMarketplaceSnapshotAgeHours) {
     addReason(reasonDetails, {
       code: "STALE_MARKETPLACE_SNAPSHOT",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Marketplace snapshot is stale and should be reviewed.",
       meta: {
         ageHours: marketplaceSnapshotAgeHours,
@@ -433,7 +427,7 @@ export async function validateProfitSafety(input: {
     if (Math.abs(supplierPriceDriftPct) > thresholds.maxSupplierDriftPct) {
       addReason(reasonDetails, {
         code: "SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE",
-        severity: "MANUAL_REVIEW",
+        severity: "BLOCK",
         message: "Supplier price drift exceeds configured tolerance.",
         meta: {
           driftPct: supplierPriceDriftPct,
@@ -444,7 +438,7 @@ export async function validateProfitSafety(input: {
   } else if (thresholds.requireSupplierDriftData) {
     addReason(reasonDetails, {
       code: "SUPPLIER_DRIFT_DATA_UNAVAILABLE",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Supplier drift data is unavailable but required for this guard profile.",
       meta: {
         originalSupplierPrice,
@@ -464,14 +458,14 @@ export async function validateProfitSafety(input: {
   } else if (availabilitySignal === "LOW_STOCK") {
     addReason(reasonDetails, {
       code: "SUPPLIER_LOW_STOCK",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Supplier stock appears limited and requires manual review.",
       meta: { availabilitySignal, availabilityConfidence },
     });
   } else if (availabilitySignal === "UNKNOWN") {
     addReason(reasonDetails, {
       code: "SUPPLIER_AVAILABILITY_UNKNOWN",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Supplier availability is unknown and cannot auto-pass.",
       meta: { availabilitySignal, availabilityConfidence },
     });
@@ -480,7 +474,7 @@ export async function validateProfitSafety(input: {
   if (availabilityConfidence != null && availabilityConfidence < 0.5) {
     addReason(reasonDetails, {
       code: "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Supplier availability confidence is low.",
       meta: { availabilitySignal, availabilityConfidence, minConfidence: 0.5 },
     });
@@ -489,7 +483,7 @@ export async function validateProfitSafety(input: {
   if (recomputedProfit == null) {
     addReason(reasonDetails, {
       code: "INCOMPLETE_ECONOMICS",
-      severity: "MANUAL_REVIEW",
+      severity: "BLOCK",
       message: "Economics could not be fully recomputed with deterministic assumptions.",
     });
   } else if (recomputedProfit < thresholds.minProfitUsd) {
@@ -499,17 +493,6 @@ export async function validateProfitSafety(input: {
       message: "Recomputed profit is below minimum threshold.",
       meta: {
         minProfitUsd: thresholds.minProfitUsd,
-        recomputedProfit,
-      },
-    });
-  } else if (recomputedProfit < thresholds.minProfitUsd + thresholds.reviewProfitBufferUsd) {
-    addReason(reasonDetails, {
-      code: "PROFIT_NEAR_MINIMUM",
-      severity: "MANUAL_REVIEW",
-      message: "Recomputed profit is above minimum but too close to threshold for auto-allow.",
-      meta: {
-        minProfitUsd: thresholds.minProfitUsd,
-        reviewProfitBufferUsd: thresholds.reviewProfitBufferUsd,
         recomputedProfit,
       },
     });
@@ -525,20 +508,6 @@ export async function validateProfitSafety(input: {
         recomputedMarginPct,
       },
     });
-  } else if (
-    recomputedMarginPct != null &&
-    recomputedMarginPct < thresholds.minMarginPct + thresholds.reviewMarginBufferPct
-  ) {
-    addReason(reasonDetails, {
-      code: "MARGIN_NEAR_MINIMUM",
-      severity: "MANUAL_REVIEW",
-      message: "Recomputed margin is too close to threshold for auto-allow.",
-      meta: {
-        minMarginPct: thresholds.minMarginPct,
-        reviewMarginBufferPct: thresholds.reviewMarginBufferPct,
-        recomputedMarginPct,
-      },
-    });
   }
 
   if (recomputedRoiPct != null && recomputedRoiPct < thresholds.minRoiPct) {
@@ -551,19 +520,13 @@ export async function validateProfitSafety(input: {
         recomputedRoiPct,
       },
     });
-  } else if (
-    recomputedRoiPct != null &&
-    recomputedRoiPct < thresholds.minRoiPct + thresholds.reviewRoiBufferPct
-  ) {
+  }
+
+  for (const reasonCode of hardGate.reasonCodes) {
     addReason(reasonDetails, {
-      code: "ROI_NEAR_MINIMUM",
-      severity: "MANUAL_REVIEW",
-      message: "Recomputed ROI is too close to threshold for auto-allow.",
-      meta: {
-        minRoiPct: thresholds.minRoiPct,
-        reviewRoiBufferPct: thresholds.reviewRoiBufferPct,
-        recomputedRoiPct,
-      },
+      code: reasonCode,
+      severity: "BLOCK",
+      message: reasonCode,
     });
   }
 
@@ -599,6 +562,9 @@ export async function validateProfitSafety(input: {
       },
     },
     thresholds,
+    economics_hard_pass: hardGate.allow,
+    economics_block_reason: hardGate.blockReason,
+    economics_verified_at: now.toISOString(),
     context: {
       candidateId: row.candidateId,
       listingId: input.listingId ?? null,

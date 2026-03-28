@@ -20,6 +20,7 @@ import { calculateRealProfit } from "./realProfitCalculator";
 import { getPriceGuardThresholds } from "./priceGuardConfig";
 import { resolvePricingDestinationForMarketplace } from "@/lib/pricing/destinationResolver";
 import { resolveShippingCost } from "@/lib/pricing/shippingCalculator";
+import { evaluateProfitHardGate } from "./hardProfitGate";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -92,6 +93,9 @@ type CandidateOption = {
   estimatedProfit: number;
   marginPct: number;
   roiPct: number;
+  economicsHardPass: boolean;
+  economicsBlockReason: string | null;
+  economicsVerifiedAt: string;
   staleMarketplaceSnapshot: boolean;
   shippingUnsafe: boolean;
   supplierDriftExceeded: boolean;
@@ -225,7 +229,8 @@ export async function runProfitEngine(input?: {
     Number(process.env.PROFIT_MIN_MATCH_CONFIDENCE || String(PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN)),
     PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN
   );
-  const maxMarketplaceSnapshotAgeHours = getPriceGuardThresholds().maxMarketplaceSnapshotAgeHours;
+  const guardThresholds = getPriceGuardThresholds();
+  const maxMarketplaceSnapshotAgeHours = guardThresholds.maxMarketplaceSnapshotAgeHours;
 
   const supplierKeyFilter =
     input?.supplierKey && String(input.supplierKey).trim()
@@ -480,6 +485,17 @@ export async function runProfitEngine(input?: {
       marketplacePriceUsd: marketPrice,
       shippingPriceUsd: shipping,
     });
+    const hardGate = evaluateProfitHardGate({
+      marketplaceKey,
+      supplierPriceUsd: supplierCost,
+      marketplacePriceUsd: marketPrice,
+      shippingCostUsd: shippingResolution.errorReason ? null : shipping,
+      assumptions: economics.assumptions,
+      assumptionsDeterministic: true,
+      supplierSnapshotAgeHours,
+      marketplaceSnapshotAgeHours,
+      thresholds: guardThresholds,
+    });
 
     const estimatedFees = economics.estimatedFeesUsd;
     const estimatedShipping = economics.estimatedShippingUsd;
@@ -563,6 +579,7 @@ export async function runProfitEngine(input?: {
       !supplierEvidence.manualReview &&
       !shippingUnsafe &&
       !marginOrRoiFailed &&
+      hardGate.allow &&
       !pipelineHardBlocked;
     const decisionStatus =
       matchRoutingStatus === "REJECTED"
@@ -571,7 +588,7 @@ export async function runProfitEngine(input?: {
           ? "MANUAL_REVIEW"
         : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview || shippingUnsafe
         ? "MANUAL_REVIEW"
-        : marginOrRoiFailed || pipelineHardBlocked
+        : marginOrRoiFailed || pipelineHardBlocked || !hardGate.allow
           ? "MANUAL_REVIEW"
           : automationSafe
             ? "APPROVED"
@@ -587,6 +604,8 @@ export async function runProfitEngine(input?: {
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
       : shippingResolution.errorReason
       ? `shipping intelligence unresolved: ${shippingResolution.errorReason}`
+      : !hardGate.allow
+      ? `economics hard block: ${hardGate.blockReason ?? "UNKNOWN"}`
       : supplierEvidence.manualReview && supplierEvidenceCodes.length
         ? formatSupplierEvidenceBlockReason(supplierEvidenceCodes)
           : marginOrRoiFailed
@@ -607,9 +626,11 @@ export async function runProfitEngine(input?: {
             ? [shippingResolution.errorReason]
           : supplierEvidenceCodes.length
             ? Array.from(new Set([...supplierEvidenceCodes, ...pipeline.flags]))
-            : marginOrRoiFailed
+          : marginOrRoiFailed
                 ? ["PROFIT_THRESHOLD_NOT_MET"]
-                : pipeline.flags;
+                : !hardGate.allow
+                  ? [...hardGate.reasonCodes]
+                  : pipeline.flags;
     const estimatedFeesJson = {
       feePct: economics.assumptions.ebayFeeRatePct,
       feeUsd: estimatedFees,
@@ -652,6 +673,8 @@ export async function runProfitEngine(input?: {
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
       : shippingResolution.errorReason
       ? `shipping intelligence failed | reason ${shippingResolution.errorReason} | mode ${shippingResolution.resolutionMode} | quote_age_hours ${shippingResolution.quoteAgeHours ?? "n/a"} | destination ${destinationCountry}`
+      : !hardGate.allow
+      ? `economics hard gate blocked | reasons ${hardGate.blockReason ?? "UNKNOWN"}`
       : supplierEvidence.manualReview && supplierEvidenceCodes.length
         ? `supplier evidence review required | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
       : marginOrRoiFailed
@@ -696,6 +719,9 @@ export async function runProfitEngine(input?: {
       estimatedProfit,
       marginPct,
       roiPct,
+      economicsHardPass: hardGate.allow,
+      economicsBlockReason: hardGate.blockReason,
+      economicsVerifiedAt: now.toISOString(),
       staleMarketplaceSnapshot,
       shippingUnsafe,
       supplierDriftExceeded,
@@ -802,6 +828,9 @@ export async function runProfitEngine(input?: {
     const alternativeSourceCount = Math.max(0, peerOptions.length - 1);
     const estimatedFeesJson = {
       ...option.estimatedFees,
+      economics_hard_pass: option.economicsHardPass,
+      economics_block_reason: option.economicsBlockReason,
+      economics_verified_at: option.economicsVerifiedAt,
       selectionMode: "best_supplier_option_per_marketplace_listing_v1",
       selectedSupplierOption: {
         supplierKey: option.normalizedSupplierKey,
