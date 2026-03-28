@@ -6,7 +6,10 @@ import { supplierOrders } from "@/lib/db/schema";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
 import { markJobQueued } from "@/lib/jobs/jobLedger";
 import { createOrder, getOrderStatus as getCjOrderStatus } from "@/lib/suppliers/cjApi";
+import { getManualOverrideSnapshot } from "@/lib/control/manualOverrides";
+import { getScaleRolloutCaps } from "@/lib/control/scaleRolloutConfig";
 import { createOrderEvent } from "./orderEvents";
+import { getAutoPurchaseRateLimitState } from "./autoPurchaseRateLimiter";
 import { getOrderPurchaseSafetyStatusByOrderId } from "./purchaseSafety";
 import { recordSupplierPurchase } from "./manualPurchaseFlow";
 
@@ -581,9 +584,36 @@ export async function runAutoPurchase(input?: {
   limit?: number;
   actorId?: string;
 }): Promise<AutoPurchaseResult> {
+  const manualOverrides = await getManualOverrideSnapshot();
+  if (manualOverrides.entries.PAUSE_AUTO_PURCHASE.enabled) {
+    return {
+      ok: false,
+      scanned: 0,
+      attempted: 0,
+      submitted: 0,
+      skipped: 0,
+      failed: 0,
+      orders: [],
+    };
+  }
+
+  const rateLimit = await getAutoPurchaseRateLimitState();
+  if (!rateLimit.allowed) {
+    return {
+      ok: false,
+      scanned: 0,
+      attempted: 0,
+      submitted: 0,
+      skipped: 0,
+      failed: 0,
+      orders: [],
+    };
+  }
+
+  const rolloutCaps = getScaleRolloutCaps();
   const candidates = await fetchCandidateOrders({
     orderId: input?.orderId,
-    limit: input?.limit,
+    limit: Math.min(input?.limit ?? rolloutCaps.autoPurchaseLimitPerRun, rolloutCaps.autoPurchaseLimitPerRun),
   });
 
   const result: AutoPurchaseResult = {
@@ -597,6 +627,17 @@ export async function runAutoPurchase(input?: {
   };
 
   for (const candidate of candidates) {
+    const refreshedOverrides = await getManualOverrideSnapshot();
+    if (refreshedOverrides.entries.PAUSE_SUPPLIER_CJ.enabled) {
+      result.skipped += 1;
+      result.orders.push({
+        orderId: candidate.orderId,
+        outcome: "skipped",
+        reason: "supplier flow paused: cjdropshipping",
+        supplierOrderRef: null,
+      });
+      continue;
+    }
     result.attempted += 1;
     const processed = await processOneOrder({
       orderId: candidate.orderId,
