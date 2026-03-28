@@ -18,6 +18,7 @@ import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
 import { deriveCanonicalStockFromRaw } from "@/lib/safety/supplierLinkage";
 import { canRewritePinnedSupplierLinkageForListingStatus } from "./linkagePolicy";
+import { selectBestSupplierRowsBeforeListing } from "./supplierSelection";
 
 type PrepareListingPreviewsInput = {
   limit?: number;
@@ -80,6 +81,7 @@ type CandidatePreviewSourceRow = {
   matchConfidence: unknown;
   matchType: string | null;
   matchStatus: string | null;
+  matchEvidence: unknown;
 };
 
 type CandidateSelection = {
@@ -320,6 +322,7 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
       matchConfidence: matches.confidence,
       matchType: matches.matchType,
       matchStatus: matches.status,
+      matchEvidence: matches.evidence,
     })
     .from(profitableCandidates)
     .innerJoin(
@@ -601,6 +604,7 @@ async function processCandidatePreviewRows(
       roiPct: toNum(row.roiPct),
       matchConfidence,
       matchStatus,
+      matchEvidence: objectOrNull(row.matchEvidence),
       categoryId: categoryClassification?.categoryId ?? null,
       categoryName: categoryClassification?.categoryName ?? null,
       categoryConfidence: categoryClassification?.confidence ?? null,

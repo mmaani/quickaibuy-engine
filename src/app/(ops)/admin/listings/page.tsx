@@ -14,6 +14,7 @@ import { LISTING_STATUSES } from "@/lib/listings/statuses";
 import type { RecoveryState } from "@/lib/listings/recoveryState";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
 import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
+import { OptimizationDiagnostics } from "@/components/admin/OptimizationDiagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -369,6 +370,9 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                       value={formatDateTime(detail.item.supplierReevaluationEvaluatedTs)}
                     />
                     <KeyValue label="Latest recovery audit" value={detail.latestRecoveryAudit ? `${detail.latestRecoveryAudit.eventType} @ ${formatDateTime(detail.latestRecoveryAudit.eventTs)}` : "No recovery audit event found"} />
+                  </div>
+                  <div className="mt-4">
+                    <OptimizationDiagnostics listingResponse={detail.item.listingResponse} />
                   </div>
                   <div className="mt-4">
                     <AiListingDiagnostics listingResponse={detail.item.listingResponse} />

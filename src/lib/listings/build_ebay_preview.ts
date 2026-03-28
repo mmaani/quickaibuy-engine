@@ -13,6 +13,20 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function extractMatchPenalties(evidence: unknown): Record<string, number> | null {
+  const root = objectOrNull(evidence);
+  const penalties = objectOrNull(root?.penalties);
+  if (!penalties) return null;
+
+  const normalized = Object.entries(penalties).reduce<Record<string, number>>((acc, [key, value]) => {
+    const num = Number(value);
+    if (Number.isFinite(num)) acc[key] = Number(num.toFixed(4));
+    return acc;
+  }, {});
+
+  return Object.keys(normalized).length ? normalized : null;
+}
+
 function pickTitle(input: ListingPreviewInput): string {
   return optimizeListingTitle({
     marketplaceTitle: input.marketplaceTitle,
@@ -438,6 +452,7 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
       diagnostics: {
         matchConfidence: input.matchConfidence ?? null,
         matchStatus: input.matchStatus ?? null,
+        matchPenalties: extractMatchPenalties(input.matchEvidence),
         listingQuality,
         mediaQualityScore,
         mediaQualityFlags:

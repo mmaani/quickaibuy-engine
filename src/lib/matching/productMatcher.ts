@@ -131,7 +131,7 @@ function priceMismatchPenalty(supplierPrice: number | null, marketplacePrice: nu
   return 0;
 }
 
-function computeConfidence(input: {
+export function computeConfidence(input: {
   supplierTitle: string;
   marketplaceTitle: string;
   marketplaceScore?: string | null;
