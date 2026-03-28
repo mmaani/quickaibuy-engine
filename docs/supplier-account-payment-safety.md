@@ -1,0 +1,48 @@
+# Supplier Account And Payment Safety
+
+## Active suppliers for fulfillment
+
+The current codebase shows one supplier integrated for fulfillment operations:
+
+| Supplier | Fulfillment status | Evidence in code |
+|---|---|---|
+| CJ Dropshipping (`cjdropshipping`) | Active | Auto-purchase and supplier tracking are wired through `src/lib/orders/autoPurchase.ts`, `src/lib/orders/manualPurchaseFlow.ts`, `src/lib/suppliers/cjApi.ts`, and `src/lib/suppliers/cjTracking.ts`. |
+
+The following suppliers are present for sourcing or discovery, but are not currently wired as active fulfillment providers:
+
+| Supplier | Current role | Evidence in code |
+|---|---|---|
+| AliExpress | Discovery / sourcing only | `src/lib/jobs/supplierDiscover.ts`, `src/lib/products/suppliers/aliexpress.ts` |
+| Alibaba | Discovery / sourcing only | `src/lib/jobs/supplierDiscover.ts`, `src/lib/products/suppliers/alibaba.ts` |
+| Temu | Discovery / sourcing only | `src/lib/jobs/supplierDiscover.ts`, `src/lib/products/suppliers/temu.ts` |
+
+## Operational checklist
+
+### CJ Dropshipping
+
+- Account created: `TBD`
+- Business verification complete: `TBD`
+- Payment method configured on supplier site: `TBD`
+  Only store a descriptor such as `corporate card label` or `PayPal Business`; never store raw payment details here.
+- Test order completed: `TBD`
+- Refund/dispute process known: `TBD`
+- Transaction alerts monitored: `TBD`
+- Operational owner: `TBD`
+
+## Ownership and monitoring record
+
+Use this section for operational metadata only:
+
+- Active supplier account: `CJ Dropshipping`
+- Account owner: `TBD`
+- Payment method descriptor: `TBD`
+  Example of acceptable detail: `Finance-issued virtual card label` or `PayPal Business`.
+  Example of forbidden detail: full card number, expiry, security code, or billing address secrets.
+- Transaction alert destination: `TBD`
+- Escalation contact: `TBD`
+
+## Non-goals
+
+- Do not store raw card details in the repo.
+- Do not put payment credentials in `.env*`.
+- Do not automate browser payment entry through scripts or Codex.

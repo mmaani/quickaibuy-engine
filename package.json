@@ -10,6 +10,7 @@
     "db:assert-dev": "node scripts/db_target_cli.mjs assert-dev",
     "db:assert-prod": "node scripts/db_target_cli.mjs assert-prod",
     "check:mutation-safety": "node scripts/check_mutation_safety.mjs",
+    "check:payment-storage": "node scripts/check_payment_storage_policy.mjs",
     "dev": "NODE_OPTIONS=--no-deprecation next dev",
     "build": "NODE_OPTIONS=--no-deprecation next build",
     "start": "NODE_OPTIONS=--no-deprecation next start",
