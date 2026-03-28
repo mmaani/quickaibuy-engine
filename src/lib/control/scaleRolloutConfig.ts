@@ -26,11 +26,11 @@ function toRatio(value: string | undefined, fallback: number): number {
 
 export function getScaleRolloutCaps() {
   return {
-    preparePerRun: toPositiveInt(process.env.LISTING_PREPARE_LIMIT_PER_RUN, 25),
-    promotePerRun: toPositiveInt(process.env.LISTING_PROMOTE_LIMIT_PER_RUN, 25),
-    autoPurchaseLimitPerRun: toPositiveInt(process.env.AUTO_PURCHASE_LIMIT_PER_RUN, 20),
-    autoPurchaseAttempts1h: toPositiveInt(process.env.AUTO_PURCHASE_RATE_LIMIT_1H, 20),
-    autoPurchaseAttempts1d: toPositiveInt(process.env.AUTO_PURCHASE_RATE_LIMIT_1D, 60),
+    preparePerRun: toPositiveInt(process.env.LISTING_PREPARE_LIMIT_PER_RUN, 20),
+    promotePerRun: toPositiveInt(process.env.LISTING_PROMOTE_LIMIT_PER_RUN, 10),
+    autoPurchaseLimitPerRun: toPositiveInt(process.env.AUTO_PURCHASE_LIMIT_PER_RUN, 5),
+    autoPurchaseAttempts1h: toPositiveInt(process.env.AUTO_PURCHASE_RATE_LIMIT_1H, 5),
+    autoPurchaseAttempts1d: toPositiveInt(process.env.AUTO_PURCHASE_RATE_LIMIT_1D, 10),
     supplierFetchFailureSpikeThreshold24h: toPositiveInt(process.env.ALERT_SUPPLIER_FETCH_FAILURE_SPIKE_24H, 15),
     listingPauseSpikeThreshold24h: toPositiveInt(process.env.ALERT_LISTING_PAUSE_SPIKE_24H, 10),
     upstreamFallbackBlockRateWarn: toRatio(process.env.ALERT_SUPPLIER_FALLBACK_BLOCK_RATE_WARN, 0.4),

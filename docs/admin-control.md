@@ -29,6 +29,14 @@ Use `.env.local` for operational rollout tuning:
 - `AUTO_PURCHASE_RATE_LIMIT_1H`, `AUTO_PURCHASE_RATE_LIMIT_1D`
 - alert thresholds (`ALERT_*`) for failure/block/spike detection
 
+Initial real-operations defaults for the first controlled phase:
+- prepare cap per run: `20`
+- promote cap per run: `10`
+- live publish attempts per day cap: `15` (must stay within 10–20)
+- auto-purchase: keep `PAUSE_AUTO_PURCHASE` enabled (manual-assisted ordering)
+
+Do not remove caps or weaken safety gates during this phase.
+
 ## Runbook Reference Surface (New)
 
 Critical runbook procedures may be surfaced in admin at:
@@ -51,3 +59,20 @@ Canonical procedures remain documented in `docs/operator-runbook.md`.
   - profitability reflects whether profitable candidates have fresh supplier/marketplace/calc inputs
   - `actionableFreshCandidates` remains a separate headline metric and can be `0` even when profitability freshness is healthy, for example when candidates are already covered by `ACTIVE` listings
 - Historical superseded snapshots should be removed only through audited cleanup scripts under `scripts/sql/`; do not manually delete current canonical rows from the dashboard symptoms alone.
+
+## First Live Test Loop (Daily)
+
+1. Trigger listing preparation from `/admin/control`.
+2. Review candidates in `/admin/review` and approve only a small subset.
+3. Prepare and promote approved listings in `/admin/listings` within per-run caps.
+4. Publish guarded subset and verify publish diagnostics.
+5. Monitor outcomes in `/admin/control` and `/admin/orders`.
+
+Track daily in operator notes:
+- approval rate
+- publish success rate
+- top rejection reasons
+- stock blocks and profit blocks
+- supplier reliability incidents
+
+For first real orders, keep auto-purchase paused and require manual purchase verification (product, supplier, stock, payment flow).
