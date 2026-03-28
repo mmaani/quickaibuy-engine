@@ -1,7 +1,7 @@
 import { and, desc, eq, max } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { db } from "@/lib/db";
-import { orders, supplierOrders } from "@/lib/db/schema";
+import { orderItems, orders, supplierOrders } from "@/lib/db/schema";
 import { bullConnection } from "@/lib/bull";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobNames";
 import { markJobQueued } from "@/lib/jobs/jobLedger";
@@ -29,6 +29,31 @@ const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
 function normalizeSupplierKey(value: string): string {
   const normalized = value.trim().toLowerCase();
   return normalized === "cj dropshipping" ? "cjdropshipping" : normalized;
+}
+
+async function assertSupplierMatchesPinnedOrderLinkage(input: { orderId: string; supplierKey: string }) {
+  const rows = await db
+    .select({
+      supplierKey: orderItems.supplierKey,
+      linkageDeterministic: orderItems.linkageDeterministic,
+      supplierLinkLocked: orderItems.supplierLinkLocked,
+    })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, input.orderId));
+
+  if (!rows.length) throw new Error("SUPPLIER_FALLBACK_BLOCKED: order has no pinned order items");
+  const pinnedSupplierKeys = Array.from(
+    new Set(rows.map((row) => String(row.supplierKey ?? "").trim().toLowerCase()).filter(Boolean))
+  );
+  if (pinnedSupplierKeys.length !== 1) {
+    throw new Error("SUPPLIER_SUBSTITUTION_BLOCKED: order has ambiguous supplier linkage");
+  }
+  if (pinnedSupplierKeys[0] !== normalizeSupplierKey(input.supplierKey)) {
+    throw new Error("SUPPLIER_FALLBACK_BLOCKED: supplier does not match pinned order linkage");
+  }
+  if (rows.some((row) => !row.linkageDeterministic || !row.supplierLinkLocked)) {
+    throw new Error("SUPPLIER_LINK_NOT_LOCKED");
+  }
 }
 
 async function getOrderStatus(orderId: string): Promise<OrderStatus> {
@@ -110,6 +135,7 @@ export async function recordSupplierPurchase(input: {
   attemptNo?: number;
 }) {
   const purchaseStatus = input.purchaseStatus ?? "SUBMITTED";
+  await assertSupplierMatchesPinnedOrderLinkage({ orderId: input.orderId, supplierKey: input.supplierKey });
   if (!isSupplierPurchaseStatus(purchaseStatus)) {
     throw new Error(`Invalid supplier purchase status: ${purchaseStatus}`);
   }

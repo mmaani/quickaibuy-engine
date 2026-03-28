@@ -55,6 +55,15 @@ export type AdminOrderItem = {
   supplierSnapshotQuality: SupplierSnapshotQuality | null;
   supplierTelemetrySignals: SupplierTelemetrySignal[];
   supplierWarnings: string[];
+  linkageSource: string | null;
+  linkageVerifiedAt: string | null;
+  linkageDeterministic: boolean;
+  supplierLinkLocked: boolean;
+  supplierStockStatus: string | null;
+  supplierStockQty: number | null;
+  stockVerifiedAt: string | null;
+  stockSource: string | null;
+  stockCheckRequired: boolean;
 };
 
 export type AdminSupplierAttempt = {
@@ -315,6 +324,15 @@ export async function getAdminOrderDetail(orderId: string): Promise<AdminOrderDe
         ) AS "listingExternalId",
         oi.supplier_key AS "supplierKey",
         oi.supplier_product_id AS "supplierProductId",
+        oi.linkage_source AS "linkageSource",
+        oi.linkage_verified_at::text AS "linkageVerifiedAt",
+        oi.linkage_deterministic AS "linkageDeterministic",
+        oi.supplier_link_locked AS "supplierLinkLocked",
+        oi.supplier_stock_status AS "supplierStockStatus",
+        oi.supplier_stock_qty AS "supplierStockQty",
+        oi.stock_verified_at::text AS "stockVerifiedAt",
+        oi.stock_source AS "stockSource",
+        oi.stock_check_required AS "stockCheckRequired",
         oi.quantity AS quantity,
         oi.item_price::text AS "itemPrice",
         pc.estimated_cogs::text AS "estimatedSupplierCost",

@@ -1,4 +1,7 @@
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
+import { evaluatePinnedSupplierSafety, normalizeSupplierStockStatus } from "@/lib/safety/supplierLinkage";
 import { createOrderEvent } from "./orderEvents";
 import { getAdminOrderDetail, type AdminOrderDetail } from "./getAdminOrdersPageData";
 
@@ -51,7 +54,9 @@ function statusFromReasons(reasons: string[]): OrderPurchaseSafetyStatusCode {
   if (
     reasons.includes("ORDER_SUPPLIER_LINKAGE_REQUIRED") ||
     reasons.includes("MISSING_SUPPLIER_PRODUCT_ID") ||
-    reasons.includes("MISSING_SUPPLIER_KEY")
+    reasons.includes("MISSING_SUPPLIER_KEY") ||
+    reasons.includes("NON_DETERMINISTIC_LINKAGE") ||
+    reasons.includes("SUPPLIER_LINK_NOT_LOCKED")
   ) {
     return "BLOCKED_SUPPLIER_LINKAGE_REQUIRED";
   }
@@ -222,6 +227,73 @@ export async function assertOrderPurchaseSafetyForApproval(input: {
   return status;
 }
 
+async function evaluateStrictOrderItemSafety(detail: AdminOrderDetail): Promise<string[]> {
+  const reasons: string[] = [];
+  for (const item of detail.items) {
+    const safetyReasons = evaluatePinnedSupplierSafety({
+      supplierKey: item.supplierKey,
+      supplierProductId: item.supplierProductId,
+      linkageDeterministic: (item as unknown as { linkageDeterministic?: boolean }).linkageDeterministic === true,
+      supplierLinkLocked: (item as unknown as { supplierLinkLocked?: boolean }).supplierLinkLocked === true,
+      stockStatus: normalizeSupplierStockStatus((item as unknown as { supplierStockStatus?: string }).supplierStockStatus),
+      stockQty: (item as unknown as { supplierStockQty?: number | null }).supplierStockQty,
+      stockVerifiedAt: (item as unknown as { stockVerifiedAt?: string | null }).stockVerifiedAt,
+      requiredQty: item.quantity,
+    });
+    reasons.push(...safetyReasons);
+
+    const supplierKey = String(item.supplierKey ?? "").trim();
+    const supplierProductId = String(item.supplierProductId ?? "").trim();
+    if (!supplierKey || !supplierProductId) continue;
+
+    const fetched = await db.execute<{ supplierKey: string; supplierProductId: string; availabilityStatus: string | null; snapshotTs: Date | null; stockQty: number | null }>(sql`
+      SELECT
+        pr.supplier_key AS "supplierKey",
+        pr.supplier_product_id AS "supplierProductId",
+        pr.availability_status AS "availabilityStatus",
+        pr.snapshot_ts AS "snapshotTs",
+        COALESCE(
+          NULLIF(pr.raw_payload ->> 'supplierStockQty', '')::integer,
+          NULLIF(pr.raw_payload ->> 'stockCount', '')::integer,
+          NULLIF(pr.raw_payload ->> 'availableQuantity', '')::integer,
+          NULLIF(pr.raw_payload ->> 'inventoryCount', '')::integer
+        ) AS "stockQty"
+      FROM products_raw pr
+      WHERE LOWER(pr.supplier_key) = LOWER(${supplierKey})
+        AND pr.supplier_product_id = ${supplierProductId}
+      ORDER BY pr.snapshot_ts DESC, pr.id DESC
+      LIMIT 1
+    `);
+
+    const row = fetched.rows?.[0];
+    if (!row) {
+      reasons.push("STOCK_FETCH_FAILED");
+      continue;
+    }
+    if (
+      String(row.supplierKey ?? "").trim().toLowerCase() !== supplierKey.toLowerCase() ||
+      String(row.supplierProductId ?? "").trim() !== supplierProductId
+    ) {
+      reasons.push("LINKED_SUPPLIER_PRODUCT_MISMATCH");
+      continue;
+    }
+
+    const liveSafetyReasons = evaluatePinnedSupplierSafety({
+      supplierKey,
+      supplierProductId,
+      linkageDeterministic: true,
+      supplierLinkLocked: true,
+      stockStatus: row.availabilityStatus,
+      stockQty: row.stockQty,
+      stockVerifiedAt: row.snapshotTs,
+      requiredQty: item.quantity,
+    });
+    reasons.push(...liveSafetyReasons);
+  }
+
+  return uniqueStrings(reasons);
+}
+
 export async function getOrderPurchaseSafetyStatus(
   detail: AdminOrderDetail
 ): Promise<OrderPurchaseSafetyStatus> {
@@ -236,6 +308,25 @@ export async function getOrderPurchaseSafetyStatus(
       manualReviewRequired: presentation.manualReviewRequired,
       checkedAt: null,
       reasons: ["ORDER_SUPPLIER_LINKAGE_REQUIRED", "MISSING_SUPPLIER_PRODUCT_ID"],
+      candidateId: null,
+      listingId: null,
+      futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
+    };
+  }
+
+  const strictReasons = await evaluateStrictOrderItemSafety(detail);
+  if (strictReasons.length > 0) {
+    const status = statusFromReasons(strictReasons);
+    const presentation = mapStatusPresentation(status);
+    return {
+      status,
+      label: presentation.label,
+      technicalLabel: presentation.technicalLabel,
+      hint: presentation.hint,
+      secondaryHint: presentation.secondaryHint,
+      manualReviewRequired: presentation.manualReviewRequired,
+      checkedAt: new Date().toISOString(),
+      reasons: strictReasons,
       candidateId: null,
       listingId: null,
       futureExecutionHook: "REQUIRE_FRESH_SUPPLIER_VALIDATION",
