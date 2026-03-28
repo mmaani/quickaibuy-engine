@@ -2,8 +2,12 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pool } from "@/lib/db";
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("apply_supplier_shipping_quotes_migration.ts");
   const filePath = resolve(process.cwd(), "migrations/20260327_add_supplier_shipping_quotes.sql");
   const sql = readFileSync(filePath, "utf8");
   await pool.query(sql);

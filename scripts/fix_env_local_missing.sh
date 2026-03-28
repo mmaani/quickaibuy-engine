@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source scripts/lib/preflightMutation.sh
+require_mutation_preflight "fix_env_local_missing.sh"
+
 touch .env.local
 
 append_if_missing() {

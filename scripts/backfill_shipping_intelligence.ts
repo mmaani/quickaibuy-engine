@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { inferShippingFromEvidence } from "@/lib/pricing/shippingInference";
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 function toNum(value: unknown): number | null {
   if (value == null) return null;
@@ -43,6 +45,8 @@ function extractShippingSnapshotDetails(
 }
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("backfill_shipping_intelligence.ts");
   const apply = process.argv.includes("--apply");
   const destinationCountry = String(process.env.DEFAULT_PRICING_DESTINATION ?? "US").toUpperCase();
   const defaultShippingUsd = Math.max(0, toNum(process.env.DEFAULT_SUPPLIER_SHIPPING_USD) ?? 6.99);

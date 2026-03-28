@@ -1,12 +1,12 @@
-import dotenv from "dotenv";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
-
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("clear_success_publish_error.ts");
   const listingId = String(process.argv[2] ?? "").trim();
   if (!listingId) {
     throw new Error("Usage: pnpm exec tsx scripts/clear_success_publish_error.ts <listing_id>");

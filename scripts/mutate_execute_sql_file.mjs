@@ -1,30 +1,14 @@
-import dotenv from "dotenv";
 import fs from "fs";
 import pg from "pg";
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/envState.mjs";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 const { Client } = pg;
 
-function assertPreflight() {
-  if (String(process.env.ALLOW_MUTATION_SCRIPTS ?? "false").toLowerCase() !== "true") {
-    throw new Error(
-      "Blocked: set ALLOW_MUTATION_SCRIPTS=true to run mutate_execute_sql_file.mjs"
-    );
-  }
-
-  const env = String(process.env.APP_ENV ?? process.env.VERCEL_ENV ?? "development").toLowerCase();
-  const isProd = env === "production" || env === "prod";
-  if (isProd && String(process.env.ALLOW_PROD_MUTATIONS ?? "false").toLowerCase() !== "true") {
-    throw new Error(
-      "Blocked in production: set ALLOW_PROD_MUTATIONS=true to acknowledge production SQL mutation risk"
-    );
-  }
-}
-
 async function main() {
-  assertPreflight();
+  assertMutationAllowed("mutate_execute_sql_file.mjs");
 
   const file = process.argv[2];
   if (!file) {

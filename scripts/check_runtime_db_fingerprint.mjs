@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import dotenv from "dotenv";
 import { Pool } from "pg";
 import { diagnosePgConnectivity } from "./lib/pgRetry.mjs";
+import { getDbTargetContext, printDbTargetBanner } from "./lib/dbTarget.mjs";
+import { loadRuntimeEnv } from "./lib/envState.mjs";
 
-const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
-
-dotenv.config({ path: dotenvPath });
-dotenv.config();
+const dotenvPath = loadRuntimeEnv();
 
 const verbose = process.env.DIAG_VERBOSE === "1";
 
@@ -136,6 +134,7 @@ async function runFingerprint(pool, connectionString) {
 }
 
 async function main() {
+  printDbTargetBanner(getDbTargetContext());
   const connectionString = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
   if (!connectionString) {
     const payload = {

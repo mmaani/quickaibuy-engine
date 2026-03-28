@@ -1,11 +1,13 @@
 import pg from "pg";
 import { loadRuntimeEnv, getRequiredDatabaseUrl } from "./lib/runtimeEnv.mjs";
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
 
 loadRuntimeEnv();
 
 const { Client } = pg;
 
 async function main() {
+  assertMutationAllowed("cleanup_trading_image_cache.ts");
   const listingId = String(process.argv[2] ?? "59f326e5-99dd-485f-a054-43aa353c42b0").trim();
 
   const client = new Client({

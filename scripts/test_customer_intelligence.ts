@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customerOrders, customers, orders } from "@/lib/db/schema";
+import { customerOrders, customers } from "@/lib/db/schema";
 import { linkOrderToCanonicalCustomerTx } from "@/lib/orders/customerIntelligence";
 
 function assert(condition: unknown, message: string) {

@@ -1,24 +1,11 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
-
-function assertPreflight() {
-  if (String(process.env.ALLOW_MUTATION_SCRIPTS ?? "false").toLowerCase() !== "true") {
-    throw new Error(
-      "Blocked: set ALLOW_MUTATION_SCRIPTS=true to run mutate_listings_mark_stale_publish_failed.ts"
-    );
-  }
-
-  const env = String(process.env.APP_ENV ?? process.env.VERCEL_ENV ?? "development").toLowerCase();
-  const isProd = env === "production" || env === "prod";
-  if (isProd && String(process.env.ALLOW_PROD_MUTATIONS ?? "false").toLowerCase() !== "true") {
-    throw new Error(
-      "Blocked in production: set ALLOW_PROD_MUTATIONS=true to acknowledge production mutation risk"
-    );
-  }
-}
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 async function run() {
-  assertPreflight();
+  loadRuntimeEnv();
+  assertMutationAllowed("mutate_listings_mark_stale_publish_failed.ts");
 
   const result = await db.execute(sql`
     UPDATE listings

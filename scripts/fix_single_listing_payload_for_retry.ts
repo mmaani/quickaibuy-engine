@@ -1,8 +1,6 @@
-import dotenv from "dotenv";
 import pg from "pg";
-
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || ".env.local" });
-dotenv.config();
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 const { Client } = pg;
 
@@ -15,6 +13,8 @@ function requiredArg(index: number, name: string): string {
 }
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("fix_single_listing_payload_for_retry.ts");
   const listingId = requiredArg(2, "listing_id");
   const countryName = requiredArg(3, "country_name");
   const countryCode = requiredArg(4, "country_code");

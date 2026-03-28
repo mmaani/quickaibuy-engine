@@ -1,6 +1,10 @@
 import { backfillCanonicalCustomers } from "@/lib/orders/customerIntelligence";
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("backfill_customer_intelligence.ts");
   const limit = Number(process.argv[2] ?? "1000");
   const result = await backfillCanonicalCustomers({ limit });
   console.log(

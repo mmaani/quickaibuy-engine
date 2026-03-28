@@ -1,4 +1,3 @@
-import dotenv from "dotenv";
 import {
   checkDns,
   checkEnvVar,
@@ -8,10 +7,10 @@ import {
   parseUrlHostPort,
   withRetries,
 } from "./lib/runtimeDiagnostics";
+import { getDbTargetContext, printDbTargetBanner } from "./lib/dbTarget.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
-dotenv.config({ path: dotenvPath, override: true });
-dotenv.config();
+const dotenvPath = loadRuntimeEnv();
 
 type PreflightIssue = {
   class: string;
@@ -25,7 +24,7 @@ async function checkRequiredEndpoint(name: string, value: string, fallbackPort: 
     return {
       class: "CONFIG_MISSING",
       reason: `${name} URL invalid`,
-      nextStep: `Fix ${name} format in .env.local`,
+      nextStep: `Fix ${name} format in ${dotenvPath}`,
     };
   }
 
@@ -59,6 +58,7 @@ async function checkRequiredEndpoint(name: string, value: string, fallbackPort: 
 }
 
 async function main() {
+  printDbTargetBanner(getDbTargetContext());
   console.log(`[worker:engine] env_path=${dotenvPath}`);
 
   const db = checkEnvVar("DATABASE_URL");

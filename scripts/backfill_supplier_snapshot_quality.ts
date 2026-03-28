@@ -1,9 +1,7 @@
-import dotenv from "dotenv";
 import pg from "pg";
 import { resolveSupplierQualityPayload, normalizeSupplierSnapshotQuality, normalizeSupplierTelemetry } from "@/lib/products/supplierQuality";
-
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || ".env.local" });
-dotenv.config();
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 const { Client } = pg;
 
@@ -36,6 +34,8 @@ function parseIntArg(name: string, fallback: number): number {
 }
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("backfill_supplier_snapshot_quality.ts");
   const dryRun = process.argv.includes("--dry-run");
   const batchSize = parseIntArg("batch-size", 200);
   const maxRows = parseIntArg("limit", 100000);

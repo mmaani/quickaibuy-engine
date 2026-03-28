@@ -1,8 +1,6 @@
-import dotenv from "dotenv";
 import pg from "pg";
-
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
 const { Client } = pg;
 
@@ -47,6 +45,8 @@ function buildPreviewPrice(args: {
 }
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("backfill_listing_previews_for_approved.ts");
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },

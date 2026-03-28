@@ -15,9 +15,20 @@ This index defines the canonical script model for operational safety.
 High-risk mutate/migrate scripts require:
 
 - `ALLOW_MUTATION_SCRIPTS=true`
-- if production (`APP_ENV=production` or `VERCEL_ENV=production`), also `ALLOW_PROD_MUTATIONS=true`
+- if DB target is `PROD`, also `ALLOW_PROD_DB_MUTATION=true`
+- if DB target is `PROD`, also `CONFIRM_PROD_DB_TARGET=YES`
 
 Shared shell guard helper: `scripts/lib/preflightMutation.sh`.
+
+## Active env and DB targeting
+
+- `.env.dev` → development/local snapshot
+- `.env.prod` → production-aligned snapshot
+- `.env` → generated active env file
+- `pnpm env:dev` / `pnpm env:prod` / `pnpm env:status`
+- `pnpm db:status` / `pnpm db:assert-dev` / `pnpm db:assert-prod`
+
+See [docs/env-db-targeting.md](/workspaces/quickaibuy-engine/docs/env-db-targeting.md).
 
 ## Canonical command map
 

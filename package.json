@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "env:dev": "node scripts/manage_env.mjs dev",
+    "env:prod": "node scripts/manage_env.mjs prod",
+    "env:status": "node scripts/manage_env.mjs status",
+    "db:status": "node scripts/db_target_cli.mjs status",
+    "db:assert-dev": "node scripts/db_target_cli.mjs assert-dev",
+    "db:assert-prod": "node scripts/db_target_cli.mjs assert-prod",
+    "check:mutation-safety": "node scripts/check_mutation_safety.mjs",
     "dev": "NODE_OPTIONS=--no-deprecation next dev",
     "build": "NODE_OPTIONS=--no-deprecation next build",
     "start": "NODE_OPTIONS=--no-deprecation next start",

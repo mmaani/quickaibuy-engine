@@ -1,12 +1,12 @@
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" });
-dotenv.config();
-
 import pg from "pg";
 import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
+import { assertMutationAllowed } from "./lib/mutationGuard.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 const { Client } = pg;
 
 async function main() {
+  loadRuntimeEnv();
+  assertMutationAllowed("backfill_listing_gate_for_current_approved.ts");
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
 

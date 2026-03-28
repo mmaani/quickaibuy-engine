@@ -1,4 +1,3 @@
-import dotenv from "dotenv";
 import {
   checkDns,
   checkEnvVar,
@@ -14,10 +13,10 @@ import {
   PROD_BULL_PREFIX,
   PROD_JOBS_QUEUE_NAME,
 } from "./lib/railwayWorkerEnv";
+import { getDbTargetContext, printDbTargetBanner } from "./lib/dbTarget.mjs";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 
-const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
-dotenv.config({ path: dotenvPath, override: true });
-dotenv.config();
+const dotenvPath = loadRuntimeEnv();
 
 async function runHostChecks(
   label: string,
@@ -79,6 +78,7 @@ async function runHostChecks(
 }
 
 async function main() {
+  printDbTargetBanner(getDbTargetContext());
   const checks: DiagnosticResult[] = [];
   const hasDatabaseUrl =
     String(process.env.DATABASE_URL ?? "").trim().length > 0 ||
