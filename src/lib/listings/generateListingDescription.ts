@@ -8,6 +8,11 @@ const BANNED_TERMS = [
   /\belectronics?\b/gi,
   /\bsmart device\b/gi,
   /\bcharger\b/gi,
+  /\baliexpress\b/gi,
+  /\btemu\b/gi,
+  /\balibaba\b/gi,
+  /\bcjdropshipping\b/gi,
+  /\bwholesale\b/gi,
 ];
 
 function cleanText(value: string): string {
@@ -15,6 +20,7 @@ function cleanText(value: string): string {
   for (const pattern of BANNED_TERMS) {
     text = text.replace(pattern, "");
   }
+  text = text.replace(/\b(?:sku|item(?:\s+no)?|model)\s*[:#]?\s*[a-z0-9-]{3,}\b/gi, "");
   return text.replace(/\s+/g, " ").trim();
 }
 
@@ -79,12 +85,14 @@ export function generateListingDescription(
   const useCases = buildUseCases(title);
 
   const lines = [
-    `Stylish and functional ${productType} designed for home and desk use.`,
+    `Product Overview`,
+    `- Stylish and functional ${productType} designed for home and desk use.`,
+    `- Clean listing copy generated from verified supplier evidence.`,
     "",
-    "Benefits",
+    "Key Features",
     ...benefits.map((benefit) => `- ${benefit}`),
     "",
-    "Use cases",
+    "Best For",
     ...useCases.map((useCase) => `- ${useCase}`),
     "",
     "Shipping",
@@ -92,7 +100,7 @@ export function generateListingDescription(
     "- Delivery 7-12 days",
     "- Tracking included",
     "",
-    "Guarantee",
+    "Returns",
     "- 30-day return",
   ];
 

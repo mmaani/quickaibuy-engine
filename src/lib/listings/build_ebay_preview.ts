@@ -13,6 +13,20 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function extractMatchPenalties(evidence: unknown): Record<string, number> | null {
+  const root = objectOrNull(evidence);
+  const penalties = objectOrNull(root?.penalties);
+  if (!penalties) return null;
+
+  const normalized = Object.entries(penalties).reduce<Record<string, number>>((acc, [key, value]) => {
+    const num = Number(value);
+    if (Number.isFinite(num)) acc[key] = Number(num.toFixed(4));
+    return acc;
+  }, {});
+
+  return Object.keys(normalized).length ? normalized : null;
+}
+
 function pickTitle(input: ListingPreviewInput): string {
   return optimizeListingTitle({
     marketplaceTitle: input.marketplaceTitle,
@@ -127,6 +141,39 @@ function extractShipFromMetadata(rawPayload: unknown): {
     shippingSignal: String(payload?.shippingSignal ?? "").trim() || null,
     shippingConfidence: Number.isFinite(shippingConfidenceRaw) ? shippingConfidenceRaw : null,
     shippingStability: String(payload?.shippingStability ?? "").trim() || null,
+  };
+}
+
+function computeListingQualityFlags(input: {
+  title: string;
+  description: string;
+  itemSpecifics: Record<string, unknown> | null;
+}): { score: number; flags: string[] } {
+  const flags: string[] = [];
+  let score = 1;
+  if (input.title.length < 45) {
+    flags.push("TITLE_TOO_SHORT");
+    score -= 0.2;
+  }
+  if (input.title.length > 80) {
+    flags.push("TITLE_TOO_LONG");
+    score -= 0.3;
+  }
+  if (!input.description.includes("- ")) {
+    flags.push("DESCRIPTION_MISSING_BULLETS");
+    score -= 0.2;
+  }
+  const specificCount = Object.values(input.itemSpecifics ?? {}).filter((value) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return normalized.length > 0 && normalized !== "not specified";
+  }).length;
+  if (specificCount < 4) {
+    flags.push("ITEM_SPECIFICS_THIN");
+    score -= 0.25;
+  }
+  return {
+    score: Math.max(0, Math.min(1, Number(score.toFixed(2)))),
+    flags,
   };
 }
 
@@ -359,6 +406,22 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
     }
   }
 
+  const listingQuality = computeListingQualityFlags({
+    title,
+    description,
+    itemSpecifics:
+      payload.itemSpecifics && typeof payload.itemSpecifics === "object" && !Array.isArray(payload.itemSpecifics)
+        ? (payload.itemSpecifics as Record<string, unknown>)
+        : null,
+  });
+  const mediaQualityScore = Number(
+    (
+      media.audit.imageSelectedCount > 0
+        ? (media.audit.imageQualityEligibleCount ?? media.audit.imageSelectedCount) / media.audit.imageSelectedCount
+        : 0
+    ).toFixed(2)
+  );
+
   return {
     marketplaceKey: "ebay",
     title,
@@ -386,6 +449,17 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
       videoSkipReason: media.audit.videoSkipReason,
       operatorNote: media.audit.operatorNote,
       aiListing: aiMetadata,
+      diagnostics: {
+        matchConfidence: input.matchConfidence ?? null,
+        matchStatus: input.matchStatus ?? null,
+        matchPenalties: extractMatchPenalties(input.matchEvidence),
+        listingQuality,
+        mediaQualityScore,
+        mediaQualityFlags:
+          media.audit.imageSelectedCount < 5 || mediaQualityScore < 0.5
+            ? ["MEDIA_QUALITY_LOW"]
+            : [],
+      },
       imageNormalization: {
         code: "IMAGE_NORMALIZATION_PENDING",
         ok: false,

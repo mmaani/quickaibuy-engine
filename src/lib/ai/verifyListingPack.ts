@@ -230,6 +230,21 @@ function chooseVerifiedCategory(
     Boolean(heuristicCategory.categoryName) &&
     typeof heuristicCategory.confidence === "number" &&
     heuristicCategory.confidence >= LISTING_PACK_LOW_CONFIDENCE_THRESHOLD;
+  const generatedConflictsWithHeuristic =
+    heuristicStrong &&
+    (cleanString(heuristicCategory.categoryId) !== cleanString(generatedPack.category_id) ||
+      cleanString(heuristicCategory.categoryName).toLowerCase() !== cleanString(generatedPack.category_name).toLowerCase());
+
+  if (generatedConflictsWithHeuristic) {
+    correctedFields.push("verified_category_id", "verified_category_name");
+    riskFlags.push("CATEGORY_STABILITY_HEURISTIC_LOCK");
+    return {
+      verifiedCategoryId: cleanString(heuristicCategory.categoryId),
+      verifiedCategoryName: cleanString(heuristicCategory.categoryName),
+      correctedFields,
+      riskFlags,
+    };
+  }
 
   if (generatedIdBacked || generatedNameBacked) {
     return {
