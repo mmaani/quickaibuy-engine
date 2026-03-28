@@ -208,7 +208,6 @@ export async function runListingExecution(opts?: {
       }
 
       const shouldManualReview =
-        priceGuard.decision === "MANUAL_REVIEW" ||
         reasons.includes("SUPPLIER_PRICE_DRIFT_EXCEEDS_TOLERANCE") ||
         !driftMetricAvailable ||
         !supplierSnapshotAgeAvailable;
