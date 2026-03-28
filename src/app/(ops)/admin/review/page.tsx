@@ -16,6 +16,7 @@ import {
 } from "@/lib/review/console";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
 import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
+import { OptimizationDiagnostics } from "@/components/admin/OptimizationDiagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -860,6 +861,9 @@ export default async function ReviewPage({
                         {renderListingPayloadSummary(detail.candidate.listingPayload)}
                       </div>
                       {renderListingResponseSummary(detail.candidate.listingResponse)}
+                      <div className="mt-4">
+                        <OptimizationDiagnostics listingResponse={detail.candidate.listingResponse} />
+                      </div>
                       <div className="mt-4">
                         <AiListingDiagnostics listingResponse={detail.candidate.listingResponse} />
                       </div>

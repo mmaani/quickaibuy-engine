@@ -18,6 +18,7 @@ import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
 import { deriveCanonicalStockFromRaw } from "@/lib/safety/supplierLinkage";
 import { canRewritePinnedSupplierLinkageForListingStatus } from "./linkagePolicy";
+import { selectBestSupplierRowsBeforeListing } from "./supplierSelection";
 
 type PrepareListingPreviewsInput = {
   limit?: number;
@@ -80,6 +81,7 @@ type CandidatePreviewSourceRow = {
   matchConfidence: unknown;
   matchType: string | null;
   matchStatus: string | null;
+  matchEvidence: unknown;
 };
 
 type CandidateSelection = {
@@ -262,6 +264,7 @@ async function fetchApprovedCandidateRows(selection: CandidateSelection): Promis
       matchConfidence: matches.confidence,
       matchType: matches.matchType,
       matchStatus: matches.status,
+      matchEvidence: matches.evidence,
     })
     .from(profitableCandidates)
     .innerJoin(
@@ -541,6 +544,9 @@ async function processCandidatePreviewRows(
       estimatedProfit: toNum(row.estimatedProfit),
       marginPct: toNum(row.marginPct),
       roiPct: toNum(row.roiPct),
+      matchConfidence,
+      matchStatus,
+      matchEvidence: objectOrNull(row.matchEvidence),
       categoryId: categoryClassification?.categoryId ?? null,
       categoryName: categoryClassification?.categoryName ?? null,
       categoryConfidence: categoryClassification?.confidence ?? null,
@@ -845,7 +851,7 @@ export async function prepareListingPreviews(input?: PrepareListingPreviewsInput
     marketplace,
     limit,
   });
-  const rankedRows = rankCandidateRowsForProcessing(rows, marketplace);
+  const rankedRows = selectBestSupplierRowsBeforeListing(rankCandidateRowsForProcessing(rows, marketplace));
 
   const processed = await processCandidatePreviewRows(rankedRows, {
     marketplace,
@@ -879,7 +885,7 @@ export async function prepareListingPreviewForCandidate(
     candidateId: normalizedCandidateId,
     marketplace,
   });
-  const rankedRows = rankCandidateRowsForProcessing(rows, marketplace);
+  const rankedRows = selectBestSupplierRowsBeforeListing(rankCandidateRowsForProcessing(rows, marketplace));
 
   if (!rows.length) {
     const existing = await db

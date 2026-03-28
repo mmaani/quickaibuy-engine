@@ -18,6 +18,12 @@ const NOISE_PATTERNS = [
   /\blarge\b/gi,
   /\bsmall\b/gi,
   /\bportable\b/gi,
+  /\bhot sale\b/gi,
+  /\bfree shipping\b/gi,
+  /\boem\b/gi,
+  /\bfast delivery\b/gi,
+  /\b202[0-9]\b/gi,
+  /\b\d+\s*(?:pcs?|pc)\b/gi,
 ];
 
 const REDUCED_ELECTRONICS_WORDS = new Set([
@@ -137,6 +143,17 @@ function dedupePreserveOrder(values: string[]): string[] {
   return result;
 }
 
+function removeAdjacentDuplicates(words: string[]): string[] {
+  const compact: string[] = [];
+  for (const word of words) {
+    if (!word) continue;
+    const last = compact[compact.length - 1];
+    if (last && last.toLowerCase() === word.toLowerCase()) continue;
+    compact.push(word);
+  }
+  return compact;
+}
+
 export function optimizeListingTitle(input: OptimizeListingTitleInput): string {
   const source =
     input.marketplaceTitle?.trim() ||
@@ -157,7 +174,7 @@ export function optimizeListingTitle(input: OptimizeListingTitleInput): string {
     .filter((word) => !REDUCED_ELECTRONICS_WORDS.has(word.toLowerCase()))
     .map(titleCase);
 
-  const preferredCore = dedupePreserveOrder(baseWords).slice(0, 5);
+  const preferredCore = dedupePreserveOrder(removeAdjacentDuplicates(baseWords)).slice(0, 6);
   const marketingWords = preferredPhrase(source);
   const composed = dedupePreserveOrder([...preferredCore, ...marketingWords]);
 
@@ -182,5 +199,5 @@ export function optimizeListingTitle(input: OptimizeListingTitleInput): string {
     optimized = composed.join(" ").trim();
   }
 
-  return sanitizeTitleForEbay(optimized, "Home Desk Decor Gift");
+  return sanitizeTitleForEbay(optimized, cleanTitle(source) || "Home Desk Decor Gift");
 }
