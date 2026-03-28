@@ -23,19 +23,24 @@ async function createOrder(input: {
   state?: string | null;
 }) {
   const now = new Date();
-  const inserted = await db
-    .insert(orders)
-    .values({
-      marketplace: "ebay",
-      marketplaceOrderId: input.marketplaceOrderId,
-      buyerName: input.buyerName,
-      buyerCountry: input.buyerCountry,
-      totalPrice: input.totalPrice,
-      currency: input.currency,
-      status: "MANUAL_REVIEW",
-      createdAt: now,
-      updatedAt: now,
-      legacyRawPayload: {
+  const inserted = await db.execute<{ id: string; created_at: string | Date }>(sql`
+    INSERT INTO orders (
+      marketplace,
+      marketplace_order_id,
+      buyer_name,
+      buyer_country,
+      raw_payload,
+      total_price,
+      currency,
+      status,
+      created_at
+    )
+    VALUES (
+      ${"ebay"},
+      ${input.marketplaceOrderId},
+      ${input.buyerName},
+      ${input.buyerCountry},
+      ${JSON.stringify({
         buyerEmail: input.buyerEmail ?? null,
         buyerUsername: input.buyerUsername ?? null,
         shippingAddress: {
@@ -43,11 +48,16 @@ async function createOrder(input: {
           stateOrProvince: input.state ?? null,
           countryCode: input.buyerCountry,
         },
-      },
-    })
-    .returning({ id: orders.id, createdAt: orders.createdAt });
+      })}::jsonb,
+      ${input.totalPrice},
+      ${input.currency},
+      ${"MANUAL_REVIEW"},
+      ${now}
+    )
+    RETURNING id, created_at
+  `);
 
-  return { id: inserted[0].id, createdAt: inserted[0].createdAt };
+  return { id: inserted.rows[0].id, createdAt: new Date(inserted.rows[0].created_at) };
 }
 
 async function main() {

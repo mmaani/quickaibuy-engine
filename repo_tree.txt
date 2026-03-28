@@ -81,7 +81,9 @@
 │   ├── 20260322_add_seller_account_metrics.sql
 │   ├── 20260324_add_ebay_image_normalizations.sql
 │   ├── 20260324_add_lead_submissions.sql
-│   └── 20260327_add_supplier_shipping_quotes.sql
+│   ├── 20260327_add_supplier_shipping_quotes.sql
+│   ├── 20260328_customer_intelligence_foundation.sql
+│   └── 20260328_supplier_linkage_stock_lockdown.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -150,6 +152,7 @@
 │   ├── apply_supplier_shipping_quotes_migration.ts
 │   ├── approve_profitable_candidate.ts
 │   ├── approve_single_candidate_ready.ts
+│   ├── backfill_customer_intelligence.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
 │   ├── backfill_listing_previews_for_approved.ts
 │   ├── backfill_shipping_intelligence.ts
@@ -224,6 +227,7 @@
 │   ├── debug_marketplace_scan.ts
 │   ├── debug_profit_join.mjs
 │   ├── detect_repricing_candidates.ts
+│   ├── diagnose_supplier_linkage_safety.ts
 │   ├── enqueue_inventory_risk_scan.ts
 │   ├── enqueue_listing_optimize.ts
 │   ├── enqueue_listing_prepare.ts
@@ -284,6 +288,7 @@
 │   ├── refresh_single_supplier_product.ts
 │   ├── reject_profitable_candidate.ts
 │   ├── remove_supplier_discover_job.ts
+│   ├── report_autonomous_pipeline_state.ts
 │   ├── review_matches.mjs
 │   ├── run_check_audit_log.sh
 │   ├── run_check_marketplace_price_urls.sh
@@ -340,6 +345,7 @@
 │   │   ├── marketplace_prices_check_duplicates.sql
 │   │   └── marketplace_prices_dedupe.sql
 │   ├── sync_env_from_vercel_and_verify.sh
+│   ├── test_customer_intelligence.ts
 │   ├── test_ebay_order_sync.ts
 │   ├── test_ebay_search.sh
 │   ├── test_ebay_token.sh
@@ -349,8 +355,10 @@
 │   ├── test_paused_listing_lifecycle_guardrails.ts
 │   ├── test_product_discover.mjs
 │   ├── test_product_matcher.mjs
+│   ├── test_profit_hard_gate.ts
 │   ├── test_query_budget_allocator.mjs
 │   ├── test_supplier_discover.ts
+│   ├── test_supplier_linkage_closure.ts
 │   ├── test_trend_expand.mjs
 │   ├── update_repo_tree.mjs
 │   ├── validate_inventory_risk_scenarios.ts
@@ -403,6 +411,12 @@
 │   │   │   │   ├── control
 │   │   │   │   │   └── run-action
 │   │   │   │   │       └── route.ts
+│   │   │   │   ├── customers
+│   │   │   │   │   ├── [customerId]
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── export
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   └── route.ts
 │   │   │   │   ├── enqueue-product-discover
 │   │   │   │   │   └── route.ts
 │   │   │   │   ├── enqueue-trend
@@ -487,6 +501,8 @@
 │   │   │   ├── getMatchQualitySummary.ts
 │   │   │   ├── manualOverrides.ts
 │   │   │   └── runControlQuickAction.ts
+│   │   ├── customers
+│   │   │   └── admin.ts
 │   │   ├── dashboard
 │   │   │   ├── getControlPanelData.ts
 │   │   │   └── getDashboardData.ts
@@ -530,6 +546,7 @@
 │   │   │   ├── getApprovedListingsQueueData.ts
 │   │   │   ├── getListingExecutionCandidates.ts
 │   │   │   ├── idempotency.ts
+│   │   │   ├── linkagePolicy.ts
 │   │   │   ├── listingThroughputController.ts
 │   │   │   ├── markListingReadyToPublish.ts
 │   │   │   ├── media.ts
@@ -565,16 +582,19 @@
 │   │   │   └── storage.ts
 │   │   ├── orders
 │   │   │   ├── autoPurchase.ts
+│   │   │   ├── customerIntelligence.ts
 │   │   │   ├── ebayFetchOrders.ts
 │   │   │   ├── getAdminOrdersPageData.ts
 │   │   │   ├── index.ts
 │   │   │   ├── manualPurchaseFlow.ts
 │   │   │   ├── operatorConsole.ts
 │   │   │   ├── orderEvents.ts
+│   │   │   ├── pinnedSupplierIdentity.ts
 │   │   │   ├── purchaseSafety.ts
 │   │   │   ├── reconcileTrackingSync.ts
 │   │   │   ├── repairSupplierLinkage.ts
 │   │   │   ├── statuses.ts
+│   │   │   ├── supplierSelectionSafety.ts
 │   │   │   ├── syncEbayOrders.ts
 │   │   │   ├── syncTrackingToEbay.ts
 │   │   │   ├── trackingSync.ts
@@ -608,6 +628,7 @@
 │   │   │       └── types.ts
 │   │   ├── profit
 │   │   │   ├── activeSupplierReevaluation.ts
+│   │   │   ├── hardProfitGate.ts
 │   │   │   ├── priceGuard.ts
 │   │   │   ├── priceGuardConfig.ts
 │   │   │   ├── profitAssumptions.ts
@@ -628,6 +649,8 @@
 │   │   │   ├── inventoryRiskMonitor.ts
 │   │   │   └── riskSignals.ts
 │   │   ├── runtime
+│   │   ├── safety
+│   │   │   └── supplierLinkage.ts
 │   │   ├── server
 │   │   │   └── controlPanelData.ts
 │   │   ├── suppliers
@@ -652,4 +675,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-92 directories, 561 files
+97 directories, 579 files

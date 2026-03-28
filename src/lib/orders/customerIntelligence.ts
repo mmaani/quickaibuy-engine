@@ -43,10 +43,15 @@ function toCurrency(value: string | null | undefined): string | null {
   return cleaned ? cleaned.toUpperCase() : null;
 }
 
+function toDate(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  return value instanceof Date ? value : new Date(value);
+}
+
 async function recomputeCustomerAggregatesTx(tx: DbTx, customerId: string) {
   const agg = await tx.execute<{
-    firstOrderAt: Date | null;
-    lastOrderAt: Date | null;
+    firstOrderAt: string | Date | null;
+    lastOrderAt: string | Date | null;
     orderCount: number;
     totalSpent: string | null;
     currency: string | null;
@@ -66,13 +71,15 @@ async function recomputeCustomerAggregatesTx(tx: DbTx, customerId: string) {
   `);
 
   const row = agg.rows?.[0];
-  if (!row || !row.firstOrderAt || !row.lastOrderAt) return;
+  const firstOrderAt = toDate(row?.firstOrderAt);
+  const lastOrderAt = toDate(row?.lastOrderAt);
+  if (!row || !firstOrderAt || !lastOrderAt) return;
 
   await tx
     .update(customers)
     .set({
-      firstOrderAt: row.firstOrderAt,
-      lastOrderAt: row.lastOrderAt,
+      firstOrderAt,
+      lastOrderAt,
       orderCount: row.orderCount,
       totalSpent: row.totalSpent ?? "0",
       currency: row.currency,
@@ -169,6 +176,9 @@ export async function resolveOrCreateCustomerTx(tx: DbTx, input: CustomerIdentit
     }
   }
 
+  const safeCustomerExternalId =
+    resolutionMethod === "email_conflict_external_mismatch" ? null : customerExternalId;
+
   await tx
     .update(customers)
     .set({
@@ -179,8 +189,8 @@ export async function resolveOrCreateCustomerTx(tx: DbTx, input: CustomerIdentit
       buyerEmailNormalized: buyerEmailNormalized
         ? sql`COALESCE(${customers.buyerEmailNormalized}, ${buyerEmailNormalized})`
         : customers.buyerEmailNormalized,
-      customerExternalId: customerExternalId
-        ? sql`COALESCE(${customers.customerExternalId}, ${customerExternalId})`
+      customerExternalId: safeCustomerExternalId
+        ? sql`COALESCE(${customers.customerExternalId}, ${safeCustomerExternalId})`
         : customers.customerExternalId,
       updatedAt: new Date(),
     })
