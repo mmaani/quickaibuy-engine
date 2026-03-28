@@ -74,6 +74,56 @@ Approved candidates move into listing preparation.
 
 **v1 rule:** Orders must never be auto-purchased without operator review.
 
+
+## Section 1.5 — Controlled Operations + Learning Loop (Initial Real Phase)
+
+This phase prioritizes learning over scale. Do not weaken safety gates and do not remove caps.
+
+### Rollout constraints
+
+- listing previews prepared per run: 10–20 (default target: 20)
+- listings promoted per run: 5–10 (default target: 10)
+- publish attempts per day: 10–20 (default target: 15)
+- auto-purchase: OFF (keep `PAUSE_AUTO_PURCHASE` enabled)
+
+### Daily loop
+
+1. Prepare listings.
+2. Review candidates.
+3. Approve a small subset.
+4. Publish guarded subset.
+5. Monitor outcomes and failures.
+
+### Order validation (first live orders)
+
+For early live orders, operators must complete manual-assisted purchasing and confirm:
+- correct product identity
+- correct supplier identity
+- stock availability at purchase time
+- payment flow completion
+
+Operators must log mismatches, supplier issues, and delays before considering automation expansion.
+
+### KPI pack to update daily
+
+- listings prepared/promoted/published
+- sales count
+- conversion rate
+- profit per order
+- stock-block rate
+- profit-block rate
+- supplier reliability score/events
+- repeat customer rate
+
+### Daily adjustment loop
+
+Use KPI outcomes and rejection reasons to tune:
+- match scoring weights
+- supplier prioritization
+- listing content quality
+
+Scale volume only after stable performance over consecutive days.
+
 ## Section 2 — Incident Response Rules
 
 QuickAIBuy provides four emergency overrides. Operators must leave an incident note whenever an override is enabled.
