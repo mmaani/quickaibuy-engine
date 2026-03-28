@@ -59,31 +59,6 @@ async function assertSupplierMatchesPinnedOrderLinkage(input: { orderId: string;
   }
 }
 
-async function assertSupplierMatchesPinnedOrderLinkage(input: { orderId: string; supplierKey: string }) {
-  const rows = await db
-    .select({
-      supplierKey: orderItems.supplierKey,
-      linkageDeterministic: orderItems.linkageDeterministic,
-      supplierLinkLocked: orderItems.supplierLinkLocked,
-    })
-    .from(orderItems)
-    .where(eq(orderItems.orderId, input.orderId));
-
-  if (!rows.length) throw new Error("SUPPLIER_FALLBACK_BLOCKED: order has no pinned order items");
-  const pinnedSupplierKeys = Array.from(
-    new Set(rows.map((row) => String(row.supplierKey ?? "").trim().toLowerCase()).filter(Boolean))
-  );
-  if (pinnedSupplierKeys.length !== 1) {
-    throw new Error("SUPPLIER_SUBSTITUTION_BLOCKED: order has ambiguous supplier linkage");
-  }
-  if (pinnedSupplierKeys[0] !== normalizeSupplierKey(input.supplierKey)) {
-    throw new Error("SUPPLIER_FALLBACK_BLOCKED: supplier does not match pinned order linkage");
-  }
-  if (rows.some((row) => !row.linkageDeterministic || !row.supplierLinkLocked)) {
-    throw new Error("SUPPLIER_LINK_NOT_LOCKED");
-  }
-}
-
 async function getOrderStatus(orderId: string): Promise<OrderStatus> {
   const rows = await db
     .select({ status: orders.status })
