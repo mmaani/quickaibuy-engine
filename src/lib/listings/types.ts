@@ -75,6 +75,8 @@ export type ListingPreviewInput = {
   estimatedProfit: number | null;
   marginPct: number | null;
   roiPct: number | null;
+  matchConfidence?: number | null;
+  matchStatus?: string | null;
   categoryId?: string | null;
   categoryName?: string | null;
   categoryConfidence?: number | null;
