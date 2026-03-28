@@ -83,7 +83,8 @@
 │   ├── 20260324_add_lead_submissions.sql
 │   ├── 20260327_add_supplier_shipping_quotes.sql
 │   ├── 20260328_customer_intelligence_foundation.sql
-│   └── 20260328_supplier_linkage_stock_lockdown.sql
+│   ├── 20260328_supplier_linkage_stock_lockdown.sql
+│   └── 20260328b_orders_legacy_columns_nullable.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -675,4 +676,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-97 directories, 579 files
+97 directories, 580 files
