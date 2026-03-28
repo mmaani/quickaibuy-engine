@@ -2,6 +2,7 @@ import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { evaluatePinnedSupplierSafety, normalizeSupplierStockStatus } from "@/lib/safety/supplierLinkage";
+import { hasExactPinnedSupplierIdentityMatch } from "./pinnedSupplierIdentity";
 import { createOrderEvent } from "./orderEvents";
 import { getAdminOrderDetail, type AdminOrderDetail } from "./getAdminOrdersPageData";
 
@@ -271,8 +272,12 @@ async function evaluateStrictOrderItemSafety(detail: AdminOrderDetail): Promise<
       continue;
     }
     if (
-      String(row.supplierKey ?? "").trim().toLowerCase() !== supplierKey.toLowerCase() ||
-      String(row.supplierProductId ?? "").trim() !== supplierProductId
+      !hasExactPinnedSupplierIdentityMatch({
+        expectedSupplierKey: supplierKey,
+        expectedSupplierProductId: supplierProductId,
+        fetchedSupplierKey: row.supplierKey,
+        fetchedSupplierProductId: row.supplierProductId,
+      })
     ) {
       reasons.push("LINKED_SUPPLIER_PRODUCT_MISMATCH");
       continue;

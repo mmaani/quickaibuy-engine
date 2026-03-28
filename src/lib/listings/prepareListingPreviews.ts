@@ -17,6 +17,7 @@ import { normalizeEbayListingImages } from "./normalizeEbayImages";
 import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
 import { deriveCanonicalStockFromRaw } from "@/lib/safety/supplierLinkage";
+import { canRewritePinnedSupplierLinkageForListingStatus } from "./linkagePolicy";
 
 type PrepareListingPreviewsInput = {
   limit?: number;
@@ -396,6 +397,26 @@ async function processCandidatePreviewRows(
       continue;
     }
 
+    if (existingListing.length && !canRewritePinnedSupplierLinkageForListingStatus(existingListing[0].status)) {
+      skipped++;
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: existingListing[0].id,
+        eventType: "LISTING_PREVIEW_SKIPPED_LINKAGE_LOCKED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          existingStatus: existingListing[0].status,
+          idempotencyKey,
+          reason: "pinned supplier linkage is immutable outside PREVIEW status",
+          source: context.source,
+        },
+      });
+      continue;
+    }
+
     if (existingPreview.length && !context.forceRefresh) {
       skipped++;
       await writeAuditLog({
@@ -609,7 +630,7 @@ async function processCandidatePreviewRows(
     const responseJson = preview.response ?? null;
     let listingId: string;
 
-    if (existingListing.length && (context.forceRefresh || existingListing[0].status !== "PREVIEW")) {
+    if (existingListing.length) {
       await db
         .update(listings)
         .set({

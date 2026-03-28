@@ -6,6 +6,7 @@ import { bullConnection } from "@/lib/bull";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobNames";
 import { markJobQueued } from "@/lib/jobs/jobLedger";
 import { createOrderEvent } from "./orderEvents";
+import { evaluateSupplierSelectionAgainstPinnedLinkage, normalizeSupplierKeyForSelection } from "./supplierSelectionSafety";
 import {
   canRecordSupplierPurchaseForOrderStatus,
   canRecordTrackingForOrderStatus,
@@ -27,8 +28,35 @@ const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
 });
 
 function normalizeSupplierKey(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  return normalized === "cj dropshipping" ? "cjdropshipping" : normalized;
+  return normalizeSupplierKeyForSelection(value);
+}
+
+async function assertSupplierMatchesPinnedOrderLinkage(input: { orderId: string; supplierKey: string }) {
+  const rows = await db
+    .select({
+      supplierKey: orderItems.supplierKey,
+      linkageDeterministic: orderItems.linkageDeterministic,
+      supplierLinkLocked: orderItems.supplierLinkLocked,
+    })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, input.orderId));
+
+  const blockReason = evaluateSupplierSelectionAgainstPinnedLinkage({
+    orderItemLinkages: rows,
+    requestedSupplierKey: input.supplierKey,
+  });
+  if (blockReason) {
+    if (blockReason === "SUPPLIER_SUBSTITUTION_BLOCKED") {
+      throw new Error("SUPPLIER_SUBSTITUTION_BLOCKED: order has ambiguous supplier linkage");
+    }
+    if (blockReason === "SUPPLIER_FALLBACK_BLOCKED") {
+      throw new Error("SUPPLIER_FALLBACK_BLOCKED: supplier does not match pinned order linkage");
+    }
+    if (blockReason === "SUPPLIER_LINK_NOT_LOCKED") {
+      throw new Error("SUPPLIER_LINK_NOT_LOCKED");
+    }
+    throw new Error(`${blockReason}: order has no pinned order items`);
+  }
 }
 
 async function assertSupplierMatchesPinnedOrderLinkage(input: { orderId: string; supplierKey: string }) {
