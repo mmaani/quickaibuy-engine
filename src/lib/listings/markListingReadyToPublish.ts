@@ -10,6 +10,10 @@ import {
   validateEbayPublishPayloadRequirements,
 } from "@/lib/marketplaces/ebayPublish";
 import {
+  evaluatePinnedSupplierSafety,
+  normalizeSupplierStockStatus,
+} from "@/lib/safety/supplierLinkage";
+import {
   LISTING_ACTIVE_PATH_STATUSES,
   LISTING_PREVIEW_STATUS,
   LISTING_PUBLISH_ENTRY_STATUS,
@@ -100,6 +104,15 @@ export async function markListingReadyToPublish(
       l.payload,
       l.response,
       l.title AS "listingTitle",
+      l.supplier_key AS "listingSupplierKey",
+      l.supplier_product_id AS "listingSupplierProductId",
+      l.linkage_deterministic AS "linkageDeterministic",
+      l.supplier_link_locked AS "supplierLinkLocked",
+      l.supplier_stock_status AS "supplierStockStatus",
+      l.supplier_stock_qty AS "supplierStockQty",
+      l.stock_verified_at AS "stockVerifiedAt",
+      l.stock_source AS "stockSource",
+      l.stock_check_required AS "stockCheckRequired",
       pc.supplier_key AS "supplierKey",
       pc.supplier_product_id AS "supplierProductId",
       pc.decision_status AS "decisionStatus",
@@ -142,6 +155,15 @@ export async function markListingReadyToPublish(
   const supplierKey = String(row.supplierKey ?? "").trim() || null;
   const supplierProductId = String(row.supplierProductId ?? "").trim() || null;
   const payloadSource = asObject(payload?.source);
+  const listingSupplierKey = String(row.listingSupplierKey ?? "").trim() || null;
+  const listingSupplierProductId = String(row.listingSupplierProductId ?? "").trim() || null;
+  const linkageDeterministic = Boolean(row.linkageDeterministic);
+  const supplierLinkLocked = Boolean(row.supplierLinkLocked);
+  const supplierStockStatus = normalizeSupplierStockStatus(row.supplierStockStatus);
+  const supplierStockQty = row.supplierStockQty == null ? null : Number(row.supplierStockQty);
+  const stockVerifiedAt = row.stockVerifiedAt ?? null;
+  const stockSource = String(row.stockSource ?? "").trim() || null;
+  const stockCheckRequired = Boolean(row.stockCheckRequired);
   const payloadSupplierKey = String(payloadSource?.supplierKey ?? "").trim() || null;
   const payloadSupplierProductId = String(payloadSource?.supplierProductId ?? "").trim() || null;
   const decisionStatus = String(row.decisionStatus ?? "");
@@ -207,6 +229,53 @@ export async function markListingReadyToPublish(
       marketplaceKey,
       previousStatus,
       reason: "supplier linkage is incomplete: supplierKey and supplierProductId must exist on both candidate and listing payload",
+    };
+  }
+  if (
+    supplierKey !== payloadSupplierKey ||
+    supplierProductId !== payloadSupplierProductId ||
+    listingSupplierKey !== supplierKey ||
+    listingSupplierProductId !== supplierProductId
+  ) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: "LINKED_SUPPLIER_PRODUCT_MISMATCH",
+    };
+  }
+
+  const linkageReasons = evaluatePinnedSupplierSafety({
+    supplierKey,
+    supplierProductId,
+    linkageDeterministic,
+    supplierLinkLocked,
+    stockStatus: supplierStockStatus,
+    stockQty: supplierStockQty,
+    stockVerifiedAt,
+    requiredQty: 1,
+  });
+  if (stockCheckRequired && linkageReasons.length > 0) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: linkageReasons.join(","),
+    };
+  }
+
+  if (stockCheckRequired && !stockSource) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: "STOCK_FETCH_FAILED",
     };
   }
 
@@ -511,6 +580,9 @@ export async function markListingReadyToPublish(
     SET
       status = ${LISTING_PUBLISH_ENTRY_STATUS},
       publish_marketplace = 'ebay',
+      supplier_link_locked = TRUE,
+      linkage_deterministic = TRUE,
+      linkage_verified_at = NOW(),
       updated_at = NOW()
     WHERE id = ${input.listingId}
       AND status = ${LISTING_PREVIEW_STATUS}
