@@ -185,6 +185,64 @@ function rankCandidateRowsForProcessing(
   });
 }
 
+function parseSupplierPayload(row: CandidatePreviewSourceRow): Record<string, unknown> | null {
+  return objectOrNull(row.supplierRawPayload);
+}
+
+function toPositiveNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function computeSupplierSelectionScore(row: CandidatePreviewSourceRow): number {
+  const payload = parseSupplierPayload(row);
+  const supplierPrice = toPositiveNumber(row.supplierPrice) ?? 0;
+  const marginPct = toNum(row.marginPct) ?? 0;
+  const mediaQuality = toNum(payload?.mediaQualityScore) ?? 0.5;
+  const availabilityConfidence = toNum(payload?.availabilityConfidence) ?? 0.5;
+  const shippingMin =
+    toPositiveNumber(payload?.deliveryEstimateMinDays) ??
+    toPositiveNumber(payload?.delivery_estimate_min_days) ??
+    21;
+  const shippingMax =
+    toPositiveNumber(payload?.deliveryEstimateMaxDays) ??
+    toPositiveNumber(payload?.delivery_estimate_max_days) ??
+    shippingMin;
+  const shippingDays = Math.max(shippingMin, shippingMax);
+  const shippingPenalty = Math.min(0.25, shippingDays / 100);
+  const priceComponent = supplierPrice > 0 ? Math.min(0.25, 1 / Math.max(1, supplierPrice / 10)) : 0;
+  const marginComponent = Math.max(0, Math.min(0.25, marginPct / 200));
+  const mediaComponent = Math.max(0, Math.min(0.25, mediaQuality * 0.25));
+  const stockReliabilityComponent = Math.max(0, Math.min(0.25, availabilityConfidence * 0.25));
+
+  return Number((priceComponent + marginComponent + mediaComponent + stockReliabilityComponent - shippingPenalty).toFixed(6));
+}
+
+function selectBestSupplierRowsBeforeListing(rows: CandidatePreviewSourceRow[]): CandidatePreviewSourceRow[] {
+  const grouped = new Map<string, CandidatePreviewSourceRow[]>();
+  for (const row of rows) {
+    const key = `${row.marketplaceKey}:${row.marketplaceListingId}`;
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(row);
+    grouped.set(key, bucket);
+  }
+
+  const selected: CandidatePreviewSourceRow[] = [];
+  for (const bucket of grouped.values()) {
+    const best = [...bucket].sort((a, b) => {
+      const scoreDiff = computeSupplierSelectionScore(b) - computeSupplierSelectionScore(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      const profitDiff = (toNum(b.estimatedProfit) ?? 0) - (toNum(a.estimatedProfit) ?? 0);
+      if (profitDiff !== 0) return profitDiff;
+      return String(a.candidateId).localeCompare(String(b.candidateId));
+    })[0];
+    if (best) selected.push(best);
+  }
+
+  return selected;
+}
+
 async function blockCandidateForManualReview(input: {
   candidateId: string;
   actorType: "WORKER" | "ADMIN";
@@ -541,6 +599,8 @@ async function processCandidatePreviewRows(
       estimatedProfit: toNum(row.estimatedProfit),
       marginPct: toNum(row.marginPct),
       roiPct: toNum(row.roiPct),
+      matchConfidence,
+      matchStatus,
       categoryId: categoryClassification?.categoryId ?? null,
       categoryName: categoryClassification?.categoryName ?? null,
       categoryConfidence: categoryClassification?.confidence ?? null,
@@ -845,7 +905,7 @@ export async function prepareListingPreviews(input?: PrepareListingPreviewsInput
     marketplace,
     limit,
   });
-  const rankedRows = rankCandidateRowsForProcessing(rows, marketplace);
+  const rankedRows = selectBestSupplierRowsBeforeListing(rankCandidateRowsForProcessing(rows, marketplace));
 
   const processed = await processCandidatePreviewRows(rankedRows, {
     marketplace,
@@ -879,7 +939,7 @@ export async function prepareListingPreviewForCandidate(
     candidateId: normalizedCandidateId,
     marketplace,
   });
-  const rankedRows = rankCandidateRowsForProcessing(rows, marketplace);
+  const rankedRows = selectBestSupplierRowsBeforeListing(rankCandidateRowsForProcessing(rows, marketplace));
 
   if (!rows.length) {
     const existing = await db

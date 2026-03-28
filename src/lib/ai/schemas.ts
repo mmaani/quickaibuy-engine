@@ -79,6 +79,45 @@ function cleanSpecificValue(value: unknown): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
+function normalizeSpecificValue(key: ListingSpecificKey, value: string | null): string | null {
+  const cleaned = cleanSpecificValue(value);
+  if (!cleaned) return null;
+
+  if (key === "brand") {
+    const normalized = cleaned.replace(/\s+/g, " ").trim();
+    if (/^(n\/?a|none|null|generic)$/i.test(normalized)) return "Unbranded";
+    return normalized.length > 45 ? normalized.slice(0, 45).trim() : normalized;
+  }
+
+  if (key === "color") {
+    return cleaned
+      .replace(/\bcolou?r:?\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  if (key === "material") {
+    return cleaned
+      .replace(/\bmade of\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  return cleaned;
+}
+
+function applyRequiredSpecificFallbacks(
+  specifics: Record<ListingSpecificKey, string | null>
+): Record<ListingSpecificKey, string | null> {
+  return {
+    ...specifics,
+    brand: specifics.brand ?? "Unbranded",
+    type: specifics.type ?? "Not Specified",
+    color: specifics.color ?? "Not Specified",
+    material: specifics.material ?? "Not Specified",
+  };
+}
+
 export const LISTING_PACK_LOW_CONFIDENCE_THRESHOLD = 0.8;
 
 export function validateListingPackOutput(value: unknown): ListingPackValidation {
@@ -124,11 +163,12 @@ export function validateListingPackOutput(value: unknown): ListingPackValidation
     errors.push("item_specifics must be an object");
   } else {
     for (const key of LISTING_SPECIFIC_KEYS) {
-      itemSpecifics[key] = cleanSpecificValue(specificsRaw[key]);
+      itemSpecifics[key] = normalizeSpecificValue(key, cleanSpecificValue(specificsRaw[key]));
     }
   }
+  const normalizedSpecifics = applyRequiredSpecificFallbacks(itemSpecifics);
 
-  const populatedSpecificsCount = LISTING_SPECIFIC_KEYS.filter((key) => Boolean(itemSpecifics[key])).length;
+  const populatedSpecificsCount = LISTING_SPECIFIC_KEYS.filter((key) => Boolean(normalizedSpecifics[key])).length;
   if (populatedSpecificsCount < 3) {
     errors.push("item_specifics must contain at least 3 non-null supported fields");
   }
@@ -183,7 +223,7 @@ export function validateListingPackOutput(value: unknown): ListingPackValidation
       category_name: categoryName,
       bullet_points: bulletPoints,
       description,
-      item_specifics: itemSpecifics,
+      item_specifics: normalizedSpecifics,
       pricing_hint: pricingHint,
       trust_flags: trustFlags,
       review_required: reviewRequired,
@@ -236,9 +276,10 @@ export function validateVerifiedListingPackOutput(value: unknown): VerifiedListi
     errors.push("verified_item_specifics must be an object");
   } else {
     for (const key of LISTING_SPECIFIC_KEYS) {
-      itemSpecifics[key] = cleanSpecificValue(specificsRaw[key]);
+      itemSpecifics[key] = normalizeSpecificValue(key, cleanSpecificValue(specificsRaw[key]));
     }
   }
+  const normalizedSpecifics = applyRequiredSpecificFallbacks(itemSpecifics);
 
   const removedClaims = Array.isArray(record.removed_claims)
     ? record.removed_claims.map((entry) => cleanString(entry)).filter((entry) => entry.length > 0).slice(0, 20)
@@ -265,7 +306,7 @@ export function validateVerifiedListingPackOutput(value: unknown): VerifiedListi
       verified_category_name: categoryName,
       verified_bullet_points: bulletPoints,
       verified_description: description,
-      verified_item_specifics: itemSpecifics,
+      verified_item_specifics: normalizedSpecifics,
       removed_claims: removedClaims,
       corrected_fields: correctedFields,
       risk_flags: riskFlags,
