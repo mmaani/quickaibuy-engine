@@ -8,12 +8,30 @@ export type ListingLinkage = {
   listingId: string | null;
   supplierKey: string | null;
   supplierProductId: string | null;
+  linkageSource: string | null;
+  linkageVerifiedAt: Date | null;
+  linkageDeterministic: boolean;
+  supplierLinkLocked: boolean;
+  supplierStockStatus: string | null;
+  supplierStockQty: number | null;
+  stockVerifiedAt: Date | null;
+  stockSource: string | null;
+  stockCheckRequired: boolean;
 };
 
 export type OrderItemComparable = {
   listingId: string | null;
   supplierKey: string | null;
   supplierProductId: string | null;
+  linkageSource: string | null;
+  linkageVerifiedAt: Date | null;
+  linkageDeterministic: boolean;
+  supplierLinkLocked: boolean;
+  supplierStockStatus: string | null;
+  supplierStockQty: number | null;
+  stockVerifiedAt: Date | null;
+  stockSource: string | null;
+  stockCheckRequired: boolean;
   quantity: number;
   itemPrice: string;
 };
@@ -83,6 +101,15 @@ function comparableItemKey(item: OrderItemComparable): string {
     item.listingId ?? "",
     item.supplierKey ?? "",
     item.supplierProductId ?? "",
+    item.linkageSource ?? "",
+    item.linkageVerifiedAt?.toISOString() ?? "",
+    String(item.linkageDeterministic),
+    String(item.supplierLinkLocked),
+    item.supplierStockStatus ?? "",
+    item.supplierStockQty == null ? "" : String(item.supplierStockQty),
+    item.stockVerifiedAt?.toISOString() ?? "",
+    item.stockSource ?? "",
+    String(item.stockCheckRequired),
     String(item.quantity),
     item.itemPrice,
   ].join("|");
@@ -100,6 +127,15 @@ function toComparableIncomingItems(
       listingId: linkage?.listingId ?? null,
       supplierKey: linkage?.supplierKey ?? null,
       supplierProductId: linkage?.supplierProductId ?? null,
+      linkageSource: linkage?.linkageSource ?? null,
+      linkageVerifiedAt: linkage?.linkageVerifiedAt ?? null,
+      linkageDeterministic: Boolean(linkage?.linkageDeterministic),
+      supplierLinkLocked: Boolean(linkage?.supplierLinkLocked),
+      supplierStockStatus: linkage?.supplierStockStatus ?? null,
+      supplierStockQty: linkage?.supplierStockQty ?? null,
+      stockVerifiedAt: linkage?.stockVerifiedAt ?? null,
+      stockSource: linkage?.stockSource ?? null,
+      stockCheckRequired: Boolean(linkage?.stockCheckRequired),
       quantity: item.quantity,
       itemPrice: normalizeItemPrice(item.itemPrice),
     };
@@ -140,6 +176,15 @@ async function resolveListingLinkages(
     listingId: string;
     supplierKey: string | null;
     supplierProductId: string | null;
+    linkageSource: string | null;
+    linkageVerifiedAt: Date | null;
+    linkageDeterministic: boolean;
+    supplierLinkLocked: boolean;
+    supplierStockStatus: string | null;
+    supplierStockQty: number | null;
+    stockVerifiedAt: Date | null;
+    stockSource: string | null;
+    stockCheckRequired: boolean;
   }>(sql`
     SELECT
       l.published_external_id AS "listingExternalId",
@@ -151,13 +196,24 @@ async function resolveListingLinkages(
       COALESCE(
         NULLIF(BTRIM(pc.supplier_product_id), ''),
         NULLIF(BTRIM(l.payload -> 'source' ->> 'supplierProductId'), '')
-      ) AS "supplierProductId"
+      ) AS "supplierProductId",
+      l.linkage_source AS "linkageSource",
+      l.linkage_verified_at AS "linkageVerifiedAt",
+      l.linkage_deterministic AS "linkageDeterministic",
+      l.supplier_link_locked AS "supplierLinkLocked",
+      l.supplier_stock_status AS "supplierStockStatus",
+      l.supplier_stock_qty AS "supplierStockQty",
+      l.stock_verified_at AS "stockVerifiedAt",
+      l.stock_source AS "stockSource",
+      l.stock_check_required AS "stockCheckRequired"
     FROM listings l
     LEFT JOIN profitable_candidates pc
       ON pc.id = l.candidate_id
     WHERE LOWER(l.marketplace_key) = 'ebay'
       AND l.published_external_id IN (${sql.join(unique.map((id) => sql`${id}`), sql`, `)})
       AND l.status IN ('ACTIVE', 'PUBLISH_IN_PROGRESS', 'READY_TO_PUBLISH', 'PREVIEW')
+      AND l.linkage_deterministic = TRUE
+      AND l.supplier_link_locked = TRUE
     ORDER BY l.updated_at DESC NULLS LAST
   `);
 
@@ -168,6 +224,15 @@ async function resolveListingLinkages(
       listingId: row.listingId ?? null,
       supplierKey: row.supplierKey ?? null,
       supplierProductId: row.supplierProductId ?? null,
+      linkageSource: row.linkageSource ?? null,
+      linkageVerifiedAt: row.linkageVerifiedAt ?? null,
+      linkageDeterministic: Boolean(row.linkageDeterministic),
+      supplierLinkLocked: Boolean(row.supplierLinkLocked),
+      supplierStockStatus: row.supplierStockStatus ?? null,
+      supplierStockQty: row.supplierStockQty == null ? null : Number(row.supplierStockQty),
+      stockVerifiedAt: row.stockVerifiedAt ?? null,
+      stockSource: row.stockSource ?? null,
+      stockCheckRequired: Boolean(row.stockCheckRequired),
     });
   }
   return map;
@@ -250,6 +315,15 @@ export async function upsertNormalizedEbayOrder(
           listingId: orderItems.listingId,
           supplierKey: orderItems.supplierKey,
           supplierProductId: orderItems.supplierProductId,
+          linkageSource: orderItems.linkageSource,
+          linkageVerifiedAt: orderItems.linkageVerifiedAt,
+          linkageDeterministic: orderItems.linkageDeterministic,
+          supplierLinkLocked: orderItems.supplierLinkLocked,
+          supplierStockStatus: orderItems.supplierStockStatus,
+          supplierStockQty: orderItems.supplierStockQty,
+          stockVerifiedAt: orderItems.stockVerifiedAt,
+          stockSource: orderItems.stockSource,
+          stockCheckRequired: orderItems.stockCheckRequired,
           quantity: orderItems.quantity,
           itemPrice: orderItems.itemPrice,
         })
@@ -303,6 +377,15 @@ export async function upsertNormalizedEbayOrder(
               listingId: item.listingId,
               supplierKey: item.supplierKey,
               supplierProductId: item.supplierProductId,
+              linkageSource: item.linkageSource,
+              linkageVerifiedAt: item.linkageVerifiedAt,
+              linkageDeterministic: item.linkageDeterministic,
+              supplierLinkLocked: item.supplierLinkLocked,
+              supplierStockStatus: item.supplierStockStatus,
+              supplierStockQty: item.supplierStockQty,
+              stockVerifiedAt: item.stockVerifiedAt,
+              stockSource: item.stockSource,
+              stockCheckRequired: item.stockCheckRequired,
               quantity: item.quantity,
               itemPrice: item.itemPrice,
             }))

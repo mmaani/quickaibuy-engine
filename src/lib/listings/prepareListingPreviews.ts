@@ -16,6 +16,7 @@ import { markListingReadyToPublish } from "./markListingReadyToPublish";
 import { normalizeEbayListingImages } from "./normalizeEbayImages";
 import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
+import { deriveCanonicalStockFromRaw } from "@/lib/safety/supplierLinkage";
 
 type PrepareListingPreviewsInput = {
   limit?: number;
@@ -489,6 +490,14 @@ async function processCandidatePreviewRows(
       continue;
     }
 
+    const supplierStock = deriveCanonicalStockFromRaw({
+      availabilityStatus:
+        (row.supplierRawPayload && typeof row.supplierRawPayload === "object" && !Array.isArray(row.supplierRawPayload)
+          ? (row.supplierRawPayload as Record<string, unknown>).availabilityStatus
+          : null) ?? null,
+      rawPayload: row.supplierRawPayload,
+    });
+
     const preview = await buildListingPreview(context.marketplace, {
       candidateId: row.candidateId,
       supplierKey: row.supplierKey,
@@ -611,6 +620,17 @@ async function processCandidatePreviewRows(
           response: responseJson,
           idempotencyKey,
           status: "PREVIEW",
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+          linkageSource: "candidate_snapshot",
+          linkageVerifiedAt: new Date(),
+          linkageDeterministic: true,
+          supplierLinkLocked: true,
+          supplierStockStatus: supplierStock.status,
+          supplierStockQty: supplierStock.qty == null ? null : Math.trunc(supplierStock.qty),
+          stockVerifiedAt: new Date(),
+          stockSource: supplierStock.source,
+          stockCheckRequired: true,
           updatedAt: new Date(),
         })
         .where(eq(listings.id, existingListing[0].id));
@@ -644,6 +664,17 @@ async function processCandidatePreviewRows(
           payload: payloadJson,
           response: responseJson,
           idempotencyKey,
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+          linkageSource: "candidate_snapshot",
+          linkageVerifiedAt: new Date(),
+          linkageDeterministic: true,
+          supplierLinkLocked: true,
+          supplierStockStatus: supplierStock.status,
+          supplierStockQty: supplierStock.qty == null ? null : Math.trunc(supplierStock.qty),
+          stockVerifiedAt: new Date(),
+          stockSource: supplierStock.source,
+          stockCheckRequired: true,
         })
         .returning({ id: listings.id });
 
