@@ -17,6 +17,8 @@
 ├── codex.prod.vars.private
 ├── codex.secrets.private
 ├── codex.vars.private
+├── config
+│   └── db-targets.mjs
 ├── docs
 │   ├── AGENT_RULES.md
 │   ├── PIPELINE_SCOPE.md
@@ -31,6 +33,7 @@
 │   ├── database-migrations.md
 │   ├── ebay-image-policy.md
 │   ├── ebay-live-publish.md
+│   ├── env-db-targeting.md
 │   ├── operator-runbook.md
 │   ├── ops-ebay-image-hosting.md
 │   ├── order-automation-rollout.md
@@ -188,6 +191,7 @@
 │   ├── check_migration_ledger.ts
 │   ├── check_missing_cmds.sh
 │   ├── check_monitoring_dashboard_v1.sh
+│   ├── check_mutation_safety.mjs
 │   ├── check_order_automation_runtime_ready.ts
 │   ├── check_order_automation_schema.ts
 │   ├── check_order_operator_mappings.ts
@@ -225,6 +229,7 @@
 │   ├── compare_local_and_vercel_env.mjs
 │   ├── confirm_env_local.sh
 │   ├── db_inspect.mjs
+│   ├── db_target_cli.mjs
 │   ├── debug_marketplace_scan.ts
 │   ├── debug_profit_join.mjs
 │   ├── detect_repricing_candidates.ts
@@ -243,6 +248,7 @@
 │   ├── find_db_file.sh
 │   ├── fix_env_local_missing.sh
 │   ├── fix_single_listing_payload_for_retry.ts
+│   ├── guard_mutation.mjs
 │   ├── ingest_cj_direct_product.ts
 │   ├── inspect-products-raw-columns.mjs
 │   ├── inspect_failed_listing_payload.ts
@@ -250,6 +256,9 @@
 │   ├── inspect_trend_candidates.ts
 │   ├── install_psql.sh
 │   ├── lib
+│   │   ├── dbTarget.mjs
+│   │   ├── envState.mjs
+│   │   ├── mutationGuard.mjs
 │   │   ├── orderAutomationSchemaCheck.ts
 │   │   ├── pgRetry.mjs
 │   │   ├── preflightMutation.sh
@@ -260,6 +269,7 @@
 │   ├── load_env_local_now.sh
 │   ├── make_matching_dirs.sh
 │   ├── make_needed_dirs.sh
+│   ├── manage_env.mjs
 │   ├── monitor_pipeline.mjs
 │   ├── mutate_execute_sql_file.mjs
 │   ├── mutate_git_push_pipeline_to_main.sh
@@ -477,7 +487,8 @@
 │   │   └── sitemap.ts
 │   ├── components
 │   │   └── admin
-│   │       └── AiListingDiagnostics.tsx
+│   │       ├── AiListingDiagnostics.tsx
+│   │       └── OptimizationDiagnostics.tsx
 │   ├── db
 │   │   ├── client.ts
 │   │   ├── migrations
@@ -534,6 +545,9 @@
 │   │   ├── leads
 │   │   │   └── notifications.ts
 │   │   ├── listings
+│   │   │   ├── __tests__
+│   │   │   │   ├── optimizeListingTitle.test.ts
+│   │   │   │   └── supplierSelectionAndImmutability.test.ts
 │   │   │   ├── auditLiveEbayListing.ts
 │   │   │   ├── build_amazon_preview.ts
 │   │   │   ├── build_ebay_preview.ts
@@ -562,6 +576,7 @@
 │   │   │   ├── recoveryState.ts
 │   │   │   ├── resumePausedListing.ts
 │   │   │   ├── statuses.ts
+│   │   │   ├── supplierSelection.ts
 │   │   │   ├── types.ts
 │   │   │   └── validate_listing_preview.ts
 │   │   ├── logger.ts
@@ -578,6 +593,8 @@
 │   │   ├── matches
 │   │   │   └── ebayMatchEngine.ts
 │   │   ├── matching
+│   │   │   ├── __tests__
+│   │   │   │   └── productMatcher.test.ts
 │   │   │   └── productMatcher.ts
 │   │   ├── media
 │   │   │   └── storage.ts
@@ -676,4 +693,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-97 directories, 580 files
+100 directories, 594 files

@@ -5,6 +5,7 @@
 - `.env.dev` is the local development snapshot.
 - `.env.prod` is the production-aligned snapshot.
 - `.env` is the generated active env file used by default local tooling.
+- `.env.local` is kept in sync as a generated compatibility mirror for Next.js, which loads it ahead of `.env`.
 - `.env.active.json` records which source file generated `.env`.
 
 Default resolution order:

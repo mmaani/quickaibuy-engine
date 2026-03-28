@@ -25,6 +25,7 @@ Shared shell guard helper: `scripts/lib/preflightMutation.sh`.
 - `.env.dev` → development/local snapshot
 - `.env.prod` → production-aligned snapshot
 - `.env` → generated active env file
+- `.env.local` → generated compatibility mirror for Next.js/local tooling that still auto-loads `.env.local`
 - `pnpm env:dev` / `pnpm env:prod` / `pnpm env:status`
 - `pnpm db:status` / `pnpm db:assert-dev` / `pnpm db:assert-prod`
 

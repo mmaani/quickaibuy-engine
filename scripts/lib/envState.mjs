@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 
 export const ACTIVE_ENV_FILE = ".env";
 export const ACTIVE_ENV_METADATA_FILE = ".env.active.json";
+export const ACTIVE_ENV_LOCAL_MIRROR_FILE = ".env.local";
 export const DEV_ENV_FILE = ".env.dev";
 export const PROD_ENV_FILE = ".env.prod";
 export const LEGACY_DEV_ENV_FILE = ".env.local";
@@ -82,6 +83,7 @@ export function writeActiveEnvMetadata(source) {
     JSON.stringify(
       {
         source,
+        mirror: ACTIVE_ENV_LOCAL_MIRROR_FILE,
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -98,6 +100,8 @@ export function switchActiveEnv(target) {
   }
 
   fs.copyFileSync(sourceFile, ACTIVE_ENV_FILE);
+  // Next.js always loads .env.local ahead of .env, so keep a mirror in sync.
+  fs.copyFileSync(sourceFile, ACTIVE_ENV_LOCAL_MIRROR_FILE);
   writeActiveEnvMetadata(sourceFile);
   loadedPath = null;
   return sourceFile;
