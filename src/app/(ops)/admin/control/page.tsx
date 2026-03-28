@@ -273,9 +273,12 @@ function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getMa
   if (snapshot.entries.EMERGENCY_READ_ONLY.enabled) return "Emergency read-only mode is active.";
   if (
     snapshot.entries.PAUSE_PUBLISHING.enabled &&
-    (action === "promote" || action === "dry-run" || action === "monitor" || action === "prepare")
+    (action === "promote" || action === "dry-run" || action === "monitor")
   ) {
     return "Publishing is paused.";
+  }
+  if (snapshot.entries.PAUSE_LISTING_PREPARATION.enabled && action === "prepare") {
+    return "Listing preparation is paused.";
   }
   if (snapshot.entries.PAUSE_MARKETPLACE_SCAN.enabled && action === "scan") {
     return "Marketplace scan is paused.";
@@ -1090,6 +1093,53 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <StatCard label="seller feedback score" value={data.listingThroughput.sellerFeedbackScore ?? "unknown"} />
             <StatCard label="feedback source" value={data.listingThroughput.sellerFeedbackSource ?? "unknown"} />
             <StatCard label="feedback fetched at" value={formatDateTime(data.listingThroughput.sellerFeedbackFetchedAt)} />
+          </div>
+        </Section>
+
+        <Section title="Controlled Scale Rollout">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            Operational scaling limits and KPI snapshot. These controls are observability/guardrail only and do not bypass existing BLOCK protections.
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="prepare cap / run" value={data.rolloutLimits.listingPreparePerRun} />
+            <StatCard label="promote cap / run" value={data.rolloutLimits.listingPromotePerRun} />
+            <StatCard
+              label="publish attempts 1h / 1d"
+              value={`${data.rolloutLimits.livePublishAttempts.used1h}/${data.rolloutLimits.livePublishAttempts.limit1h} · ${data.rolloutLimits.livePublishAttempts.used1d}/${data.rolloutLimits.livePublishAttempts.limit1d}`}
+            />
+            <StatCard
+              label="auto-purchase attempts 1h / 1d"
+              value={`${data.rolloutLimits.autoPurchaseAttempts.used1h}/${data.rolloutLimits.autoPurchaseAttempts.limit1h} · ${data.rolloutLimits.autoPurchaseAttempts.used1d}/${data.rolloutLimits.autoPurchaseAttempts.limit1d}`}
+            />
+            <StatCard label="auto-purchase allowed" value={data.rolloutLimits.autoPurchaseAttempts.allowed ? "yes" : "no"} />
+            <StatCard label="preview count" value={data.scaleKpis.previewCount ?? "-"} />
+            <StatCard label="ready count" value={data.scaleKpis.readyCount ?? "-"} />
+            <StatCard label="active listings" value={data.scaleKpis.activeListings ?? "-"} />
+            <StatCard label="publish success 24h" value={data.scaleKpis.publishSuccessCount24h ?? "-"} />
+            <StatCard label="publish failure 24h" value={data.scaleKpis.publishFailureCount24h ?? "-"} />
+            <StatCard label="stock-block rate 24h" value={percentOrUnknown(data.scaleKpis.stockBlockRatePct24h, true)} />
+            <StatCard label="profit-block rate" value={percentOrUnknown(data.scaleKpis.profitBlockRatePct24h, true)} />
+            <StatCard label="supplier fallback blocks 24h" value={data.scaleKpis.supplierFallbackBlockCount24h ?? "-"} />
+            <StatCard label="supplier fetch failures 24h" value={data.scaleKpis.supplierFetchFailureCount24h ?? "-"} />
+            <StatCard label="listing pauses 24h" value={data.scaleKpis.listingPauseCount24h ?? "-"} />
+            <StatCard label="repeat buyers" value={data.scaleKpis.customerRepeatBuyerCount ?? "-"} />
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">conversion quality</div>
+              <div className="mt-2">{data.operatorSummary.conversionQuality}</div>
+              <div className="mt-2 text-[11px] uppercase tracking-[0.2em] text-white/55">economic quality</div>
+              <div className="mt-2">{data.operatorSummary.economicQuality}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">supplier reliability</div>
+              <div className="mt-2">{data.operatorSummary.supplierReliability}</div>
+              <div className="mt-2 text-[11px] uppercase tracking-[0.2em] text-white/55">repeat-customer growth</div>
+              <div className="mt-2">{data.operatorSummary.repeatCustomerGrowth}</div>
+            </div>
+          </div>
+          <div className="mt-4">
+            <DataTable rows={data.scaleKpis.failureReasons} empty="No recent failure reasons." />
           </div>
         </Section>
 

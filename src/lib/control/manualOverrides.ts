@@ -6,8 +6,11 @@ import { manualOverrides } from "@/lib/db/schema";
 
 export const MANUAL_OVERRIDE_KEYS = [
   "PAUSE_PUBLISHING",
+  "PAUSE_LISTING_PREPARATION",
   "PAUSE_MARKETPLACE_SCAN",
   "PAUSE_ORDER_SYNC",
+  "PAUSE_AUTO_PURCHASE",
+  "PAUSE_SUPPLIER_CJ",
   "EMERGENCY_READ_ONLY",
 ] as const;
 

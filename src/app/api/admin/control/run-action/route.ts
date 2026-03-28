@@ -13,9 +13,12 @@ function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getMa
   if (snapshot.entries.EMERGENCY_READ_ONLY.enabled) return "Emergency read-only mode is active.";
   if (
     snapshot.entries.PAUSE_PUBLISHING.enabled &&
-    (action === "promote" || action === "dry-run" || action === "monitor" || action === "prepare")
+    (action === "promote" || action === "dry-run" || action === "monitor")
   ) {
     return "Publishing is paused.";
+  }
+  if (snapshot.entries.PAUSE_LISTING_PREPARATION.enabled && action === "prepare") {
+    return "Listing preparation is paused.";
   }
   if (snapshot.entries.PAUSE_MARKETPLACE_SCAN.enabled && action === "scan") {
     return "Marketplace scan is paused.";

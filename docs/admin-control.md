@@ -9,11 +9,25 @@ Upstream quick actions are queue-based: they enqueue jobs to the canonical jobs 
 
 Supported overrides:
 - `PAUSE_PUBLISHING`
+- `PAUSE_LISTING_PREPARATION`
 - `PAUSE_MARKETPLACE_SCAN`
 - `PAUSE_ORDER_SYNC`
+- `PAUSE_AUTO_PURCHASE`
+- `PAUSE_SUPPLIER_CJ`
 - `EMERGENCY_READ_ONLY`
 
 Overrides are incident-use only and all actions must be audited.
+
+## Controlled Scale Rollout Knobs
+
+Use `.env.local` for operational rollout tuning:
+
+- `LISTING_PREPARE_LIMIT_PER_RUN`
+- `LISTING_PROMOTE_LIMIT_PER_RUN`
+- `LISTING_RATE_LIMIT_15M`, `LISTING_RATE_LIMIT_1H`, `LISTING_RATE_LIMIT_1D`
+- `AUTO_PURCHASE_LIMIT_PER_RUN`
+- `AUTO_PURCHASE_RATE_LIMIT_1H`, `AUTO_PURCHASE_RATE_LIMIT_1D`
+- alert thresholds (`ALERT_*`) for failure/block/spike detection
 
 ## Runbook Reference Surface (New)
 

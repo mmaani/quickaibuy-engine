@@ -10,9 +10,11 @@ import { getListingExecutionCandidates } from "@/lib/listings/getListingExecutio
 import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
 import { syncEbayOrders } from "@/lib/orders/syncEbayOrders";
 import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
+import { getScaleRolloutCaps } from "./scaleRolloutConfig";
 
 export async function runControlQuickAction(action: string, actorId: string): Promise<string> {
   let message = "Action completed.";
+  const rolloutCaps = getScaleRolloutCaps();
 
   if (action === "supplier") {
     const job = await enqueueSupplierDiscoverRefresh({
@@ -44,7 +46,7 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
     });
     message = `Order sync fetched ${result.fetched}, created ${result.created}, updated ${result.updated}, unchanged ${result.unchanged}, failed ${result.failed}.`;
   } else if (action === "prepare") {
-    const result = await prepareListingPreviews({ limit: 25, marketplace: "ebay" });
+    const result = await prepareListingPreviews({ limit: rolloutCaps.preparePerRun, marketplace: "ebay" });
     message = `Previews created ${result.created}, updated ${result.updated}, skipped ${result.skipped}.`;
   } else if (action === "promote") {
     const rows = await db.execute(sql`
@@ -52,7 +54,7 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
       from listings
       where marketplace_key = 'ebay' and status = 'PREVIEW'
       order by updated_at asc
-      limit 25
+      limit ${rolloutCaps.promotePerRun}
     `);
 
     let promoted = 0;

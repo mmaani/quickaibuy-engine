@@ -8,6 +8,8 @@ import { PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN } from "@/lib/products/pipelinePol
 import { getUpstreamRecurringScheduleSnapshot } from "@/lib/jobs/enqueueUpstreamSchedules";
 import { getManualOverrideSnapshot } from "./manualOverrides";
 import { getMatchQualitySummary } from "./getMatchQualitySummary";
+import { getScaleRolloutAlertThresholds, getScaleRolloutCaps } from "./scaleRolloutConfig";
+import { getAutoPurchaseRateLimitState } from "@/lib/orders/autoPurchaseRateLimiter";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -287,6 +289,46 @@ export type ControlPanelData = {
         retryHint: string | null;
       };
     };
+  rolloutLimits: {
+    listingPreparePerRun: number;
+    listingPromotePerRun: number;
+    livePublishAttempts: {
+      limit1h: number;
+      limit1d: number;
+      used1h: number;
+      used1d: number;
+    };
+    autoPurchaseAttempts: {
+      limit1h: number;
+      limit1d: number;
+      used1h: number;
+      used1d: number;
+      allowed: boolean;
+      blockingWindow: "1h" | "1d" | "none";
+      retryHint: string | null;
+    };
+  };
+  scaleKpis: {
+    previewCount: number | null;
+    readyCount: number | null;
+    publishSuccessCount24h: number | null;
+    publishFailureCount24h: number | null;
+    activeListings: number | null;
+    stockBlockRatePct24h: number | null;
+    profitBlockRatePct24h: number | null;
+    supplierFallbackBlockCount24h: number | null;
+    customerRepeatBuyerCount: number | null;
+    customerRepeatBuyerGrowth7d: number | null;
+    supplierFetchFailureCount24h: number | null;
+    listingPauseCount24h: number | null;
+    failureReasons: Array<{ reason: string; count: number }>;
+  };
+  operatorSummary: {
+    conversionQuality: string;
+    economicQuality: string;
+    supplierReliability: string;
+    repeatCustomerGrowth: string;
+  };
   workerQueueHealth: {
     workerAlive: boolean;
     lastSuccessfulWorkerActivityTs: string | null;
@@ -411,6 +453,11 @@ function toStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s ? s : null;
+}
+
+function toPct(numerator: number | null, denominator: number | null): number | null {
+  if (numerator == null || denominator == null || denominator <= 0) return null;
+  return Math.round((numerator / denominator) * 10000) / 100;
 }
 
 function countByStatus(rows: Row[], status: string): number {
@@ -1037,6 +1084,47 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     sellerFeedbackFetchedAt: sellerAccountMetricsExists ? toStr(sellerMetricRow.fetched_at) : null,
   };
 
+  const customersExists = await tableExists("customers");
+  const customerRepeatStats = customersExists
+    ? (
+        await runQuery(`
+          select
+            count(*) filter (where marketplace = 'ebay' and order_count >= 2)::int as repeat_buyers_total,
+            count(*) filter (where marketplace = 'ebay' and order_count >= 2 and first_order_at >= now() - interval '7 days')::int as repeat_buyers_new_7d,
+            count(*) filter (where marketplace = 'ebay' and order_count >= 2 and first_order_at >= now() - interval '14 days' and first_order_at < now() - interval '7 days')::int as repeat_buyers_prev_7d
+          from customers
+        `)
+      )[0] ?? {}
+    : {};
+
+  const supplierFetchAndFallbackStats = workerRunsExists
+    ? (
+        await runQuery(`
+          select
+            count(*) filter (where status = 'FAILED' and lower(coalesce(job_name, '')) = 'supplier_discover' and finished_at >= now() - interval '24 hours')::int as supplier_fetch_failures_24h,
+            count(*) filter (where status = 'FAILED' and lower(coalesce(job_name, '')) = 'supplier_discover' and finished_at >= now() - interval '48 hours' and finished_at < now() - interval '24 hours')::int as supplier_fetch_failures_prev_24h
+          from worker_runs
+        `)
+      )[0] ?? {}
+    : {};
+
+  const supplierFallbackTelemetry24h = productsRawExists && productsRawHasSnapshotTs
+    ? (
+        await runQuery(`
+          select
+            count(*) filter (
+              where snapshot_ts >= now() - interval '24 hours'
+                and (
+                  (coalesce(raw_payload->'telemetrySignals', '[]'::jsonb) ? 'fallback')
+                  or lower(coalesce(raw_payload->>'parseMode', '')) = 'fallback'
+                )
+            )::int as fallback_rows_24h,
+            count(*) filter (where snapshot_ts >= now() - interval '24 hours')::int as total_rows_24h
+          from products_raw
+        `)
+      )[0] ?? {}
+    : {};
+
   const listingsHasResponse = listingsExists ? await columnExists("listings", "response") : false;
   const listingPerformanceSummary =
     listingsExists && listingsHasResponse
@@ -1318,6 +1406,9 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const capUsed = toNum(dailyCapRow?.cap_used);
   const capRemaining = capLimit == null || capUsed == null ? null : Math.max(0, capLimit - capUsed);
   const publishRateLimit = await getPublishRateLimitState("ebay");
+  const autoPurchaseRateLimit = await getAutoPurchaseRateLimitState();
+  const rolloutCaps = getScaleRolloutCaps();
+  const alertThresholds = getScaleRolloutAlertThresholds();
   const inventoryRiskSchedule = await getInventoryRiskScheduleStatus();
   const upstreamScheduleSnapshot = await getUpstreamRecurringScheduleSnapshot().catch(() => []);
   const queueNamespaceDiagnostics = getQueueNamespaceDiagnostics();
@@ -1893,6 +1984,59 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     });
   }
 
+  const publishAttempts24hValue = listingThroughput.recentPublishAttempts24h;
+  const publishFailures24hValue = listingThroughput.recentPublishFailures24h;
+  const publishFailureRate24h = toPct(publishFailures24hValue, publishAttempts24hValue);
+
+  const stockBlockCount24h =
+    (purchaseSafetyBlockedStaleSupplierData ?? 0) +
+    (purchaseSafetyBlockedSupplierDrift ?? 0);
+  const stockBlockTotal24h =
+    stockBlockCount24h +
+    (purchaseSafetyCheckedPass ?? 0) +
+    (purchaseSafetyCheckedManualReview ?? 0) +
+    (purchaseSafetyBlockedEconomics ?? 0);
+  const stockBlockRate24h = toPct(stockBlockCount24h, stockBlockTotal24h);
+
+  const profitBlockedCount = toNum(priceGuardSummary.blocked_count);
+  const profitCandidateTotal = toNum(priceGuardSummary.total_candidates);
+  const profitBlockRate = toPct(profitBlockedCount, profitCandidateTotal);
+
+  const supplierFetchFailures24h = toNum(supplierFetchAndFallbackStats.supplier_fetch_failures_24h) ?? 0;
+  const supplierFetchFailuresPrev24h = toNum(supplierFetchAndFallbackStats.supplier_fetch_failures_prev_24h) ?? 0;
+  const listingPauseCount24h = toNum(
+    (
+      await runQuery(`
+        select count(*)::int as count
+        from audit_log
+        where event_type = 'LISTING_PAUSED_INVENTORY_RISK'
+          and event_ts >= now() - interval '24 hours'
+      `)
+    )[0]?.count
+  ) ?? 0;
+  const listingPausePrev24h = toNum(
+    (
+      await runQuery(`
+        select count(*)::int as count
+        from audit_log
+        where event_type = 'LISTING_PAUSED_INVENTORY_RISK'
+          and event_ts >= now() - interval '48 hours'
+          and event_ts < now() - interval '24 hours'
+      `)
+    )[0]?.count
+  ) ?? 0;
+
+  const supplierFallbackCount24h = toNum(supplierFallbackTelemetry24h.fallback_rows_24h) ?? 0;
+  const supplierFallbackTotal24h = toNum(supplierFallbackTelemetry24h.total_rows_24h) ?? 0;
+  const supplierFallbackRate24h = toPct(supplierFallbackCount24h, supplierFallbackTotal24h);
+  const repeatBuyersTotal = toNum(customerRepeatStats.repeat_buyers_total);
+  const repeatBuyersNew7d = toNum(customerRepeatStats.repeat_buyers_new_7d);
+  const repeatBuyersPrev7d = toNum(customerRepeatStats.repeat_buyers_prev_7d);
+  const repeatBuyerGrowth7d =
+    repeatBuyersNew7d != null && repeatBuyersPrev7d != null
+      ? repeatBuyersNew7d - repeatBuyersPrev7d
+      : null;
+
   const publishingSafetyAlerts: ControlPanelData["alerts"] = [];
   const operationalFreshnessAlerts: ControlPanelData["alerts"] = [];
   const futureOrdersAlerts: ControlPanelData["alerts"] = [];
@@ -1932,6 +2076,42 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       detail: `${publishFailures.length} listings are currently in PUBLISH_FAILED status.`,
     });
   }
+  if (
+    publishFailureRate24h != null &&
+    publishFailureRate24h >= alertThresholds.publishFailureRate.warnRatePct &&
+    (publishAttempts24hValue ?? 0) >= alertThresholds.publishFailureRate.minVolume
+  ) {
+    publishingSafetyAlerts.push({
+      id: "publish-failure-rate-rising",
+      tone: "error",
+      title: "Publish failure rate is rising",
+      detail: `24h failure rate is ${publishFailureRate24h}% (${publishFailures24hValue ?? 0}/${publishAttempts24hValue ?? 0}), threshold ${alertThresholds.publishFailureRate.warnRatePct}%.`,
+    });
+  }
+  if (
+    stockBlockRate24h != null &&
+    stockBlockRate24h >= alertThresholds.stockBlockRate.warnRatePct &&
+    stockBlockTotal24h >= alertThresholds.stockBlockRate.minVolume
+  ) {
+    publishingSafetyAlerts.push({
+      id: "stock-block-rate-rising",
+      tone: "warning",
+      title: "Stock block rate is rising",
+      detail: `24h stock/supplier blocks are ${stockBlockRate24h}% (${stockBlockCount24h}/${stockBlockTotal24h}), threshold ${alertThresholds.stockBlockRate.warnRatePct}%.`,
+    });
+  }
+  if (
+    profitBlockRate != null &&
+    profitBlockRate >= alertThresholds.profitBlockRate.warnRatePct &&
+    (profitCandidateTotal ?? 0) >= alertThresholds.profitBlockRate.minVolume
+  ) {
+    publishingSafetyAlerts.push({
+      id: "profit-block-rate-rising",
+      tone: "warning",
+      title: "Profit block rate is rising",
+      detail: `Current candidate profit block rate is ${profitBlockRate}% (${profitBlockedCount ?? 0}/${profitCandidateTotal ?? 0}), threshold ${alertThresholds.profitBlockRate.warnRatePct}%.`,
+    });
+  }
 
   if ((toNum(priceGuardSummary.stale_candidate_count) ?? 0) > 0) {
     publishingSafetyAlerts.push({
@@ -1948,6 +2128,47 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       tone: "error",
       title: "Stale marketplace data",
       detail: "No marketplace_prices rows for eBay in the last 24h.",
+    });
+  }
+  if (
+    supplierFetchFailures24h >= rolloutCaps.supplierFetchFailureSpikeThreshold24h &&
+    supplierFetchFailures24h > supplierFetchFailuresPrev24h
+  ) {
+    operationalFreshnessAlerts.push({
+      id: "supplier-fetch-failure-spike",
+      tone: "error",
+      title: "Supplier fetch failures spiking",
+      detail: `supplier_discover failures rose to ${supplierFetchFailures24h} (prev ${supplierFetchFailuresPrev24h}) in 24h.`,
+    });
+  }
+  if (
+    supplierFallbackRate24h != null &&
+    supplierFallbackRate24h >= rolloutCaps.upstreamFallbackBlockRateWarn * 100
+  ) {
+    operationalFreshnessAlerts.push({
+      id: "supplier-fallback-block-rate-high",
+      tone: "warning",
+      title: "Supplier fallback/block rate is high",
+      detail: `Fallback parsing reached ${supplierFallbackRate24h}% in 24h (${supplierFallbackCount24h}/${supplierFallbackTotal24h}).`,
+    });
+  }
+  if (
+    listingPauseCount24h >= rolloutCaps.listingPauseSpikeThreshold24h &&
+    listingPauseCount24h > listingPausePrev24h
+  ) {
+    publishingSafetyAlerts.push({
+      id: "listing-pause-spike",
+      tone: "warning",
+      title: "Listing pause spike detected",
+      detail: `Inventory-risk pauses rose to ${listingPauseCount24h} (prev ${listingPausePrev24h}) in 24h.`,
+    });
+  }
+  if (!autoPurchaseRateLimit.allowed) {
+    futureOrdersAlerts.push({
+      id: "auto-purchase-rate-limit",
+      tone: "warning",
+      title: "Auto-purchase rate limit active",
+      detail: `Auto-purchase blocked by ${autoPurchaseRateLimit.blockingWindow} window (${autoPurchaseRateLimit.counts.attempts1h}/${autoPurchaseRateLimit.limits.limit1h} hourly, ${autoPurchaseRateLimit.counts.attempts1d}/${autoPurchaseRateLimit.limits.limit1d} daily).`,
     });
   }
 
@@ -1975,6 +2196,30 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       tone: "warning",
       title: "Order sync is manually paused",
       detail: "Operator override is active: order-sync actions should remain paused.",
+    });
+  }
+  if (manualOverrideSnapshot.entries.PAUSE_LISTING_PREPARATION.enabled) {
+    operationalFreshnessAlerts.push({
+      id: "override-pause-listing-preparation",
+      tone: "warning",
+      title: "Listing preparation is manually paused",
+      detail: "Operator override is active: preview preparation actions are blocked.",
+    });
+  }
+  if (manualOverrideSnapshot.entries.PAUSE_AUTO_PURCHASE.enabled) {
+    futureOrdersAlerts.push({
+      id: "override-pause-auto-purchase",
+      tone: "warning",
+      title: "Auto-purchase is manually paused",
+      detail: "Operator override is active: supplier auto-purchase execution remains disabled.",
+    });
+  }
+  if (manualOverrideSnapshot.entries.PAUSE_SUPPLIER_CJ.enabled) {
+    futureOrdersAlerts.push({
+      id: "override-pause-supplier-cj",
+      tone: "warning",
+      title: "Supplier-specific flow is paused",
+      detail: "Operator override is active: CJ auto-purchase flow is paused.",
     });
   }
 
@@ -2362,6 +2607,64 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         blockedListings: listingsExists && profitableCandidatesExists,
         failureReasons: listingsExists && listingsHasLastPublishError,
       },
+    },
+    rolloutLimits: {
+      listingPreparePerRun: rolloutCaps.preparePerRun,
+      listingPromotePerRun: rolloutCaps.promotePerRun,
+      livePublishAttempts: {
+        limit1h: publishRateLimit.limits.limit1h,
+        limit1d: publishRateLimit.limits.limit1d,
+        used1h: publishRateLimit.counts.attempts1h,
+        used1d: publishRateLimit.counts.attempts1d,
+      },
+      autoPurchaseAttempts: {
+        limit1h: autoPurchaseRateLimit.limits.limit1h,
+        limit1d: autoPurchaseRateLimit.limits.limit1d,
+        used1h: autoPurchaseRateLimit.counts.attempts1h,
+        used1d: autoPurchaseRateLimit.counts.attempts1d,
+        allowed: autoPurchaseRateLimit.allowed,
+        blockingWindow: autoPurchaseRateLimit.blockingWindow,
+        retryHint: autoPurchaseRateLimit.retryHint,
+      },
+    },
+    scaleKpis: {
+      previewCount: listingThroughput.previews,
+      readyCount: listingThroughput.readyToPublish,
+      publishSuccessCount24h: listingThroughput.recentPublishSuccesses24h,
+      publishFailureCount24h: publishFailures24hValue,
+      activeListings,
+      stockBlockRatePct24h: stockBlockRate24h,
+      profitBlockRatePct24h: profitBlockRate,
+      supplierFallbackBlockCount24h: supplierFallbackCount24h,
+      customerRepeatBuyerCount: repeatBuyersTotal,
+      customerRepeatBuyerGrowth7d: repeatBuyerGrowth7d,
+      supplierFetchFailureCount24h: supplierFetchFailures24h,
+      listingPauseCount24h,
+      failureReasons: publishFailureReasonRows.map((row) => ({ reason: row.reason, count: row.count })),
+    },
+    operatorSummary: {
+      conversionQuality:
+        publishFailureRate24h == null
+          ? "Insufficient publish volume to score conversion quality."
+          : publishFailureRate24h <= 10
+            ? `Healthy publish conversion (${publishFailureRate24h}% failure rate in 24h).`
+            : `Watch publish conversion (${publishFailureRate24h}% failure rate in 24h).`,
+      economicQuality:
+        profitBlockRate == null
+          ? "Profit quality unavailable (candidate denominator missing)."
+          : profitBlockRate <= 25
+            ? `Economic quality is stable (${profitBlockRate}% profit-block rate).`
+            : `Economic quality degraded (${profitBlockRate}% profit-block rate).`,
+      supplierReliability:
+        supplierFetchFailures24h === 0
+          ? "Supplier reliability healthy in the last 24h."
+          : `Supplier reliability warning: ${supplierFetchFailures24h} fetch failures in 24h.`,
+      repeatCustomerGrowth:
+        repeatBuyerGrowth7d == null
+          ? "Repeat-customer growth unavailable."
+          : repeatBuyerGrowth7d >= 0
+            ? `Repeat-customer growth positive (+${repeatBuyerGrowth7d} vs prior 7d).`
+            : `Repeat-customer growth negative (${repeatBuyerGrowth7d} vs prior 7d).`,
     },
     listingThroughput,
     listingPerformance: {
