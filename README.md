@@ -97,3 +97,5 @@ When `DNS_FAILURE` or `NETWORK_UNREACHABLE` appears in restricted environments, 
 - Run `pnpm worker:jobs` when you need queued BullMQ jobs consumed (including `supplier-discover`).
 - Run `pnpm worker:engine:dev` for local engine/runtime boot path checks.
 - Run `pnpm worker:engine:prod` only when intentionally validating prod-linked engine/runtime boot behavior.
+
+Temporary PR workflow verification marker.
