@@ -4,7 +4,14 @@ import { Pool } from "pg";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-export const REQUIRED_TABLES = ["orders", "order_items", "order_events", "supplier_orders"] as const;
+export const REQUIRED_TABLES = [
+  "orders",
+  "order_items",
+  "order_events",
+  "supplier_orders",
+  "customers",
+  "customer_orders",
+] as const;
 
 export const REQUIRED_COLUMNS: Record<(typeof REQUIRED_TABLES)[number], readonly string[]> = {
   orders: [
@@ -44,6 +51,34 @@ export const REQUIRED_COLUMNS: Record<(typeof REQUIRED_TABLES)[number], readonly
     "tracking_synced_at",
     "tracking_sync_error",
     "tracking_sync_last_response",
+  ],
+  customers: [
+    "id",
+    "marketplace",
+    "customer_external_id",
+    "buyer_name",
+    "buyer_email_normalized",
+    "city",
+    "state",
+    "country",
+    "first_order_at",
+    "last_order_at",
+    "order_count",
+    "total_spent",
+    "currency",
+    "revenue_policy",
+  ],
+  customer_orders: [
+    "id",
+    "customer_id",
+    "order_id",
+    "marketplace",
+    "merge_source",
+    "identity_confidence",
+    "resolution_method",
+    "order_created_at",
+    "order_total",
+    "order_currency",
   ],
 };
 
@@ -104,12 +139,38 @@ const REQUIRED_INDEXES: IndexRequirement[] = [
     columns: ["tracking_status"],
     allowUniqueForLookup: true,
   },
+  {
+    key: "customers_marketplace_email_unique",
+    table: "customers",
+    columns: ["marketplace", "buyer_email_normalized"],
+    mustBeUnique: true,
+  },
+  {
+    key: "customers_marketplace_external_unique",
+    table: "customers",
+    columns: ["marketplace", "customer_external_id"],
+    mustBeUnique: true,
+  },
+  {
+    key: "customer_orders_order_unique",
+    table: "customer_orders",
+    columns: ["order_id"],
+    mustBeUnique: true,
+  },
+  {
+    key: "customer_orders_customer_idx",
+    table: "customer_orders",
+    columns: ["customer_id"],
+    allowUniqueForLookup: true,
+  },
 ];
 
 const REQUIRED_FOREIGN_KEYS = [
   { table: "order_items", column: "order_id", referencesTable: "orders" },
   { table: "order_events", column: "order_id", referencesTable: "orders" },
   { table: "supplier_orders", column: "order_id", referencesTable: "orders" },
+  { table: "customer_orders", column: "order_id", referencesTable: "orders" },
+  { table: "customer_orders", column: "customer_id", referencesTable: "customers" },
 ] as const;
 
 type IndexInfo = {

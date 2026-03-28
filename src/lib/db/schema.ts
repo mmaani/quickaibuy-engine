@@ -11,6 +11,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const productsRaw = pgTable("products_raw", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -499,6 +500,74 @@ export const orders = pgTable(
   })
 );
 
+export const customers = pgTable(
+  "customers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    marketplace: text("marketplace").notNull(),
+    customerExternalId: text("customer_external_id"),
+    buyerName: text("buyer_name"),
+    buyerEmailNormalized: text("buyer_email_normalized"),
+    city: text("city"),
+    state: text("state"),
+    country: text("country"),
+    firstOrderAt: timestamp("first_order_at").notNull(),
+    lastOrderAt: timestamp("last_order_at").notNull(),
+    orderCount: integer("order_count").notNull().default(0),
+    totalSpent: numeric("total_spent", { precision: 14, scale: 2 }).notNull().default("0"),
+    currency: text("currency"),
+    revenuePolicy: text("revenue_policy").notNull().default("ORDER_NATIVE_UNNORMALIZED"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    customersMarketplaceIdx: index("customers_marketplace_idx").on(t.marketplace),
+    customersCountryCityIdx: index("customers_country_city_idx").on(t.country, t.city),
+    customersEmailUnique: uniqueIndex("customers_marketplace_email_unique")
+      .on(t.marketplace, t.buyerEmailNormalized)
+      .where(sql`${t.buyerEmailNormalized} is not null`),
+    customersExternalUnique: uniqueIndex("customers_marketplace_external_unique")
+      .on(t.marketplace, t.customerExternalId)
+      .where(sql`${t.customerExternalId} is not null`),
+  })
+);
+
+export const customerOrders = pgTable(
+  "customer_orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    marketplace: text("marketplace").notNull(),
+    mergeSource: text("merge_source").notNull(),
+    identityConfidence: text("identity_confidence").notNull(),
+    resolutionMethod: text("resolution_method").notNull(),
+    buyerEmailNormalized: text("buyer_email_normalized"),
+    customerExternalId: text("customer_external_id"),
+    buyerNameSnapshot: text("buyer_name_snapshot"),
+    citySnapshot: text("city_snapshot"),
+    stateSnapshot: text("state_snapshot"),
+    countrySnapshot: text("country_snapshot"),
+    orderCreatedAt: timestamp("order_created_at").notNull(),
+    orderTotal: numeric("order_total", { precision: 12, scale: 2 }),
+    orderCurrency: text("order_currency"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    customerOrdersCustomerIdx: index("customer_orders_customer_idx").on(t.customerId),
+    customerOrdersOrderUnique: uniqueIndex("customer_orders_order_unique").on(t.orderId),
+    customerOrdersMarketplaceCountryIdx: index("customer_orders_marketplace_country_idx").on(
+      t.marketplace,
+      t.countrySnapshot
+    ),
+  })
+);
+
 export const orderItems = pgTable(
   "order_items",
   {
@@ -604,6 +673,10 @@ export const manualOverrides = pgTable(
 
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderInsert = typeof orders.$inferInsert;
+export type CustomerRow = typeof customers.$inferSelect;
+export type CustomerInsert = typeof customers.$inferInsert;
+export type CustomerOrderRow = typeof customerOrders.$inferSelect;
+export type CustomerOrderInsert = typeof customerOrders.$inferInsert;
 export type OrderItemRow = typeof orderItems.$inferSelect;
 export type OrderItemInsert = typeof orderItems.$inferInsert;
 export type OrderEventRow = typeof orderEvents.$inferSelect;

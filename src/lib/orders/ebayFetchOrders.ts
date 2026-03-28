@@ -69,6 +69,7 @@ export type NormalizedEbayOrderItem = {
 export type NormalizedEbayOrder = {
   marketplace: "ebay";
   marketplaceOrderId: string;
+  buyerUsername: string | null;
   buyerName: string | null;
   buyerCountry: string | null;
   shippingAddress: {
@@ -152,6 +153,7 @@ function normalizeOrder(order: EbayOrder): NormalizedEbayOrder | null {
     cleanString(shippingStep?.shipTo?.fullName) ??
     cleanString(order.buyer?.registrationAddress?.fullName) ??
     cleanString(order.buyer?.username);
+  const buyerUsername = cleanString(order.buyer?.username);
   const buyerCountry =
     cleanString(shippingStep?.shipTo?.contactAddress?.countryCode) ??
     cleanString(order.buyer?.registrationAddress?.countryCode);
@@ -178,6 +180,7 @@ function normalizeOrder(order: EbayOrder): NormalizedEbayOrder | null {
   return {
     marketplace: "ebay",
     marketplaceOrderId,
+    buyerUsername,
     buyerName,
     buyerCountry,
     shippingAddress,
