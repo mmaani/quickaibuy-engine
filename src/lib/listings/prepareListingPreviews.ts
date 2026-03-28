@@ -16,6 +16,8 @@ import { markListingReadyToPublish } from "./markListingReadyToPublish";
 import { normalizeEbayListingImages } from "./normalizeEbayImages";
 import type { ListingPreviewMarketplace } from "./types";
 import { validateListingPreview } from "./validate_listing_preview";
+import { deriveCanonicalStockFromRaw } from "@/lib/safety/supplierLinkage";
+import { canRewritePinnedSupplierLinkageForListingStatus } from "./linkagePolicy";
 
 type PrepareListingPreviewsInput = {
   limit?: number;
@@ -395,6 +397,26 @@ async function processCandidatePreviewRows(
       continue;
     }
 
+    if (existingListing.length && !canRewritePinnedSupplierLinkageForListingStatus(existingListing[0].status)) {
+      skipped++;
+      await writeAuditLog({
+        actorType: context.actorType,
+        actorId: context.actorId,
+        entityType: "LISTING",
+        entityId: existingListing[0].id,
+        eventType: "LISTING_PREVIEW_SKIPPED_LINKAGE_LOCKED",
+        details: {
+          candidateId: row.candidateId,
+          marketplaceKey: context.marketplace,
+          existingStatus: existingListing[0].status,
+          idempotencyKey,
+          reason: "pinned supplier linkage is immutable outside PREVIEW status",
+          source: context.source,
+        },
+      });
+      continue;
+    }
+
     if (existingPreview.length && !context.forceRefresh) {
       skipped++;
       await writeAuditLog({
@@ -488,6 +510,14 @@ async function processCandidatePreviewRows(
       });
       continue;
     }
+
+    const supplierStock = deriveCanonicalStockFromRaw({
+      availabilityStatus:
+        (row.supplierRawPayload && typeof row.supplierRawPayload === "object" && !Array.isArray(row.supplierRawPayload)
+          ? (row.supplierRawPayload as Record<string, unknown>).availabilityStatus
+          : null) ?? null,
+      rawPayload: row.supplierRawPayload,
+    });
 
     const preview = await buildListingPreview(context.marketplace, {
       candidateId: row.candidateId,
@@ -600,7 +630,7 @@ async function processCandidatePreviewRows(
     const responseJson = preview.response ?? null;
     let listingId: string;
 
-    if (existingListing.length && (context.forceRefresh || existingListing[0].status !== "PREVIEW")) {
+    if (existingListing.length) {
       await db
         .update(listings)
         .set({
@@ -611,6 +641,17 @@ async function processCandidatePreviewRows(
           response: responseJson,
           idempotencyKey,
           status: "PREVIEW",
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+          linkageSource: "candidate_snapshot",
+          linkageVerifiedAt: new Date(),
+          linkageDeterministic: true,
+          supplierLinkLocked: true,
+          supplierStockStatus: supplierStock.status,
+          supplierStockQty: supplierStock.qty == null ? null : Math.trunc(supplierStock.qty),
+          stockVerifiedAt: new Date(),
+          stockSource: supplierStock.source,
+          stockCheckRequired: true,
           updatedAt: new Date(),
         })
         .where(eq(listings.id, existingListing[0].id));
@@ -644,6 +685,17 @@ async function processCandidatePreviewRows(
           payload: payloadJson,
           response: responseJson,
           idempotencyKey,
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+          linkageSource: "candidate_snapshot",
+          linkageVerifiedAt: new Date(),
+          linkageDeterministic: true,
+          supplierLinkLocked: true,
+          supplierStockStatus: supplierStock.status,
+          supplierStockQty: supplierStock.qty == null ? null : Math.trunc(supplierStock.qty),
+          stockVerifiedAt: new Date(),
+          stockSource: supplierStock.source,
+          stockCheckRequired: true,
         })
         .returning({ id: listings.id });
 

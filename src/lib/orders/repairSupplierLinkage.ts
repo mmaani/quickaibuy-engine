@@ -98,6 +98,11 @@ export async function repairOrderItemSupplierLinkage(input: {
       listingId: listingId ?? target.listingId ?? null,
       supplierKey: resolvedSupplierKey,
       supplierProductId: resolvedSupplierProductId,
+      linkageSource: "verified_repair",
+      linkageVerifiedAt: new Date(),
+      linkageDeterministic: true,
+      supplierLinkLocked: true,
+      stockCheckRequired: true,
     })
     .where(eq(orderItems.id, orderItemId))
     .returning({
@@ -106,6 +111,10 @@ export async function repairOrderItemSupplierLinkage(input: {
       listingId: orderItems.listingId,
       supplierKey: orderItems.supplierKey,
       supplierProductId: orderItems.supplierProductId,
+      linkageSource: orderItems.linkageSource,
+      linkageVerifiedAt: orderItems.linkageVerifiedAt,
+      linkageDeterministic: orderItems.linkageDeterministic,
+      supplierLinkLocked: orderItems.supplierLinkLocked,
     });
 
   const row = updated[0];
@@ -121,6 +130,10 @@ export async function repairOrderItemSupplierLinkage(input: {
       supplierKey: resolvedSupplierKey,
       supplierProductId: resolvedSupplierProductId,
       supplierSourceUrl,
+      linkageSource: "verified_repair",
+      linkageDeterministic: true,
+      supplierLinkLocked: true,
+      requiresListingReapproval: true,
     },
   });
 
