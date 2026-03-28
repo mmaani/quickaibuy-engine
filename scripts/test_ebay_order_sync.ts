@@ -38,6 +38,7 @@ function buildOrder(input?: {
   return {
     marketplace: "ebay",
     marketplaceOrderId: MARKETPLACE_ORDER_ID,
+    buyerUsername: "sync-test-username",
     buyerName: input?.buyerName ?? "Sync Test Buyer",
     buyerCountry: "US",
     shippingAddress: {

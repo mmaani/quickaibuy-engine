@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { orderEvents, orderItems, orders } from "@/lib/db/schema";
 import { fetchEbayOrders, type NormalizedEbayOrder } from "./ebayFetchOrders";
+import { linkOrderToCanonicalCustomerTx } from "./customerIntelligence";
 
 export type ListingLinkage = {
   listingId: string | null;
@@ -87,6 +88,7 @@ function buildLegacyRawPayload(order: NormalizedEbayOrder): Record<string, unkno
     marketplace: order.marketplace,
     marketplaceOrderId: order.marketplaceOrderId,
     sourceStatus: order.sourceStatus,
+    buyerUsername: order.buyerUsername,
     buyerName: order.buyerName,
     buyerCountry: order.buyerCountry,
     buyerPhone: order.buyerPhone,
@@ -406,6 +408,20 @@ export async function upsertNormalizedEbayOrder(
         }))
       );
     }
+
+    await linkOrderToCanonicalCustomerTx(tx, {
+      orderId,
+      marketplace: "ebay",
+      customerExternalId: order.buyerUsername,
+      buyerName: order.buyerName,
+      buyerEmail: order.buyerEmail,
+      city: order.shippingAddress?.city ?? null,
+      state: order.shippingAddress?.stateOrProvince ?? null,
+      country: order.shippingAddress?.countryCode ?? order.buyerCountry ?? null,
+      orderCreatedAt: order.createdAt,
+      orderTotal: order.totalPrice == null ? null : String(order.totalPrice),
+      orderCurrency: newCurrency,
+    });
 
     if (createOrderSyncedEvent) {
       await tx.insert(orderEvents).values({
