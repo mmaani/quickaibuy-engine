@@ -12,21 +12,65 @@ jobs:
   create-neon-branch:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
+    env:
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID != '' && vars.NEON_PROJECT_ID || secrets.NEON_PROJECT_ID }}
     steps:
+      - name: Validate Neon configuration
+        shell: bash
+        run: |
+          if [ -z "${NEON_PROJECT_ID}" ]; then
+            echo "NEON_PROJECT_ID is not configured as a GitHub variable or secret" >&2
+            exit 1
+          fi
+
+      - name: Compute sanitized Neon branch name
+        id: neon_branch
+        shell: bash
+        run: |
+          raw="preview/pr-${{ github.event.number }}-${{ github.event.pull_request.head.ref }}"
+          sanitized="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed -E 's|[^a-z0-9-]+|-|g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+          if [ -z "$sanitized" ]; then
+            echo "Sanitized Neon branch name is empty" >&2
+            exit 1
+          fi
+          echo "name=$sanitized" >> "$GITHUB_OUTPUT"
+
       - name: Create Neon branch
         uses: neondatabase/create-branch-action@v6
         with:
-          project_id: ${{ vars.NEON_PROJECT_ID }}
-          branch_name: preview/pr-${{ github.event.number }}-${{ github.event.pull_request.head.ref }}
+          project_id: ${{ env.NEON_PROJECT_ID }}
+          branch_name: ${{ steps.neon_branch.outputs.name }}
           api_key: ${{ secrets.NEON_API_KEY }}
 
   delete-neon-branch:
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
+    env:
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID != '' && vars.NEON_PROJECT_ID || secrets.NEON_PROJECT_ID }}
     steps:
+      - name: Validate Neon configuration
+        shell: bash
+        run: |
+          if [ -z "${NEON_PROJECT_ID}" ]; then
+            echo "NEON_PROJECT_ID is not configured as a GitHub variable or secret" >&2
+            exit 1
+          fi
+
+      - name: Compute sanitized Neon branch name
+        id: neon_branch
+        shell: bash
+        run: |
+          raw="preview/pr-${{ github.event.number }}-${{ github.event.pull_request.head.ref }}"
+          sanitized="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed -E 's|[^a-z0-9-]+|-|g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+          if [ -z "$sanitized" ]; then
+            echo "Sanitized Neon branch name is empty" >&2
+            exit 1
+          fi
+          echo "name=$sanitized" >> "$GITHUB_OUTPUT"
+
       - name: Delete Neon branch
         uses: neondatabase/delete-branch-action@v3
         with:
-          project_id: ${{ vars.NEON_PROJECT_ID }}
-          branch: preview/pr-${{ github.event.number }}-${{ github.event.pull_request.head.ref }}
+          project_id: ${{ env.NEON_PROJECT_ID }}
+          branch: ${{ steps.neon_branch.outputs.name }}
           api_key: ${{ secrets.NEON_API_KEY }}
