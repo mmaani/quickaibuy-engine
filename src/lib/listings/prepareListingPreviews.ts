@@ -19,6 +19,7 @@ import { validateListingPreview } from "./validate_listing_preview";
 import { deriveCanonicalStockFromRaw } from "@/lib/safety/supplierLinkage";
 import { canRewritePinnedSupplierLinkageForListingStatus } from "./linkagePolicy";
 import { selectBestSupplierRowsBeforeListing } from "./supplierSelection";
+import { recordListingPrepareLearning } from "@/lib/learningHub/pipelineWriters";
 
 type PrepareListingPreviewsInput = {
   limit?: number;
@@ -861,12 +862,23 @@ export async function prepareListingPreviews(input?: PrepareListingPreviewsInput
     source: "listing-readiness",
   });
 
-  return {
+  const result = {
     ok: true,
     marketplace,
     ...processed,
     forceRefresh,
   };
+  await recordListingPrepareLearning({
+    marketplace,
+    scanned: result.scanned,
+    created: result.created,
+    updated: result.updated,
+    ready: result.ready,
+    reconciled: result.reconciled,
+    skipped: result.skipped,
+    failed: result.failed,
+  });
+  return result;
 }
 
 export async function prepareListingPreviewForCandidate(

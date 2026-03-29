@@ -18,6 +18,11 @@ import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
 import { promoteApprovedPreviewsToReady } from "@/lib/listings/promoteReadyBatch";
 import { getSupplierRefreshTelemetry } from "@/lib/suppliers/telemetry";
 import { runListingExecution } from "@/workers/listingExecute.worker";
+import { getLearningHubScorecard } from "@/lib/learningHub/scorecard";
+import {
+  recordOperationalSummaryLearning,
+  refreshLearningOperationalFeedback,
+} from "@/lib/learningHub/pipelineWriters";
 
 export type AutonomousOpsPhase = "full" | "diagnostics_refresh" | "prepare" | "publish";
 type ActorType = "ADMIN" | "WORKER" | "SYSTEM";
@@ -550,6 +555,7 @@ export async function buildOperationalSummary(runtime: RuntimeDiagnostics): Prom
 
 export async function computePauseMap(runtime: RuntimeDiagnostics, summary: AutonomousOpsSummary) {
   const pauses = new Map<StageKey, string>();
+  const learningHub = await getLearningHubScorecard();
   const publishFailureSpike = Number(summary.publish.failed24h ?? 0) >= Number(process.env.AUTONOMOUS_PUBLISH_FAILURE_SPIKE_THRESHOLD ?? 3);
   const staleSpike =
     Number(summary.marketplaceReliability.staleMarketplaceCandidates ?? 0) >=
@@ -581,6 +587,10 @@ export async function computePauseMap(runtime: RuntimeDiagnostics, summary: Auto
   if (staleSpike) pauses.set("guarded_publish_execution", "STALE_DATA_SPIKE");
   if (shippingUnknownSpike) pauses.set("guarded_publish_execution", "SHIPPING_UNKNOWN_SPIKE");
   if (stockUnknownSpike) pauses.set("guarded_publish_execution", "STOCK_UNKNOWN_SPIKE");
+  if (Number(learningHub?.openDrift.critical ?? 0) > 0) {
+    pauses.set("listing_prepare", "LEARNING_HUB_CRITICAL_DRIFT");
+    pauses.set("guarded_publish_execution", "LEARNING_HUB_CRITICAL_DRIFT");
+  }
 
   return pauses;
 }
@@ -1137,7 +1147,18 @@ export async function runAutonomousOperations(input?: {
 
   let finalSummary = initialSummary;
   try {
+    const learningRefresh = await refreshLearningOperationalFeedback();
     finalSummary = await buildOperationalSummary(runtime);
+    await recordOperationalSummaryLearning({
+      shippingBlocks: finalSummary.shippingBlocks,
+      manualPurchaseQueueCount: finalSummary.manualPurchaseQueueCount,
+      publishableRatio: finalSummary.candidateUniverse.publishableRatio,
+      manualReviewRatio: finalSummary.candidateUniverse.manualReviewRatio,
+      blockedByShippingRatio: finalSummary.candidateUniverse.blockedByShippingRatio,
+      blockedByProfitRatio: finalSummary.candidateUniverse.blockedByProfitRatio,
+      blockedByLinkageRatio: finalSummary.candidateUniverse.blockedByLinkageRatio,
+      supplierMix: finalSummary.candidateUniverse.supplierMix,
+    });
     stages.push({
       key: "health_summary",
       status: stageIncluded(phase, "health_summary") ? "completed" : "skipped",
@@ -1149,8 +1170,12 @@ export async function runAutonomousOperations(input?: {
         active: finalSummary.pipeline.active,
         shippingBlocks: finalSummary.shippingBlocks,
         manualPurchaseQueueCount: finalSummary.manualPurchaseQueueCount,
+        learningSupplierFeaturesUpdated: Number(learningRefresh.supplierFeaturesUpdated ?? 0),
       },
-      details: finalSummary,
+      details: {
+        ...finalSummary,
+        learningRefresh,
+      },
     });
   } catch (error) {
     stages.push({

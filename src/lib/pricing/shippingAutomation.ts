@@ -6,6 +6,7 @@ import { runProfitEngine } from "@/lib/profit/profitEngine";
 import { refreshSingleSupplierProduct } from "@/lib/products/refreshSingleSupplierProduct";
 import { compareSupplierIntelligence, computeSupplierIntelligenceSignal } from "@/lib/suppliers/intelligence";
 import { getSupplierRefreshSuccessRateMap } from "@/lib/suppliers/telemetry";
+import { recordShippingAutomationLearning } from "@/lib/learningHub/pipelineWriters";
 
 type ActorType = "ADMIN" | "SYSTEM" | "WORKER";
 
@@ -449,7 +450,7 @@ export async function automateShippingIntelligence(input?: {
 
   const stillBlockedRows = await findShippingBlockedCandidates(input?.limit ?? 100);
 
-  return {
+  const result = {
     ok: true,
     scanned: rows.length,
     persistedQuotes: persisted.length,
@@ -467,4 +468,6 @@ export async function automateShippingIntelligence(input?: {
     gapBreakdown: Array.from(gapCounts.entries()).map(([rootCause, count]) => ({ rootCause, count })),
     persisted,
   };
+  await recordShippingAutomationLearning(result);
+  return result;
 }

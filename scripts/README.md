@@ -95,6 +95,17 @@ These ambiguous scripts were renamed to explicit-risk names:
 - `scripts/run_shipping_orphan_resolution.ts`
   - shipping recovery now lives in shared automation helpers plus the autonomous backbone
 
+## Removed in favor of Learning Hub canonical writers
+
+- `scripts/backfill_shipping_intelligence.ts`
+  - replaced by canonical shipping evidence writes in pipeline stages plus Learning Hub feedback aggregation
+- `scripts/backfill_supplier_snapshot_quality.ts`
+  - replaced by canonical supplier evidence writes and parser quality features
+- `scripts/check_supplier_quality_metrics.ts`
+  - replaced by Learning Hub scorecards in the control plane
+- `scripts/check_match_quality.ts`
+  - replaced by Learning Hub match evidence + scorecard surfacing
+
 
 ## Phase 2 canonicalization (duplicate wrappers and versioned variants)
 

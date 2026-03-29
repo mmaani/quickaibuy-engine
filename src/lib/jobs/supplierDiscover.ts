@@ -17,6 +17,10 @@ import {
   getDefaultSupplierWaveBudgets,
   getSupplierWaveBudget,
 } from "@/lib/suppliers/intelligence";
+import {
+  getSupplierLearningAdjustments,
+  recordSupplierDiscoveryLearning,
+} from "@/lib/learningHub/pipelineWriters";
 
 export type SupplierDiscoverResult = {
   processedCandidates: number;
@@ -253,12 +257,35 @@ function shouldDeprioritizeSupplier(item: SupplierProduct): boolean {
   return computeSupplierIntelligenceForDiscover(item).shouldDeprioritize;
 }
 
-function getWaveSearchPlan(limitPerKeyword: number) {
+function getWaveSearchPlan(
+  limitPerKeyword: number,
+  learningAdjustments?: Map<
+    string,
+    {
+      supplierReliability: number;
+      shippingReliability: number;
+      stockReliability: number;
+      parserYield: number;
+      publishability: number;
+      failurePressure: number;
+    }
+  >
+) {
   return getDefaultSupplierWaveBudgets().map((budget) => ({
     source: budget.supplierKey,
     searchLimit: Math.max(
       budget.minimumSearchLimit,
-      Math.round(Math.max(1, limitPerKeyword) * budget.searchMultiplier)
+      Math.round(
+        Math.max(1, limitPerKeyword) *
+          budget.searchMultiplier *
+          Math.max(
+            0.5,
+            1 +
+              (((learningAdjustments?.get(budget.supplierKey)?.supplierReliability ?? 0.5) - 0.5) * 0.8) +
+              (((learningAdjustments?.get(budget.supplierKey)?.publishability ?? 0.5) - 0.5) * 0.4) -
+              ((learningAdjustments?.get(budget.supplierKey)?.failurePressure ?? 0) * 0.6)
+          )
+      )
     ),
   }));
 }
@@ -268,9 +295,10 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     1,
     Math.min(Number(process.env.SUPPLIER_DISCOVER_CANDIDATE_LIMIT ?? 20), 100)
   );
+  const supplierLearning = await getSupplierLearningAdjustments();
   const candidates = await getTrendCandidates(candidateLimit, { staleFirst: true });
   const focusedKeywords = buildFocusedSupplierDiscoverKeywords(candidates.map((row) => row.candidate));
-  const sourcePlan = getWaveSearchPlan(limitPerKeyword);
+  const sourcePlan = getWaveSearchPlan(limitPerKeyword, supplierLearning);
 
   let insertedCount = 0;
   let scannedProducts = 0;
@@ -320,6 +348,21 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
       const sourceKey = canonicalSupplierSource(item.platform);
       const waveBudget = getSupplierWaveBudget(sourceKey);
       const intelligence = computeSupplierIntelligenceForDiscover(item);
+      const learned = supplierLearning.get(sourceKey);
+      const learnedReliability =
+        learned == null
+          ? intelligence.reliabilityScore
+          : Math.max(
+              0,
+              Math.min(
+                1,
+                intelligence.reliabilityScore * 0.7 +
+                  learned.supplierReliability * 0.15 +
+                  learned.shippingReliability * 0.1 +
+                  learned.publishability * 0.1 -
+                  learned.failurePressure * 0.15
+              )
+            );
       const normalizedRow = supplierProductToRawInsert(item);
       const crawlStatus = String(item.raw?.crawlStatus ?? "").trim().toUpperCase();
       if (normalizedRow.supplierKey && normalizedRow.supplierProductId) {
@@ -366,7 +409,7 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
         Math.floor(Math.max(1, allProducts.length) * waveBudget.maximumPersistShare)
       );
       const passesWavePolicy =
-        intelligence.reliabilityScore >= waveBudget.minimumReliabilityScore &&
+        learnedReliability >= waveBudget.minimumReliabilityScore &&
         (!waveBudget.requireStrongStockEvidence || intelligence.stockEvidenceStrength >= 0.72) &&
         (!waveBudget.requireStrongShippingEvidence || intelligence.shippingEvidenceStrength >= 0.72) &&
         persistedForSource < persistedCapForSource;
@@ -445,7 +488,7 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     })
     .sort((a, b) => a.source.localeCompare(b.source));
 
-  return {
+  const result = {
     processedCandidates: keywords.length,
     insertedCount,
     scannedProducts,
@@ -455,4 +498,6 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     sourceBreakdown: finalizedSourceBreakdown,
     sourcePlan,
   };
+  await recordSupplierDiscoveryLearning(result);
+  return result;
 }

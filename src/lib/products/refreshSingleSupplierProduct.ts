@@ -12,6 +12,7 @@ import { searchAliExpressByKeyword } from "@/lib/products/suppliers/aliexpress";
 import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
 import { fetchCjDirectProduct } from "@/lib/products/suppliers/cjdropshipping";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
+import { recordSupplierRefreshLearning } from "@/lib/learningHub/pipelineWriters";
 
 type LatestSupplierSnapshot = Awaited<ReturnType<typeof getLatestProductRawBySupplierProduct>>;
 
@@ -498,7 +499,7 @@ export async function refreshSingleSupplierProduct(input: {
     },
   });
 
-  return {
+  const result = {
     refreshed: Boolean(refreshedSnapshotId),
     supplierKey,
     supplierProductId,
@@ -513,4 +514,6 @@ export async function refreshSingleSupplierProduct(input: {
     refreshMode: refreshed.refreshMode,
     exactMatchFound: refreshed.exactMatchFound,
   };
+  await recordSupplierRefreshLearning(result);
+  return result;
 }

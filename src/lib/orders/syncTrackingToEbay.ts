@@ -10,6 +10,7 @@ import { createOrderEvent } from "./orderEvents";
 import { ORDER_STATUS } from "./statuses";
 import { prepareTrackingSyncPayload } from "./trackingSync";
 import { transitionOrderStatus } from "./updateOrderStatus";
+import { recordTrackingSyncLearning } from "@/lib/learningHub/pipelineWriters";
 
 type EbayLineItem = {
   lineItemId?: string;
@@ -301,7 +302,7 @@ export async function syncTrackingToEbay(input: {
       },
     });
 
-    return {
+    const result = {
       ok: true,
       orderId: input.orderId,
       supplierOrderId: payload.supplierOrderId,
@@ -310,6 +311,8 @@ export async function syncTrackingToEbay(input: {
       synced: true,
       reason: null,
     };
+    await recordTrackingSyncLearning(result);
+    return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -350,7 +353,7 @@ export async function syncTrackingToEbay(input: {
       // Best-effort failure logging only; preserve original sync failure result.
     }
 
-    return {
+    const result = {
       ok: false,
       orderId: input.orderId,
       supplierOrderId: preparedSupplierOrderId,
@@ -359,6 +362,8 @@ export async function syncTrackingToEbay(input: {
       synced: false,
       reason: message,
     };
+    await recordTrackingSyncLearning(result);
+    return result;
   }
 }
 

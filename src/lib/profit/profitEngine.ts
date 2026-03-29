@@ -21,6 +21,7 @@ import { getPriceGuardThresholds } from "./priceGuardConfig";
 import { resolvePricingDestinationForMarketplace } from "@/lib/pricing/destinationResolver";
 import { resolveShippingCost } from "@/lib/pricing/shippingCalculator";
 import { evaluateProfitHardGate } from "./hardProfitGate";
+import { recordProfitLearning } from "@/lib/learningHub/pipelineWriters";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -921,7 +922,7 @@ export async function runProfitEngine(input?: {
     insertedOrUpdated++;
   }
 
-  return {
+  const result = {
     ok: true,
     scanned: rows.length,
     insertedOrUpdated,
@@ -931,4 +932,6 @@ export async function runProfitEngine(input?: {
     minMarginPct,
     minMatchConfidence,
   };
+  await recordProfitLearning(result);
+  return result;
 }

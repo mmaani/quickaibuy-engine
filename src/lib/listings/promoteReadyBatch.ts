@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
+import { recordPromotionLearning } from "@/lib/learningHub/pipelineWriters";
 
 export type PromoteReadyBatchResult = {
   ok: boolean;
@@ -55,11 +56,13 @@ export async function promoteApprovedPreviewsToReady(input?: {
     });
   }
 
-  return {
+  const summary = {
     ok: true,
     scanned: rows.rows?.length ?? 0,
     promoted: results.filter((row) => row.ok).length,
     blocked: results.filter((row) => !row.ok).length,
     results,
   };
+  await recordPromotionLearning(summary);
+  return summary;
 }

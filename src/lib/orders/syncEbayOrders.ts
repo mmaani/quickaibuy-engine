@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { orderEvents, orderItems, orders } from "@/lib/db/schema";
 import { fetchEbayOrders, type NormalizedEbayOrder } from "./ebayFetchOrders";
 import { linkOrderToCanonicalCustomerTx } from "./customerIntelligence";
+import { recordOrderSyncLearning } from "@/lib/learningHub/pipelineWriters";
 
 export type ListingLinkage = {
   listingId: string | null;
@@ -513,7 +514,7 @@ export async function syncEbayOrders(input?: {
     },
   });
 
-  return {
+  const result = {
     ok: failed === 0,
     fetched: fetched.fetchedCount,
     normalized: fetched.normalizedCount,
@@ -522,4 +523,6 @@ export async function syncEbayOrders(input?: {
     unchanged,
     failed,
   };
+  await recordOrderSyncLearning(result);
+  return result;
 }

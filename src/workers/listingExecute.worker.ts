@@ -18,6 +18,7 @@ import {
   LISTING_STATUSES,
   isPausedListingStatus,
 } from "@/lib/listings/statuses";
+import { recordPublishLearning } from "@/lib/learningHub/pipelineWriters";
 
 // Supplier snapshot older than 48h must be refreshed before publish.
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
@@ -699,9 +700,17 @@ export async function runListingExecution(opts?: {
     }
   }
 
-  return {
+  const result = {
     executed,
     skipped,
     failed,
   };
+  await recordPublishLearning({
+    executed,
+    skipped,
+    failed,
+    dryRun: dryRun || !livePublishEnabled,
+    marketplaceKey,
+  });
+  return result;
 }

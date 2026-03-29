@@ -106,14 +106,44 @@ export function ControlPlaneOverviewPanel({
               value={`${data.learningHub.openDrift.total} (${data.learningHub.openDrift.critical})`}
             />
             <Stat
-              label="Reliability features"
-              value={`${data.learningHub.features.supplierReliabilityFeatures + data.learningHub.features.shippingReliabilityFeatures + data.learningHub.features.stockReliabilityFeatures}`}
+              label="Supplier reliability"
+              value={formatPercent(data.learningHub.supplierReliability.average)}
             />
             <Stat
               label="Evals pending / graded"
               value={`${data.learningHub.evals.pending} / ${data.learningHub.evals.graded}`}
             />
           </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat
+              label="Shipping quality"
+              value={formatPercent(data.learningHub.shippingQuality.passRate)}
+            />
+            <Stat
+              label="Stock quality"
+              value={formatPercent(data.learningHub.stockQuality.passRate)}
+            />
+            <Stat
+              label="Top supplier"
+              value={data.learningHub.supplierReliability.topSupplier ?? "n/a"}
+            />
+            <Stat
+              label="Top parser"
+              value={data.learningHub.parserPerformance[0]?.parserVersion ?? "n/a"}
+            />
+          </div>
+          {data.learningHub.failureSignatures.length ? (
+            <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Top failure signatures</div>
+              <div className="mt-2 space-y-1 text-sm text-white/75">
+                {data.learningHub.failureSignatures.slice(0, compact ? 2 : 4).map((row) => (
+                  <div key={row.reason}>
+                    {row.reason}: {row.count}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
