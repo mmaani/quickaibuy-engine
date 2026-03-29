@@ -35,7 +35,7 @@ const metrics = [
   { value: "eBay-first (v1)", label: "current live marketplace scope" },
   { value: "Guarded Publish Path", label: "manual approval with safety gates" },
   { value: "Jordan-aware Profit Model", label: "conservative net-profit logic" },
-  { value: "Order Automation Foundation", label: "manual-assisted purchase/tracking flow" },
+  { value: "Autonomous Ops Backbone", label: "automated refresh, recovery, sync, and guarded execution" },
 ];
 
 const features = [
@@ -61,7 +61,7 @@ const features = [
   },
   {
     title: "Operator-First Admin Surfaces",
-    desc: "Purpose-built admin surfaces for review, listings, control, and safe operational decisions before broad automation.",
+    desc: "Live dashboard, control, review, listings, and order consoles for autonomous operations with explicit exception handling.",
   },
 ];
 
@@ -423,7 +423,7 @@ export default function Home() {
             <p className="mt-6 max-w-2xl text-pretty text-base leading-8 text-white/72 sm:text-lg">
               QuickAIBuy is an AI-powered product discovery and arbitrage intelligence
               engine built to help businesses identify commercially promising products,
-              validate publish safety, and execute through controlled workflows.
+              validate publish safety, and execute through autonomous-but-guarded workflows.
             </p>
 
             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -478,7 +478,7 @@ export default function Home() {
                   </div>
 
                   <div className="inline-flex w-fit rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-semibold text-emerald-100">
-                    Planned dashboard layer
+                    Live operator dashboard
                   </div>
                 </div>
 
@@ -596,8 +596,8 @@ export default function Home() {
                     </div>
 
                     <div className="mt-4 rounded-2xl border border-sky-300/15 bg-sky-300/8 p-4 text-sm leading-7 text-sky-50/90">
-                      This dashboard direction is designed to make opportunity review easier
-                      for customers now and more investable as a software product later.
+                      The live dashboard and admin surfaces already support autonomous refresh,
+                      guarded recovery, and exception-first operator review without weakening safety gates.
                     </div>
                   </div>
                 </div>
@@ -714,7 +714,7 @@ export default function Home() {
             </h2>
             <p className="mt-5 text-pretty text-base leading-8 text-white/68 sm:text-lg">
               QuickAIBuy is designed to be practically useful for daily operations now,
-              while also creating a stronger software foundation for future expansion.
+              while also creating a stronger software foundation for broader marketplace and supplier expansion.
             </p>
           </div>
 
@@ -956,7 +956,7 @@ export default function Home() {
 
           <div className="mt-5 flex flex-col gap-2 text-xs text-white/38 sm:flex-row sm:items-center sm:justify-between">
             <span>© 2026 QuickAIBuy. All rights reserved.</span>
-            <span>Built for future dashboard and listing workflows.</span>
+            <span>Live dashboard, control, review, listings, and order workflows.</span>
           </div>
         </footer>
       </div>
