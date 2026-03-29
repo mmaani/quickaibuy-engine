@@ -1,3 +1,5 @@
+import { loadRuntimeEnv } from "@/lib/runtimeEnv";
+
 type EbayShippingOption = {
   shippingCost?: {
     value?: string;
@@ -75,6 +77,7 @@ function buildEbayProductUrl(item: EbayItemSummary): string | null {
 }
 
 async function getEbayAccessToken(): Promise<string> {
+  loadRuntimeEnv();
   const clientId = process.env.EBAY_CLIENT_ID;
   const clientSecret = process.env.EBAY_CLIENT_SECRET;
 

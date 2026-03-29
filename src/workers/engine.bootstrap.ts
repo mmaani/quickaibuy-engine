@@ -1,9 +1,6 @@
-import dotenv from "dotenv";
+import { loadRuntimeEnv } from "@/lib/runtimeEnv";
 
-// Load local env files for terminal runs (Codespaces/dev)
-// On Vercel/hosted, process.env is already injected, so this is harmless.
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 async function main() {
   // IMPORTANT: dynamic import so dotenv runs BEFORE other modules read process.env

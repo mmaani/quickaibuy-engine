@@ -1,7 +1,6 @@
-import dotenv from "dotenv";
+import { loadRuntimeEnv } from "@/lib/runtimeEnv";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+loadRuntimeEnv();
 
 async function main() {
   console.log("env check:", {

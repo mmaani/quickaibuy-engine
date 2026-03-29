@@ -1,11 +1,9 @@
-import dotenv from "dotenv";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import type { PoolConfig } from "pg";
+import { loadRuntimeEnv } from "@/lib/runtimeEnv";
 
-const dotenvPath = process.env.DOTENV_CONFIG_PATH?.trim() || ".env.local";
-dotenv.config({ path: dotenvPath });
-dotenv.config();
+const dotenvPath = loadRuntimeEnv();
 
 const DATABASE_URL = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
 if (!DATABASE_URL) {

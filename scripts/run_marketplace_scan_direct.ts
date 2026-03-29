@@ -1,6 +1,6 @@
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+import { loadRuntimeEnv } from "@/lib/runtimeEnv";
+
+loadRuntimeEnv();
 
 async function main() {
   const { runTrendMarketplaceScanner } = await import("@/lib/marketplaces/trendMarketplaceScanner");

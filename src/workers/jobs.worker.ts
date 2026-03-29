@@ -1,3 +1,4 @@
+import { loadRuntimeEnv } from "@/lib/runtimeEnv";
 import { Worker, Queue } from "bullmq";
 import { bullConnection } from "../lib/bull";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "../lib/jobNames";
@@ -20,6 +21,8 @@ import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSche
 import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
 import { recoverMissedUpstreamFreshness } from "@/lib/jobs/freshnessRecovery";
 import { runListingPerformanceEngine } from "@/lib/listings/performanceEngine";
+
+loadRuntimeEnv();
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefix: BULL_PREFIX });
 console.log("[jobs.worker] booted and waiting for jobs");

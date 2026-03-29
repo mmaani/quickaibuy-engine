@@ -1,8 +1,6 @@
-import dotenv from "dotenv";
+import { loadRuntimeEnv } from "@/lib/runtimeEnv";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config({ path: ".env.vercel" });
-dotenv.config();
+loadRuntimeEnv();
 
 async function main() {
   const { searchAliExpressByKeyword } = await import("@/lib/products/suppliers/aliexpress");

@@ -2,6 +2,7 @@ import { getProductRawById, getProductsRawForMarketplaceScan } from "@/lib/db/pr
 import { insertMarketplacePriceSnapshot } from "@/lib/db/marketplacePrices";
 import { searchEbay, type MarketplaceCandidate } from "./ebay";
 import { searchAmazon } from "./amazon";
+import { getLoadedRuntimeEnvPath, loadRuntimeEnv } from "@/lib/runtimeEnv";
 import {
   buildSearchQueries,
   computePricePreferenceScore,
@@ -18,6 +19,46 @@ type ProductRawLite = {
   rawPayload: unknown;
   sourceUrl: string | null;
 };
+
+type MarketplaceScanRuntimeDiagnostics = {
+  hasEbayClientId: boolean;
+  hasEbayClientSecret: boolean;
+  dotenvSource: string;
+  dbTargetClassification: string | null;
+  dbTargetEnvSource: string | null;
+};
+
+let cachedRuntimeDiagnostics: Promise<MarketplaceScanRuntimeDiagnostics> | null = null;
+
+async function getMarketplaceScanRuntimeDiagnostics(): Promise<MarketplaceScanRuntimeDiagnostics> {
+  if (cachedRuntimeDiagnostics) return cachedRuntimeDiagnostics;
+
+  cachedRuntimeDiagnostics = (async () => {
+    const dotenvSource = loadRuntimeEnv();
+    let dbTargetClassification: string | null = null;
+    let dbTargetEnvSource: string | null = null;
+
+    try {
+      const mod = await import("../../../scripts/lib/dbTarget.mjs");
+      const context = mod.getDbTargetContext({ loadEnv: true });
+      dbTargetClassification = String(context.classification ?? "") || null;
+      dbTargetEnvSource = String(context.envSource ?? "") || null;
+    } catch {
+      dbTargetClassification = null;
+      dbTargetEnvSource = null;
+    }
+
+    return {
+      hasEbayClientId: Boolean(String(process.env.EBAY_CLIENT_ID ?? "").trim()),
+      hasEbayClientSecret: Boolean(String(process.env.EBAY_CLIENT_SECRET ?? "").trim()),
+      dotenvSource: getLoadedRuntimeEnvPath() || dotenvSource,
+      dbTargetClassification,
+      dbTargetEnvSource,
+    };
+  })();
+
+  return cachedRuntimeDiagnostics;
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -142,12 +183,15 @@ async function searchPlatformWithRetry(
       );
     } catch (error) {
       lastError = error;
+      const runtimeDiagnostics =
+        platform === "ebay" ? await getMarketplaceScanRuntimeDiagnostics() : null;
       console.log("[marketplace-scan] query-error", {
         platform,
         query,
         attempt: attempt + 1,
         maxRetries: maxRetries + 1,
         error: error instanceof Error ? error.message : String(error),
+        runtimeDiagnostics,
       });
 
       if (attempt >= maxRetries) break;
@@ -300,6 +344,7 @@ export async function runTrendMarketplaceScanner(input?: {
   productRawId?: string;
   platform?: "amazon" | "ebay" | "all";
 }) {
+  const runtimeDiagnostics = await getMarketplaceScanRuntimeDiagnostics();
   const limit = Number(input?.limit ?? 100);
   const platform = input?.platform ?? "ebay";
 
@@ -329,6 +374,7 @@ export async function runTrendMarketplaceScanner(input?: {
     actualProducts: resolvedProducts.length,
     platform,
     productRawId: input?.productRawId ?? null,
+    runtimeDiagnostics,
   });
 
   for (const product of resolvedProducts) {
