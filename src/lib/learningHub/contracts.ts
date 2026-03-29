@@ -48,6 +48,19 @@ const CONTRACTS: Record<EvidenceType, EvidenceContractRule> = {
   },
 };
 
+function getRequiredFields(evidence: LearningEvidenceRecord, contract: EvidenceContractRule): string[] {
+  if (evidence.entityType !== "PIPELINE_STAGE") return contract.requiredFields;
+
+  switch (evidence.evidenceType) {
+    case "shipping_quote":
+      return ["entityType", "entityId", "source"];
+    case "match":
+      return ["entityType", "entityId", "marketplaceKey", "source"];
+    default:
+      return contract.requiredFields;
+  }
+}
+
 export function evaluateEvidenceContracts(evidence: LearningEvidenceRecord): {
   status: ValidationStatus;
   blockedReasons: string[];
@@ -55,7 +68,7 @@ export function evaluateEvidenceContracts(evidence: LearningEvidenceRecord): {
   const contract = CONTRACTS[evidence.evidenceType];
   const blockedReasons = [...(evidence.blockedReasons ?? [])];
 
-  for (const field of contract.requiredFields) {
+  for (const field of getRequiredFields(evidence, contract)) {
     const value = (evidence as Record<string, unknown>)[field];
     if (value == null || (typeof value === "string" && value.trim().length === 0)) {
       blockedReasons.push(`MISSING_REQUIRED_FIELD:${field}`);

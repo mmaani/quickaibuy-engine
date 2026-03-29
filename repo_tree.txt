@@ -45,6 +45,41 @@
 │   ├── runtime-diagnostics.md
 │   ├── scripts-hygiene-audit-2026-03-13.md
 │   ├── supplier-account-payment-safety.md
+│   ├── system
+│   │   ├── README.md
+│   │   ├── architecture
+│   │   │   └── system-overview.md
+│   │   ├── automation
+│   │   │   └── autonomous-backbone.md
+│   │   ├── control-plane
+│   │   │   └── control-plane-model.md
+│   │   ├── data-quality
+│   │   │   ├── data-quality-model.md
+│   │   │   └── drift-and-anomaly.md
+│   │   ├── learning-hub
+│   │   │   ├── ai-evals-and-labeling.md
+│   │   │   └── learning-loop.md
+│   │   ├── listings
+│   │   │   ├── listing-lifecycle.md
+│   │   │   └── listing-quality.md
+│   │   ├── matching
+│   │   │   ├── match-quality.md
+│   │   │   └── product-matching.md
+│   │   ├── orders
+│   │   │   └── order-flow.md
+│   │   ├── profit-engine
+│   │   │   └── profit-hard-gate.md
+│   │   ├── runtime
+│   │   │   └── env-and-db-targeting.md
+│   │   ├── shipping
+│   │   │   ├── shipping-intelligence.md
+│   │   │   └── shipping-recovery-engine.md
+│   │   ├── supplier-intelligence
+│   │   │   ├── supplier-failure-patterns.md
+│   │   │   └── supplier-ranking.md
+│   │   └── troubleshooting
+│   │       ├── common-blockers.md
+│   │       └── recovery-playbooks.md
 │   ├── system-architecture.md
 │   └── system-command-center-update.md
 ├── drizzle
@@ -90,7 +125,8 @@
 │   ├── 20260327_add_supplier_shipping_quotes.sql
 │   ├── 20260328_customer_intelligence_foundation.sql
 │   ├── 20260328_supplier_linkage_stock_lockdown.sql
-│   └── 20260328b_orders_legacy_columns_nullable.sql
+│   ├── 20260328b_orders_legacy_columns_nullable.sql
+│   └── 20260329_learning_hub_data_quality_fabric.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -163,8 +199,6 @@
 │   ├── backfill_customer_intelligence.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
 │   ├── backfill_listing_previews_for_approved.ts
-│   ├── backfill_shipping_intelligence.ts
-│   ├── backfill_supplier_snapshot_quality.ts
 │   ├── bootstrap_drizzle_ledger.ts
 │   ├── build_railway_worker_env.ts
 │   ├── check-db-tables.mjs
@@ -189,7 +223,6 @@
 │   ├── check_marketplace_price_urls.mjs
 │   ├── check_marketplace_prices.mjs
 │   ├── check_match_duplicates.mjs
-│   ├── check_match_quality.ts
 │   ├── check_matches.mjs
 │   ├── check_matches_latest.mjs
 │   ├── check_migration_baseline.ts
@@ -217,7 +250,6 @@
 │   ├── check_schema_drift.ts
 │   ├── check_shipping_pricing_readiness.ts
 │   ├── check_stale_publish_in_progress_rows.mjs
-│   ├── check_supplier_quality_metrics.ts
 │   ├── check_supplier_queue.ts
 │   ├── check_tracking_sync_readiness.ts
 │   ├── check_tracking_sync_test_order.ts
@@ -329,6 +361,7 @@
 │   ├── run_enqueue_supplier_discover.sh
 │   ├── run_enqueue_trend_expand.sh
 │   ├── run_first_guarded_live_publish.ts
+│   ├── run_full_cycle.ts
 │   ├── run_listing_execution_direct.ts
 │   ├── run_listing_monitor_direct.ts
 │   ├── run_listing_prepare_direct.sh
@@ -348,6 +381,7 @@
 │   ├── run_revenue_enablement_verification.sh
 │   ├── run_shipping_orphan_resolution.ts
 │   ├── run_single_listing_publish.ts
+│   ├── run_supplier_wave_regeneration.ts
 │   ├── run_targeted_candidate_expansion.ts
 │   ├── run_test_product_matcher.sh
 │   ├── run_test_trend_expand.sh
@@ -382,6 +416,7 @@
 │   ├── test_supplier_discover.ts
 │   ├── test_supplier_linkage_closure.ts
 │   ├── test_trend_expand.mjs
+│   ├── tmp_learning_hub_probe.ts
 │   ├── update_repo_tree.mjs
 │   ├── validate_inventory_risk_scenarios.ts
 │   ├── validate_listing_schema_alignment.mjs
@@ -521,7 +556,8 @@
 │   │   ├── audit
 │   │   │   └── writeAuditLog.ts
 │   │   ├── autonomousOps
-│   │   │   └── backbone.ts
+│   │   │   ├── backbone.ts
+│   │   │   └── fullCycle.ts
 │   │   ├── bull.ts
 │   │   ├── bullConnection.ts
 │   │   ├── control
@@ -549,6 +585,7 @@
 │   │   │   ├── enqueueAutonomousOpsSchedules.ts
 │   │   │   ├── enqueueInventoryRiskScan.ts
 │   │   │   ├── enqueueMarketplacePriceScan.ts
+│   │   │   ├── enqueueOrderOpsSchedules.ts
 │   │   │   ├── enqueueProductMatch.ts
 │   │   │   ├── enqueueProfitEval.ts
 │   │   │   ├── enqueueSupplierDiscover.ts
@@ -564,6 +601,14 @@
 │   │   │   └── types.ts
 │   │   ├── leads
 │   │   │   └── notifications.ts
+│   │   ├── learningHub
+│   │   │   ├── contracts.ts
+│   │   │   ├── drift.ts
+│   │   │   ├── evals.ts
+│   │   │   ├── featureStore.ts
+│   │   │   ├── pipelineWriters.ts
+│   │   │   ├── scorecard.ts
+│   │   │   └── types.ts
 │   │   ├── listings
 │   │   │   ├── __tests__
 │   │   │   │   ├── optimizeListingTitle.test.ts
@@ -620,6 +665,8 @@
 │   │   │   └── productMatcher.ts
 │   │   ├── media
 │   │   │   └── storage.ts
+│   │   ├── operations
+│   │   │   └── runtimeFailure.ts
 │   │   ├── orders
 │   │   │   ├── autoPurchase.ts
 │   │   │   ├── autoPurchaseRateLimiter.ts
@@ -719,4 +766,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-103 directories, 617 files
+119 directories, 648 files

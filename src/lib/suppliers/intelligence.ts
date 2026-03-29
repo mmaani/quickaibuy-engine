@@ -58,10 +58,10 @@ export function getDefaultSupplierWaveBudgets(): SupplierWaveBudget[] {
   return [
     {
       supplierKey: "cjdropshipping",
-      searchMultiplier: 2.4,
-      minimumSearchLimit: 10,
-      minimumReliabilityScore: 0.58,
-      maximumPersistShare: 0.7,
+      searchMultiplier: 2.8,
+      minimumSearchLimit: 12,
+      minimumReliabilityScore: 0.55,
+      maximumPersistShare: 0.8,
       requireStrongStockEvidence: false,
       requireStrongShippingEvidence: false,
     },
@@ -85,10 +85,10 @@ export function getDefaultSupplierWaveBudgets(): SupplierWaveBudget[] {
     },
     {
       supplierKey: "aliexpress",
-      searchMultiplier: 0.35,
-      minimumSearchLimit: 3,
-      minimumReliabilityScore: 0.78,
-      maximumPersistShare: 0.15,
+      searchMultiplier: 0.2,
+      minimumSearchLimit: 2,
+      minimumReliabilityScore: 0.82,
+      maximumPersistShare: 0.08,
       requireStrongStockEvidence: true,
       requireStrongShippingEvidence: true,
     },
@@ -244,9 +244,9 @@ export function computeSupplierIntelligenceSignal(input: {
 
   const shouldDeprioritize =
     supplierKey === "aliexpress" &&
-    (stockEvidenceStrength < 0.55 || shippingEvidenceStrength < 0.65 || apiStabilityScore < 0.5);
+    (stockEvidenceStrength < 0.62 || shippingEvidenceStrength < 0.72 || apiStabilityScore < 0.58);
 
-  if (shouldDeprioritize) reliabilityScore *= 0.68;
+  if (shouldDeprioritize) reliabilityScore *= 0.55;
   return {
     supplierKey,
     basePriority: clamp01(basePriority),

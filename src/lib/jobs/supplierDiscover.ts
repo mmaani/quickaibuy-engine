@@ -1,6 +1,7 @@
 import { getTrendCandidates } from "@/lib/db/trendCandidates";
 import { insertProductsRaw } from "@/lib/db/productsRaw";
 import {
+  buildSupplierSearchKeywordVariants,
   buildFocusedSupplierDiscoverKeywords,
   evaluateProductPipelinePolicy,
 } from "@/lib/products/pipelinePolicy";
@@ -290,6 +291,49 @@ function getWaveSearchPlan(
   }));
 }
 
+function getSearchVariantsForSource(source: string, keyword: string): string[] {
+  const variants = buildSupplierSearchKeywordVariants(keyword);
+  if (source === "cjdropshipping" || source === "temu") {
+    return variants;
+  }
+  return variants.slice(0, 3);
+}
+
+async function fetchRowsForSource(source: string, keyword: string, searchLimit: number): Promise<SupplierProduct[]> {
+  const variants = getSearchVariantsForSource(source, keyword);
+  const deduped = new Map<string, SupplierProduct>();
+
+  for (const variant of variants) {
+    const rows =
+      source === "cjdropshipping"
+        ? await searchCjByKeyword(variant, searchLimit)
+        : source === "temu"
+          ? await searchTemuByKeyword(variant, searchLimit)
+          : source === "alibaba"
+            ? await searchAlibabaByKeyword(variant, searchLimit)
+            : await searchAliExpressByKeyword(variant, searchLimit);
+
+    for (const row of rows) {
+      const key = `${canonicalSupplierSource(row.platform)}:${String(row.supplierProductId ?? "").trim()}`;
+      if (!String(row.supplierProductId ?? "").trim() || deduped.has(key)) continue;
+      deduped.set(key, {
+        ...row,
+        keyword: variant,
+        raw: {
+          ...row.raw,
+          discoverKeyword: keyword,
+          discoverVariantKeyword: variant,
+        },
+      });
+    }
+
+    if (deduped.size >= searchLimit) break;
+    if ((source === "cjdropshipping" || source === "temu") && deduped.size > 0) break;
+  }
+
+  return Array.from(deduped.values()).slice(0, searchLimit);
+}
+
 export async function runSupplierDiscover(limitPerKeyword = 20): Promise<SupplierDiscoverResult> {
   const candidateLimit = Math.max(
     1,
@@ -311,14 +355,7 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     keywords.push(keyword);
     const fetchedBySource: SupplierProduct[] = [];
     for (const plan of sourcePlan) {
-      const rows =
-        plan.source === "cjdropshipping"
-          ? await searchCjByKeyword(keyword, plan.searchLimit)
-          : plan.source === "temu"
-            ? await searchTemuByKeyword(keyword, plan.searchLimit)
-            : plan.source === "alibaba"
-              ? await searchAlibabaByKeyword(keyword, plan.searchLimit)
-              : await searchAliExpressByKeyword(keyword, plan.searchLimit);
+      const rows = await fetchRowsForSource(plan.source, keyword, plan.searchLimit);
       fetchedBySource.push(...rows);
     }
 

@@ -251,6 +251,54 @@ export function buildFocusedSupplierDiscoverKeywords(trendKeywords: string[]): s
   return filtered;
 }
 
+const DISCOVERY_VARIANT_MAP: Record<PipelineNiche, string[]> = {
+  "ambient-lighting": ["night light", "bedside lamp", "desk lamp", "crystal lamp", "acrylic lamp"],
+  "desk-product": ["desk organizer", "pen holder", "desk gadget", "storage box"],
+  "car-accessory": ["car phone mount", "magnetic mount", "car mount"],
+  "portable-fan": ["portable fan", "desk fan", "mini fan"],
+  "gift-decor": ["home decor", "decor gift", "gift decor"],
+};
+
+const DISCOVERY_NOISE_WORDS = new Set([
+  "ambient",
+  "decorative",
+  "wireless",
+  "mini",
+  "portable",
+  "decor",
+  "gadget",
+]);
+
+export function buildSupplierSearchKeywordVariants(keyword: string): string[] {
+  const normalized = normalizeText(keyword);
+  if (!normalized) return [];
+
+  const variants: string[] = [String(keyword ?? "").trim()];
+  const niche = inferNiche(normalized);
+  if (niche) {
+    variants.push(...DISCOVERY_VARIANT_MAP[niche]);
+  }
+
+  const compactTokens = normalized
+    .split(" ")
+    .filter((token) => token.length >= 3 && !DISCOVERY_NOISE_WORDS.has(token));
+
+  if (compactTokens.length >= 2) {
+    variants.push(compactTokens.slice(0, 2).join(" "));
+  }
+  if (compactTokens.length >= 3) {
+    variants.push(compactTokens.slice(0, 3).join(" "));
+  }
+
+  return Array.from(
+    new Set(
+      variants
+        .map((value) => value.trim())
+        .filter((value) => value.length >= 3)
+    )
+  ).slice(0, 5);
+}
+
 export function evaluateProductPipelinePolicy(
   input: ProductPipelinePolicyInput
 ): ProductPipelinePolicyResult {

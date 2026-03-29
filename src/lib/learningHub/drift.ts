@@ -9,12 +9,12 @@ type DriftInput = {
   baselineValue: number;
   observedValue: number;
   sampleSize: number;
+  worseWhen?: "higher" | "lower";
 };
 
 function classifySeverity(deltaRatio: number): DriftSeverity {
-  const abs = Math.abs(deltaRatio);
-  if (abs >= 0.35) return "critical";
-  if (abs >= 0.2) return "warning";
+  if (deltaRatio >= 0.35) return "critical";
+  if (deltaRatio >= 0.2) return "warning";
   return "info";
 }
 
@@ -54,7 +54,9 @@ export async function recordDriftEvent(input: DriftInput) {
   const observed = input.observedValue;
   const delta = observed - baseline;
   const denominator = Math.max(Math.abs(baseline), 0.0001);
-  const deltaRatio = delta / denominator;
+  const direction = input.worseWhen ?? "higher";
+  const worseningDelta = direction === "lower" ? baseline - observed : observed - baseline;
+  const deltaRatio = worseningDelta / denominator;
   const severity = classifySeverity(deltaRatio);
   const reasonCode = reasonCodeFor(input.category, severity);
   const actionHint =
@@ -62,7 +64,17 @@ export async function recordDriftEvent(input: DriftInput) {
       ? "Pause candidate progression and prioritize evidence refresh for this segment."
       : severity === "warning"
         ? "Deprioritize weak suppliers and increase manual review focus."
-        : "Track trend and continue monitoring.";
+        : "Metric recovered within tolerance; keep monitoring.";
+  const status = severity === "info" ? "RESOLVED" : "OPEN";
+
+  await db.execute(sql`
+    UPDATE learning_drift_events
+    SET status = 'RESOLVED'
+    WHERE metric_key = ${input.metricKey}
+      AND segment_key = ${segmentKey}
+      AND category = ${input.category}
+      AND status = 'OPEN'
+  `);
 
   await db.execute(sql`
     INSERT INTO learning_drift_events (
@@ -75,6 +87,7 @@ export async function recordDriftEvent(input: DriftInput) {
       delta_value,
       reason_code,
       action_hint,
+      status,
       diagnostics,
       observed_at
     ) VALUES (
@@ -87,6 +100,7 @@ export async function recordDriftEvent(input: DriftInput) {
       ${delta},
       ${reasonCode},
       ${actionHint},
+      ${status},
       ${JSON.stringify({ deltaRatio, sampleSize: input.sampleSize })}::jsonb,
       now()
     )

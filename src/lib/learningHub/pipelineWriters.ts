@@ -132,6 +132,18 @@ async function writeMetricWithDrift(input: {
   const baseline = toNullableNumber(baselineResult.rows?.[0]?.metricValue);
   if (baseline == null) return null;
 
+  const worseWhen: "higher" | "lower" =
+    input.metricKey === "shipping_known_ratio" ||
+    input.metricKey === "stock_known_ratio" ||
+    input.metricKey === "evidence_pass_ratio" ||
+    input.metricKey === "shipping_quality_ratio" ||
+    input.metricKey === "stock_quality_ratio" ||
+    input.metricKey === "publish_success_ratio" ||
+    input.metricKey === "publishable_ratio" ||
+    input.metricKey === "supplier_discovery_yield"
+      ? "lower"
+      : "higher";
+
   return recordDriftEvent({
     metricKey: input.metricKey,
     segmentKey,
@@ -139,6 +151,7 @@ async function writeMetricWithDrift(input: {
     baselineValue: baseline,
     observedValue: input.metricValue,
     sampleSize: input.sampleSize ?? 0,
+    worseWhen,
   });
 }
 

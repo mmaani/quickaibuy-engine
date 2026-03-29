@@ -492,7 +492,20 @@ export async function buildOperationalSummary(runtime: RuntimeDiagnostics): Prom
       `),
       db.execute<{ failed24h: number; activeListings: number }>(sql`
         SELECT
-          count(*) FILTER (WHERE status = 'PUBLISH_FAILED' AND updated_at >= NOW() - INTERVAL '24 hours')::int AS "failed24h",
+          count(*) FILTER (
+            WHERE status = 'PUBLISH_FAILED'
+              AND updated_at >= NOW() - INTERVAL '24 hours'
+              AND COALESCE(response ->> 'recoveryState', '') NOT IN (
+                'BLOCKED_ORPHANED_PREVIEW',
+                'BLOCKED_ORPHANED_CANDIDATE',
+                'BLOCKED_STALE_PUBLISH_IN_PROGRESS',
+                'BLOCKED_BROKEN_LINEAGE',
+                'BLOCKED_ORPHANED_ACTIVE'
+              )
+              AND COALESCE(last_publish_error, '') NOT ILIKE 'Detached PREVIEW row removed from active review path by autonomous integrity healing.%'
+              AND COALESCE(last_publish_error, '') NOT ILIKE 'detached preview: candidate missing%'
+              AND COALESCE(last_publish_error, '') NOT ILIKE 'Listing blocked: candidate/listing supplier lineage mismatch%'
+          )::int AS "failed24h",
           count(*) FILTER (WHERE status = 'ACTIVE')::int AS "activeListings"
         FROM listings
         WHERE lower(marketplace_key) = 'ebay'
