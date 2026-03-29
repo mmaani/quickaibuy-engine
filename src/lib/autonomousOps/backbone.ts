@@ -73,6 +73,26 @@ export type AutonomousOpsSummary = {
     rateLimitEvents: number;
     exactMatchMisses: number;
   }>;
+  candidateUniverse: {
+    supplierMix: Array<{
+      supplierKey: string;
+      totalCandidates: number;
+      shippingBlocked: number;
+      stockBlocked: number;
+      staleBlocked: number;
+      publishable: number;
+      manualReview: number;
+      shareOfPool: number;
+    }>;
+    shippingKnownRatio: number;
+    stockKnownRatio: number;
+    staleRatio: number;
+    publishableRatio: number;
+    manualReviewRatio: number;
+    blockedByShippingRatio: number;
+    blockedByProfitRatio: number;
+    blockedByLinkageRatio: number;
+  };
   marketplaceReliability: {
     staleMarketplaceCandidates: number;
     freshMarketplaceRows24h: number;
@@ -224,6 +244,131 @@ async function getBlockedReasonDistribution(limit = 12) {
   return result.rows ?? [];
 }
 
+async function getCandidateUniverseScorecard() {
+  const bySupplierResult = await db.execute<{
+    supplierKey: string;
+    totalCandidates: number;
+    shippingBlocked: number;
+    stockBlocked: number;
+    staleBlocked: number;
+    publishable: number;
+    manualReview: number;
+  }>(sql`
+    SELECT
+      lower(pc.supplier_key) AS "supplierKey",
+      count(*)::int AS "totalCandidates",
+      count(*) FILTER (
+        WHERE coalesce(pc.listing_block_reason, '') LIKE 'shipping intelligence unresolved:%'
+           OR coalesce(pc.listing_block_reason, '') = 'MISSING_SHIPPING_INTELLIGENCE'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SHIPPING_SIGNAL_%'
+      )::int AS "shippingBlocked",
+      count(*) FILTER (
+        WHERE upper(coalesce(pc.listing_block_reason, '')) LIKE '%STOCK%'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%AVAILABILITY NOT CONFIRMED%'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER_AVAILABILITY%'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER_LOW_STOCK%'
+      )::int AS "stockBlocked",
+      count(*) FILTER (
+        WHERE upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_MARKETPLACE%'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_SUPPLIER%'
+      )::int AS "staleBlocked",
+      count(*) FILTER (
+        WHERE pc.decision_status = 'APPROVED'
+          AND coalesce(pc.listing_eligible, false) = true
+      )::int AS publishable,
+      count(*) FILTER (WHERE pc.decision_status = 'MANUAL_REVIEW')::int AS "manualReview"
+    FROM profitable_candidates pc
+    WHERE lower(pc.marketplace_key) = 'ebay'
+    GROUP BY 1
+    ORDER BY "totalCandidates" DESC, "supplierKey" ASC
+  `);
+
+  const totalsResult = await db.execute<{
+    totalCandidates: number;
+    shippingKnown: number;
+    stockKnown: number;
+    staleBlocked: number;
+    publishable: number;
+    manualReview: number;
+    blockedByShipping: number;
+    blockedByProfit: number;
+    blockedByLinkage: number;
+  }>(sql`
+    SELECT
+      count(*)::int AS "totalCandidates",
+      count(*) FILTER (
+        WHERE coalesce(pc.listing_block_reason, '') NOT LIKE 'shipping intelligence unresolved:%'
+          AND coalesce(pc.listing_block_reason, '') <> 'MISSING_SHIPPING_INTELLIGENCE'
+          AND upper(coalesce(pc.listing_block_reason, '')) NOT LIKE '%SHIPPING_SIGNAL_%'
+      )::int AS "shippingKnown",
+      count(*) FILTER (
+        WHERE upper(coalesce(pc.listing_block_reason, '')) NOT LIKE '%STOCK%'
+          AND upper(coalesce(pc.listing_block_reason, '')) NOT LIKE '%AVAILABILITY NOT CONFIRMED%'
+          AND upper(coalesce(pc.listing_block_reason, '')) NOT LIKE '%SUPPLIER_AVAILABILITY%'
+          AND upper(coalesce(pc.listing_block_reason, '')) NOT LIKE '%SUPPLIER_LOW_STOCK%'
+      )::int AS "stockKnown",
+      count(*) FILTER (
+        WHERE upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_MARKETPLACE%'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_SUPPLIER%'
+      )::int AS "staleBlocked",
+      count(*) FILTER (
+        WHERE pc.decision_status = 'APPROVED'
+          AND coalesce(pc.listing_eligible, false) = true
+      )::int AS publishable,
+      count(*) FILTER (WHERE pc.decision_status = 'MANUAL_REVIEW')::int AS "manualReview",
+      count(*) FILTER (
+        WHERE coalesce(pc.listing_block_reason, '') LIKE 'shipping intelligence unresolved:%'
+           OR coalesce(pc.listing_block_reason, '') = 'MISSING_SHIPPING_INTELLIGENCE'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SHIPPING_SIGNAL_%'
+      )::int AS "blockedByShipping",
+      count(*) FILTER (
+        WHERE upper(coalesce(pc.listing_block_reason, '')) LIKE '%PROFIT%'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MARGIN%'
+           OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%ROI%'
+      )::int AS "blockedByProfit",
+      count(*) FILTER (
+        WHERE upper(coalesce(pc.listing_block_reason, '')) LIKE '%LINKAGE%'
+      )::int AS "blockedByLinkage"
+    FROM profitable_candidates pc
+    WHERE lower(pc.marketplace_key) = 'ebay'
+  `);
+
+  const totals = totalsResult.rows?.[0] ?? {
+    totalCandidates: 0,
+    shippingKnown: 0,
+    stockKnown: 0,
+    staleBlocked: 0,
+    publishable: 0,
+    manualReview: 0,
+    blockedByShipping: 0,
+    blockedByProfit: 0,
+    blockedByLinkage: 0,
+  };
+  const totalCandidates = Math.max(0, Number(totals.totalCandidates ?? 0));
+  const ratio = (value: number) => (totalCandidates > 0 ? value / totalCandidates : 0);
+
+  return {
+    supplierMix: (bySupplierResult.rows ?? []).map((row) => ({
+      supplierKey: row.supplierKey,
+      totalCandidates: Number(row.totalCandidates ?? 0),
+      shippingBlocked: Number(row.shippingBlocked ?? 0),
+      stockBlocked: Number(row.stockBlocked ?? 0),
+      staleBlocked: Number(row.staleBlocked ?? 0),
+      publishable: Number(row.publishable ?? 0),
+      manualReview: Number(row.manualReview ?? 0),
+      shareOfPool: ratio(Number(row.totalCandidates ?? 0)),
+    })),
+    shippingKnownRatio: ratio(Number(totals.shippingKnown ?? 0)),
+    stockKnownRatio: ratio(Number(totals.stockKnown ?? 0)),
+    staleRatio: ratio(Number(totals.staleBlocked ?? 0)),
+    publishableRatio: ratio(Number(totals.publishable ?? 0)),
+    manualReviewRatio: ratio(Number(totals.manualReview ?? 0)),
+    blockedByShippingRatio: ratio(Number(totals.blockedByShipping ?? 0)),
+    blockedByProfitRatio: ratio(Number(totals.blockedByProfit ?? 0)),
+    blockedByLinkageRatio: ratio(Number(totals.blockedByLinkage ?? 0)),
+  };
+}
+
 async function getStaleSupplierTargets(limit = 20) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
   const targets = await getMatchedSupplierRefreshTargets({ limit: safeLimit });
@@ -290,7 +435,7 @@ async function getStaleMarketplaceCandidates(limit = 20) {
 }
 
 export async function buildOperationalSummary(runtime: RuntimeDiagnostics): Promise<AutonomousOpsSummary> {
-  const [pipeline, blockReasons, integrity, shippingBlocked, supplierReliability, supplierRefreshTelemetry, marketplaceReliability, publishStats, manualQueue, repeatGrowth] =
+  const [pipeline, blockReasons, integrity, shippingBlocked, supplierReliability, supplierRefreshTelemetry, candidateUniverse, marketplaceReliability, publishStats, manualQueue, repeatGrowth] =
     await Promise.all([
       getPipelineCounts(),
       getBlockedReasonDistribution(),
@@ -314,6 +459,7 @@ export async function buildOperationalSummary(runtime: RuntimeDiagnostics): Prom
         ORDER BY candidates DESC, "supplierKey" ASC
       `),
       getSupplierRefreshTelemetry(),
+      getCandidateUniverseScorecard(),
       db.execute<{ staleMarketplaceCandidates: number; freshMarketplaceRows24h: number; staleMarketplaceRows24h: number }>(sql`
         SELECT
           (
@@ -381,6 +527,7 @@ export async function buildOperationalSummary(runtime: RuntimeDiagnostics): Prom
         exactMatchMisses: telemetry?.exactMatchMisses ?? 0,
       };
     }),
+    candidateUniverse,
     marketplaceReliability:
       marketplaceReliability.rows?.[0] ?? {
         staleMarketplaceCandidates: 0,
@@ -616,6 +763,17 @@ export async function runAutonomousOperations(input?: {
       integrity: integrityBefore,
       shippingBlocks: 0,
       supplierReliability: [],
+      candidateUniverse: {
+        supplierMix: [],
+        shippingKnownRatio: 0,
+        stockKnownRatio: 0,
+        staleRatio: 0,
+        publishableRatio: 0,
+        manualReviewRatio: 0,
+        blockedByShippingRatio: 0,
+        blockedByProfitRatio: 0,
+        blockedByLinkageRatio: 0,
+      },
       marketplaceReliability: {
         staleMarketplaceCandidates: 0,
         freshMarketplaceRows24h: 0,

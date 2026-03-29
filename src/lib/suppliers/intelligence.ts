@@ -11,6 +11,16 @@ export type SupplierIntelligenceSignal = {
   shouldDeprioritize: boolean;
 };
 
+export type SupplierWaveBudget = {
+  supplierKey: string;
+  searchMultiplier: number;
+  minimumSearchLimit: number;
+  minimumReliabilityScore: number;
+  maximumPersistShare: number;
+  requireStrongStockEvidence: boolean;
+  requireStrongShippingEvidence: boolean;
+};
+
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
@@ -42,6 +52,62 @@ export function supplierBasePriorityScore(supplierKey: string): number {
   if (normalized === "alibaba") return 0.7;
   if (normalized === "aliexpress") return 0.38;
   return 0.5;
+}
+
+export function getDefaultSupplierWaveBudgets(): SupplierWaveBudget[] {
+  return [
+    {
+      supplierKey: "cjdropshipping",
+      searchMultiplier: 2.4,
+      minimumSearchLimit: 10,
+      minimumReliabilityScore: 0.58,
+      maximumPersistShare: 0.7,
+      requireStrongStockEvidence: false,
+      requireStrongShippingEvidence: false,
+    },
+    {
+      supplierKey: "temu",
+      searchMultiplier: 2,
+      minimumSearchLimit: 8,
+      minimumReliabilityScore: 0.6,
+      maximumPersistShare: 0.55,
+      requireStrongStockEvidence: false,
+      requireStrongShippingEvidence: false,
+    },
+    {
+      supplierKey: "alibaba",
+      searchMultiplier: 1.2,
+      minimumSearchLimit: 6,
+      minimumReliabilityScore: 0.62,
+      maximumPersistShare: 0.4,
+      requireStrongStockEvidence: false,
+      requireStrongShippingEvidence: true,
+    },
+    {
+      supplierKey: "aliexpress",
+      searchMultiplier: 0.35,
+      minimumSearchLimit: 3,
+      minimumReliabilityScore: 0.78,
+      maximumPersistShare: 0.15,
+      requireStrongStockEvidence: true,
+      requireStrongShippingEvidence: true,
+    },
+  ];
+}
+
+export function getSupplierWaveBudget(supplierKey: string): SupplierWaveBudget {
+  const normalized = canonicalSupplierKey(supplierKey);
+  return (
+    getDefaultSupplierWaveBudgets().find((budget) => budget.supplierKey === normalized) ?? {
+      supplierKey: normalized,
+      searchMultiplier: 1,
+      minimumSearchLimit: 4,
+      minimumReliabilityScore: 0.62,
+      maximumPersistShare: 0.25,
+      requireStrongStockEvidence: false,
+      requireStrongShippingEvidence: false,
+    }
+  );
 }
 
 export function computeStockEvidenceStrength(input: {

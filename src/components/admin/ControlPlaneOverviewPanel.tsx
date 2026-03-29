@@ -61,6 +61,9 @@ export function ControlPlaneOverviewPanel({
   const topSuppliers = [...data.summary.supplierReliability]
     .sort((left, right) => right.candidates - left.candidates)
     .slice(0, compact ? 2 : 4);
+  const candidateMix = [...data.summary.candidateUniverse.supplierMix]
+    .sort((left, right) => right.totalCandidates - left.totalCandidates)
+    .slice(0, compact ? 2 : 4);
 
   return (
     <section className="glass-panel rounded-3xl border border-white/10 p-4 sm:p-5">
@@ -195,6 +198,46 @@ export function ControlPlaneOverviewPanel({
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      ) : null}
+
+      {!compact ? (
+        <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Candidate universe scorecard</div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Stat label="Shipping known" value={formatPercent(data.summary.candidateUniverse.shippingKnownRatio)} />
+              <Stat label="Stock known" value={formatPercent(data.summary.candidateUniverse.stockKnownRatio)} />
+              <Stat label="Publishable" value={formatPercent(data.summary.candidateUniverse.publishableRatio)} />
+              <Stat label="Manual review" value={formatPercent(data.summary.candidateUniverse.manualReviewRatio)} />
+              <Stat label="Stale blocked" value={formatPercent(data.summary.candidateUniverse.staleRatio)} />
+              <Stat label="Blocked by shipping" value={formatPercent(data.summary.candidateUniverse.blockedByShippingRatio)} />
+              <Stat label="Blocked by profit" value={formatPercent(data.summary.candidateUniverse.blockedByProfitRatio)} />
+              <Stat label="Blocked by linkage" value={formatPercent(data.summary.candidateUniverse.blockedByLinkageRatio)} />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Supplier mix</div>
+            <div className="space-y-3">
+              {candidateMix.map((supplier) => (
+                <div key={supplier.supplierKey} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-white">{supplier.supplierKey}</div>
+                    <div className="text-xs text-white/65">{formatPercent(supplier.shareOfPool)} of pool</div>
+                  </div>
+                  <div className="mt-2 grid gap-2 text-xs text-white/65 sm:grid-cols-3">
+                    <div>candidates {supplier.totalCandidates}</div>
+                    <div>publishable {supplier.publishable}</div>
+                    <div>manual review {supplier.manualReview}</div>
+                    <div>shipping blocked {supplier.shippingBlocked}</div>
+                    <div>stock blocked {supplier.stockBlocked}</div>
+                    <div>stale blocked {supplier.staleBlocked}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}

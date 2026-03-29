@@ -14,6 +14,8 @@ import {
   canonicalSupplierKey,
   compareSupplierIntelligence,
   computeSupplierIntelligenceForDiscover,
+  getDefaultSupplierWaveBudgets,
+  getSupplierWaveBudget,
 } from "@/lib/suppliers/intelligence";
 
 export type SupplierDiscoverResult = {
@@ -24,6 +26,7 @@ export type SupplierDiscoverResult = {
   keywords: string[];
   sources: string[];
   sourceBreakdown: SupplierSourceBreakdown[];
+  sourcePlan: Array<{ source: string; searchLimit: number }>;
 };
 
 export type SupplierSourceBreakdown = {
@@ -250,6 +253,16 @@ function shouldDeprioritizeSupplier(item: SupplierProduct): boolean {
   return computeSupplierIntelligenceForDiscover(item).shouldDeprioritize;
 }
 
+function getWaveSearchPlan(limitPerKeyword: number) {
+  return getDefaultSupplierWaveBudgets().map((budget) => ({
+    source: budget.supplierKey,
+    searchLimit: Math.max(
+      budget.minimumSearchLimit,
+      Math.round(Math.max(1, limitPerKeyword) * budget.searchMultiplier)
+    ),
+  }));
+}
+
 export async function runSupplierDiscover(limitPerKeyword = 20): Promise<SupplierDiscoverResult> {
   const candidateLimit = Math.max(
     1,
@@ -257,6 +270,7 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
   );
   const candidates = await getTrendCandidates(candidateLimit, { staleFirst: true });
   const focusedKeywords = buildFocusedSupplierDiscoverKeywords(candidates.map((row) => row.candidate));
+  const sourcePlan = getWaveSearchPlan(limitPerKeyword);
 
   let insertedCount = 0;
   let scannedProducts = 0;
@@ -267,15 +281,20 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
 
   for (const keyword of focusedKeywords) {
     keywords.push(keyword);
+    const fetchedBySource: SupplierProduct[] = [];
+    for (const plan of sourcePlan) {
+      const rows =
+        plan.source === "cjdropshipping"
+          ? await searchCjByKeyword(keyword, plan.searchLimit)
+          : plan.source === "temu"
+            ? await searchTemuByKeyword(keyword, plan.searchLimit)
+            : plan.source === "alibaba"
+              ? await searchAlibabaByKeyword(keyword, plan.searchLimit)
+              : await searchAliExpressByKeyword(keyword, plan.searchLimit);
+      fetchedBySource.push(...rows);
+    }
 
-    const [cj, aliexpress, alibaba, temu] = await Promise.all([
-      searchCjByKeyword(keyword, limitPerKeyword),
-      searchAliExpressByKeyword(keyword, limitPerKeyword),
-      searchAlibabaByKeyword(keyword, limitPerKeyword),
-      searchTemuByKeyword(keyword, limitPerKeyword),
-    ]);
-
-    const allProducts = [...cj, ...aliexpress, ...alibaba, ...temu].sort((left, right) => {
+    const allProducts = fetchedBySource.sort((left, right) => {
       const priorityDelta = compareSupplierIntelligence(
         computeSupplierIntelligenceForDiscover(left),
         computeSupplierIntelligenceForDiscover(right)
@@ -295,8 +314,12 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     if (!allProducts.length) continue;
 
     const productsToPersist: SupplierProduct[] = [];
+    const persistedCountsBySource = new Map<string, number>();
     for (const item of allProducts) {
       const sourceCounter = getSourceBreakdown(sourceBreakdown, item.platform);
+      const sourceKey = canonicalSupplierSource(item.platform);
+      const waveBudget = getSupplierWaveBudget(sourceKey);
+      const intelligence = computeSupplierIntelligenceForDiscover(item);
       const normalizedRow = supplierProductToRawInsert(item);
       const crawlStatus = String(item.raw?.crawlStatus ?? "").trim().toUpperCase();
       if (normalizedRow.supplierKey && normalizedRow.supplierProductId) {
@@ -337,18 +360,36 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
       const shippingUsable = isShippingSignalUsable(item);
       const targetedFriendly = isTargetedDiscoveryFriendly(item);
       const deprioritized = shouldDeprioritizeSupplier(item);
+      const persistedForSource = persistedCountsBySource.get(sourceKey) ?? 0;
+      const persistedCapForSource = Math.max(
+        1,
+        Math.floor(Math.max(1, allProducts.length) * waveBudget.maximumPersistShare)
+      );
+      const passesWavePolicy =
+        intelligence.reliabilityScore >= waveBudget.minimumReliabilityScore &&
+        (!waveBudget.requireStrongStockEvidence || intelligence.stockEvidenceStrength >= 0.72) &&
+        (!waveBudget.requireStrongShippingEvidence || intelligence.shippingEvidenceStrength >= 0.72) &&
+        persistedForSource < persistedCapForSource;
       if (quality.eligible) {
         scoredProducts++;
         sourceCounter.eligible_count += 1;
-        productsToPersist.push(item);
+        if (passesWavePolicy) {
+          productsToPersist.push(item);
+          persistedCountsBySource.set(sourceKey, persistedForSource + 1);
+        } else {
+          sourceCounter.rejected_availability_count += 1;
+          bumpRejectionReason(sourceCounter, "supplier_wave_policy_rejected");
+        }
       } else {
         const shouldPersist =
+          passesWavePolicy &&
           !deprioritized &&
           shippingUsable &&
           targetedFriendly &&
           shouldPersistParsedSnapshot({ item, normalizedRow, policy: quality });
         if (shouldPersist) {
           productsToPersist.push(item);
+          persistedCountsBySource.set(sourceKey, persistedForSource + 1);
         }
         const dropOff = classifyDropOff({ item, normalizedRow, policy: quality });
         if (dropOff) {
@@ -369,6 +410,9 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
         } else if (deprioritized) {
           sourceCounter.rejected_availability_count += 1;
           bumpRejectionReason(sourceCounter, "deprioritized_low_evidence_supplier");
+        } else if (!passesWavePolicy) {
+          sourceCounter.rejected_availability_count += 1;
+          bumpRejectionReason(sourceCounter, "supplier_wave_policy_rejected");
         }
       }
     }
@@ -409,5 +453,6 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     keywords,
     sources: Array.from(sources),
     sourceBreakdown: finalizedSourceBreakdown,
+    sourcePlan,
   };
 }

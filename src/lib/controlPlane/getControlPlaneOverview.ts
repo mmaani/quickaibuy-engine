@@ -216,6 +216,20 @@ function buildRecommendations(
     });
   }
 
+  const dominantSupplier = [...summary.candidateUniverse.supplierMix]
+    .sort((left, right) => right.totalCandidates - left.totalCandidates)[0];
+  if (
+    dominantSupplier &&
+    dominantSupplier.supplierKey === "aliexpress" &&
+    dominantSupplier.shareOfPool >= 0.45
+  ) {
+    recommendations.push({
+      title: "Reset the next candidate wave toward stronger suppliers",
+      detail: `AliExpress still represents ${Math.round(dominantSupplier.shareOfPool * 100)}% of the current candidate pool. Prefer CJ and Temu in the next discovery wave to reduce weak-evidence manual-review churn.`,
+      severity: "warning",
+    });
+  }
+
   const weakestSupplier = [...summary.supplierReliability]
     .filter((row) => row.candidates > 0)
     .sort((left, right) => {

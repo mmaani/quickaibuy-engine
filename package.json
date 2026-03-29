@@ -35,6 +35,7 @@
     "runtime:diag": "node --import tsx scripts/runtime_diagnostics.ts",
     "check:live-integrity": "node --import tsx scripts/check_live_state_integrity.ts",
     "ops:autonomous": "node --import tsx scripts/run_autonomous_operations.ts",
+    "ops:supplier-wave": "node --import tsx scripts/run_supplier_wave_regeneration.ts",
     "worker:jobs:run": "pnpm worker:jobs",
     "supplier:discover:run": "pnpm enqueue:supplier-discover",
     "verify:profit-pipeline": "node --import tsx scripts/verify_profit_pipeline.ts",
