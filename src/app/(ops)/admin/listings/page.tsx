@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "Approved Listings Queue",
+  title: "Listings Recovery Queue",
   robots: { index: false, follow: false },
 };
 
@@ -162,10 +162,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
     <main className="relative min-h-screen bg-app text-white">
       <div className="relative mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
         <header className="glass-card rounded-3xl border border-white/10 px-5 py-5 sm:px-6">
-          <h1 className="text-3xl font-bold">Approved Listings Queue</h1>
+          <h1 className="text-3xl font-bold">Listings Recovery Queue</h1>
           <p className="mt-2 text-sm text-white/65">
-            Official queue for approved, listing-eligible candidates and publish readiness.
-            Complements <code>/admin/review</code> and <code>/admin/control</code>.
+            Canonical queue for approved listings, blocked recovery, and publish-readiness exceptions.
+            Use this alongside <code>/admin/review</code> for candidate decisions and <code>/admin/control</code> for autonomous recovery.
           </p>
           <p className="mt-2 text-xs text-white/45">Route: {LISTINGS_ROUTE} | Auth configured: {configured ? "yes" : "no"}</p>
           <div className="mt-3 flex flex-wrap gap-3 text-xs">
@@ -243,10 +243,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
         ) : null}
 
         <section className="mt-5 grid gap-4 md:grid-cols-5">
-          <OverviewCard label="Approved candidates" value={overview.approvedCandidatesCount} />
-          <OverviewCard label="Listing eligible" value={overview.listingEligibleCount} />
-          <OverviewCard label="Preview prepared" value={overview.previewPreparedCount} />
-          <OverviewCard label="Ready to publish" value={overview.readyToPublishCount} />
+          <OverviewCard label="Approved now" value={overview.approvedCandidatesCount} />
+          <OverviewCard label="Eligible now" value={overview.listingEligibleCount} />
+          <OverviewCard label="Preview rows" value={overview.previewPreparedCount} />
+          <OverviewCard label="Ready now" value={overview.readyToPublishCount} />
           <OverviewCard label="Publish failed" value={overview.publishFailedCount} />
         </section>
 
@@ -284,7 +284,7 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
 
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,860px)_minmax(0,1fr)]">
           <section className="glass-panel rounded-3xl border border-white/10 p-4">
-            <div className="mb-3 text-sm text-white/65">Approved Candidate Table ({rows.length} rows)</div>
+            <div className="mb-3 text-sm text-white/65">Listings Queue Table ({rows.length} rows)</div>
             <div className="overflow-hidden rounded-2xl border border-white/10">
               <div className="max-h-[76vh] overflow-auto">
                 <table className="min-w-full border-collapse text-sm text-white/90">
@@ -364,11 +364,11 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
 
           <section className="space-y-5">
             {!detail ? (
-              <div className="glass-panel rounded-3xl border border-white/10 p-6 text-sm text-white/55">No approved candidate selected.</div>
+              <div className="glass-panel rounded-3xl border border-white/10 p-6 text-sm text-white/55">No listing candidate selected.</div>
             ) : (
               <>
                 <section className="glass-panel rounded-3xl border border-white/10 p-5">
-                  <h2 className="mb-3 text-lg font-semibold">Listing Readiness Detail</h2>
+                  <h2 className="mb-3 text-lg font-semibold">Listing Recovery Detail</h2>
                   <div className="grid gap-3 md:grid-cols-2">
                     <KeyValue label="Candidate ID" value={detail.item.id} />
                     <KeyValue label="Review decision" value={detail.item.decisionStatus} />
@@ -450,6 +450,9 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                   <div className="space-y-4">
                     <div>
                       <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/45">Prepare listing preview</div>
+                      <div className="mb-2 text-sm text-white/60">
+                        Use preview preparation for approved rows or explicit recovery checks. Routine preview generation should continue to flow through automation.
+                      </div>
                       <form action="/api/admin/review/prepare-preview" method="post">
                         <input type="hidden" name="candidateId" value={detail.item.id} />
                         <input type="hidden" name="marketplace" value={detail.item.marketplaceKey} />
