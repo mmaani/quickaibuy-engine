@@ -47,6 +47,11 @@ function formatPercent(value: number | null | undefined) {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatScore(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "n/a";
+  return `${Math.round(value * 100)}`;
+}
+
 export function ControlPlaneOverviewPanel({
   data,
   variant = "expanded",
@@ -170,6 +175,99 @@ export function ControlPlaneOverviewPanel({
               </div>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {data.productMarketIntelligence ? (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Product-market intelligence</div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat
+              label="Knowledge graph nodes"
+              value={data.productMarketIntelligence.knowledgeGraph.productCount}
+            />
+            <Stat
+              label="Categories / profiles"
+              value={`${data.productMarketIntelligence.knowledgeGraph.categories} / ${data.productMarketIntelligence.knowledgeGraph.profiles}`}
+            />
+            <Stat
+              label="Top category"
+              value={data.productMarketIntelligence.categoryIntelligence.strongest[0]?.label ?? "n/a"}
+            />
+            <Stat
+              label="Top profile"
+              value={data.productMarketIntelligence.productProfileIntelligence.strongest[0]?.label ?? "n/a"}
+            />
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Best categories now</div>
+              <div className="mt-2 space-y-2 text-sm text-white/75">
+                {data.productMarketIntelligence.categoryIntelligence.strongest.slice(0, compact ? 2 : 4).map((row) => (
+                  <div key={row.key}>
+                    {row.label}: score {formatScore(row.opportunityScore)}, publishable {formatPercent(row.publishableRatio)}, success {formatPercent(row.publishSuccessRatio)}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Weakest categories now</div>
+              <div className="mt-2 space-y-2 text-sm text-white/75">
+                {data.productMarketIntelligence.categoryIntelligence.weakest.slice(0, compact ? 2 : 4).map((row) => (
+                  <div key={row.key}>
+                    {row.label}: score {formatScore(row.opportunityScore)}, blocked {formatPercent(row.blockedRatio)}, weak supplier evidence {formatPercent(row.weakSupplierEvidenceRatio)}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Best product profiles now</div>
+              <div className="mt-2 space-y-2 text-sm text-white/75">
+                {data.productMarketIntelligence.productProfileIntelligence.strongest.slice(0, compact ? 2 : 4).map((row) => (
+                  <div key={row.key}>
+                    {row.label}: score {formatScore(row.opportunityScore)}, publishability {formatPercent(row.publishability)}, shipping {formatPercent(row.shippingQuality)}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Supplier-marketplace combinations</div>
+              <div className="mt-2 space-y-2 text-sm text-white/75">
+                {data.productMarketIntelligence.supplierMarketplaceIntelligence.slice(0, compact ? 2 : 4).map((row) => (
+                  <div key={`${row.supplierKey}-${row.marketplaceKey}`}>
+                    {row.supplierKey}/{row.marketplaceKey}: score {formatScore(row.opportunityScore)}, publishable {formatPercent(row.publishableRatio)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Marketplace fit + attribute pressure</div>
+              <div className="mt-2 space-y-2 text-sm text-white/75">
+                {data.productMarketIntelligence.marketplaceFitIntelligence.slice(0, compact ? 2 : 3).map((row) => (
+                  <div key={`${row.marketplaceKey}-${row.categoryKey}`}>
+                    {row.categoryLabel}: fit {formatScore(row.fitScore)}, specifics {formatPercent(row.itemSpecificCompleteness)}, shipping transparency {formatPercent(row.shippingTransparencyRatio)}
+                  </div>
+                ))}
+                {data.productMarketIntelligence.attributeIntelligence.slice(0, compact ? 2 : 4).map((row) => (
+                  <div key={`${row.categoryKey}-${row.profileKey}-${row.attributeKey}`}>
+                    {row.profileLabel}/{row.attributeKey}: {row.priority}, coverage {formatPercent(row.coverageRatio)}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Top product opportunities</div>
+              <div className="mt-2 space-y-2 text-sm text-white/75">
+                {data.productMarketIntelligence.opportunities.slice(0, compact ? 2 : 4).map((row) => (
+                  <div key={row.candidateId}>
+                    {row.taxonomy.profileLabel}: score {formatScore(row.opportunity.score)}, supplier {row.supplierKey}, positives {row.opportunity.explanation.positives.slice(0, 2).join(", ") || "n/a"}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
 

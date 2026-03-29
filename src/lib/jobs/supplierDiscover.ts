@@ -22,6 +22,7 @@ import {
   getSupplierLearningAdjustments,
   recordSupplierDiscoveryLearning,
 } from "@/lib/learningHub/pipelineWriters";
+import { getDiscoveryKeywordAdjustment, getProductMarketIntelligenceOverview } from "@/lib/learningHub/productMarketIntelligence";
 
 export type SupplierDiscoverResult = {
   processedCandidates: number;
@@ -270,7 +271,8 @@ function getWaveSearchPlan(
       publishability: number;
       failurePressure: number;
     }
-  >
+  >,
+  comboBoosts?: Record<string, number>
 ) {
   return getDefaultSupplierWaveBudgets().map((budget) => ({
     source: budget.supplierKey,
@@ -284,7 +286,8 @@ function getWaveSearchPlan(
             1 +
               (((learningAdjustments?.get(budget.supplierKey)?.supplierReliability ?? 0.5) - 0.5) * 0.8) +
               (((learningAdjustments?.get(budget.supplierKey)?.publishability ?? 0.5) - 0.5) * 0.4) -
-              ((learningAdjustments?.get(budget.supplierKey)?.failurePressure ?? 0) * 0.6)
+              ((learningAdjustments?.get(budget.supplierKey)?.failurePressure ?? 0) * 0.6) +
+              (((comboBoosts?.[`${budget.supplierKey}:ebay`] ?? 0.5) - 0.5) * 0.8)
           )
       )
     ),
@@ -340,9 +343,18 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     Math.min(Number(process.env.SUPPLIER_DISCOVER_CANDIDATE_LIMIT ?? 20), 100)
   );
   const supplierLearning = await getSupplierLearningAdjustments();
+  const intelligence = await getProductMarketIntelligenceOverview({ windowDays: 90, includeNodes: 12 });
   const candidates = await getTrendCandidates(candidateLimit, { staleFirst: true });
-  const focusedKeywords = buildFocusedSupplierDiscoverKeywords(candidates.map((row) => row.candidate));
-  const sourcePlan = getWaveSearchPlan(limitPerKeyword, supplierLearning);
+  const focusedKeywordsBase = buildFocusedSupplierDiscoverKeywords(candidates.map((row) => row.candidate));
+  const focusedKeywords = focusedKeywordsBase
+    .map((keyword) => ({
+      keyword,
+      adjustment: getDiscoveryKeywordAdjustment(keyword, intelligence),
+    }))
+    .filter((row, index, all) => !row.adjustment.shouldFilterEarly || all.length <= 3 || index < 2)
+    .sort((left, right) => right.adjustment.score - left.adjustment.score || left.keyword.localeCompare(right.keyword))
+    .map((row) => row.keyword);
+  const sourcePlan = getWaveSearchPlan(limitPerKeyword, supplierLearning, intelligence.discoveryHints.supplierBoostByMarketplace);
 
   let insertedCount = 0;
   let scannedProducts = 0;
@@ -352,10 +364,15 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
   const sourceBreakdown = new Map<string, MutableSupplierSourceBreakdown>();
 
   for (const keyword of focusedKeywords) {
+    const keywordAdjustment = getDiscoveryKeywordAdjustment(keyword, intelligence);
     keywords.push(keyword);
     const fetchedBySource: SupplierProduct[] = [];
     for (const plan of sourcePlan) {
-      const rows = await fetchRowsForSource(plan.source, keyword, plan.searchLimit);
+      const searchLimit = Math.max(
+        getSupplierWaveBudget(plan.source).minimumSearchLimit,
+        Math.round(plan.searchLimit * Math.max(0.55, keywordAdjustment.score + 0.25))
+      );
+      const rows = await fetchRowsForSource(plan.source, keyword, searchLimit);
       fetchedBySource.push(...rows);
     }
 
@@ -445,8 +462,10 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
         1,
         Math.floor(Math.max(1, allProducts.length) * waveBudget.maximumPersistShare)
       );
+      const keywordScore = keywordAdjustment.score;
       const passesWavePolicy =
         learnedReliability >= waveBudget.minimumReliabilityScore &&
+        keywordScore >= 0.4 &&
         (!waveBudget.requireStrongStockEvidence || intelligence.stockEvidenceStrength >= 0.72) &&
         (!waveBudget.requireStrongShippingEvidence || intelligence.shippingEvidenceStrength >= 0.72) &&
         persistedForSource < persistedCapForSource;

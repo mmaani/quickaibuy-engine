@@ -2,6 +2,10 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getLearningHubScorecard, type LearningHubScorecard } from "@/lib/learningHub/scorecard";
 import {
+  getProductMarketIntelligenceOverview,
+  type ProductMarketIntelligenceOverview,
+} from "@/lib/learningHub/productMarketIntelligence";
+import {
   buildOperationalSummary,
   computePauseMap,
   getRuntimeDiagnostics,
@@ -72,6 +76,7 @@ export type ControlPlaneOverview = {
   }>;
   recommendations: AssistantRecommendation[];
   learningHub: LearningHubScorecard | null;
+  productMarketIntelligence: ProductMarketIntelligenceOverview | null;
   routeMap: Array<{
     route: string;
     loader: string;
@@ -322,7 +327,10 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   const latestFullCycleRunDetails = await getLatestFullCycleRunDetails();
   const latestFullCycleRun = parseLatestRun(latestFullCycleRunDetails);
   const latestIntegrityHeal = extractLatestIntegrityHeal(latestRunDetails);
-  const learningHub = await getLearningHubScorecard();
+  const [learningHub, productMarketIntelligence] = await Promise.all([
+    getLearningHubScorecard(),
+    getProductMarketIntelligenceOverview({ windowDays: 90, includeNodes: 12 }).catch(() => null),
+  ]);
   const pauses = Array.from(pauseMap.entries()).map(([stage, reason]) => ({ stage, reason }));
   const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun);
   const recommendations = buildRecommendations(summary, pauses, latestRun);
@@ -359,6 +367,7 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
     anomalyGroups,
     recommendations,
     learningHub,
+    productMarketIntelligence,
     routeMap: [
       {
         route: "/dashboard",

@@ -10,9 +10,10 @@ Summary: The learning loop captures evidence, computes reusable features, and fe
 - `learning_eval_labels`
 
 ## Feature examples
-Supplier/shipping/stock reliability, parser yield trends, failure signatures, and quality regressions.
+Supplier/shipping/stock reliability, parser yield trends, failure signatures, quality regressions, category opportunity, product-profile quality, marketplace-fit quality, attribute pressure, and product opportunity explainability.
 
 ## Feedback reuse
 - Control-plane scorecards
 - Supplier prioritization and manual-review focus
 - Drift-informed pause recommendations
+- Product-market intelligence for category/profile/supplier-wave strategy
