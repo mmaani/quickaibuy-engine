@@ -39,6 +39,25 @@ export function parseEnvFile(filePath) {
   return raw == null ? {} : dotenv.parse(raw);
 }
 
+function normalizeEnvEntries(entries) {
+  return Object.entries(entries ?? {})
+    .map(([key, value]) => [String(key).trim(), String(value ?? "")])
+    .filter(([key]) => key.length > 0)
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function sameEnvContents(leftPath, rightPath) {
+  const left = normalizeEnvEntries(parseEnvFile(leftPath));
+  const right = normalizeEnvEntries(parseEnvFile(rightPath));
+  if (left.length === 0 || right.length === 0 || left.length !== right.length) {
+    return false;
+  }
+  return left.every(([leftKey, leftValue], index) => {
+    const [rightKey, rightValue] = right[index] ?? [];
+    return leftKey === rightKey && leftValue === rightValue;
+  });
+}
+
 export function readActiveEnvMetadata() {
   if (!fileExists(ACTIVE_ENV_METADATA_FILE)) return null;
   try {
@@ -73,6 +92,9 @@ export function inferActiveEnvSource(envPath = resolveRuntimeEnvPath()) {
     for (const candidate of [DEV_ENV_FILE, PROD_ENV_FILE, LEGACY_DEV_ENV_FILE, LEGACY_PROD_ENV_FILE]) {
       const candidateRaw = readEnvFile(candidate);
       if (candidateRaw != null && candidateRaw === activeRaw) {
+        return candidate;
+      }
+      if (candidateRaw != null && sameEnvContents(ACTIVE_ENV_FILE, candidate)) {
         return candidate;
       }
     }

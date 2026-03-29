@@ -10,6 +10,7 @@ import { getManualOverrideSnapshot } from "./manualOverrides";
 import { getMatchQualitySummary } from "./getMatchQualitySummary";
 import { getScaleRolloutAlertThresholds, getScaleRolloutCaps } from "./scaleRolloutConfig";
 import { getAutoPurchaseRateLimitState } from "@/lib/orders/autoPurchaseRateLimiter";
+import { getOrderOpsScheduleSnapshot } from "@/lib/jobs/enqueueOrderOpsSchedules";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -384,6 +385,11 @@ export type ControlPanelData = {
     purchaseReviewPending: number | null;
     trackingPending: number | null;
     trackingSynced: number | null;
+    orderSyncScheduleActive: boolean | null;
+    trackingSyncScheduleActive: boolean | null;
+    nextOrderSyncRun: string | null;
+    nextTrackingSyncRun: string | null;
+    automationDetail: string;
     partialReason: string | null;
   };
   prioritizedAlerts: {
@@ -720,6 +726,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     jobsExists,
     auditExists,
     manualOverrideSnapshot,
+    orderOpsScheduleSnapshot,
   ] = await Promise.all([
     getDbHealth(),
     runtimeQueueProbeEnabled
@@ -742,6 +749,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     tableExists("jobs"),
     tableExists("audit_log"),
     getManualOverrideSnapshot(),
+    getOrderOpsScheduleSnapshot().catch(() => null),
   ]);
 
   const pipelineCounts = await Promise.all([
@@ -1534,6 +1542,9 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     queueNamespaceDiagnostics.jobsQueueName !== "jobs-prod" ||
     !queueNamespaceDiagnostics.explicitBullPrefix ||
     !queueNamespaceDiagnostics.explicitJobsQueueName;
+
+  const orderSyncSchedule = orderOpsScheduleSnapshot?.find((entry) => entry.stage === "order_sync") ?? null;
+  const trackingSyncSchedule = orderOpsScheduleSnapshot?.find((entry) => entry.stage === "tracking_sync") ?? null;
 
   const configuredStages = upstreamScheduleSnapshot.filter((item) => item.active).length;
   const missingStages = upstreamScheduleSnapshot.filter((item) => !item.active).map((item) => item.stage);
@@ -2397,12 +2408,19 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       title: "Future order automation data is partial",
       detail: "orders table is unavailable in this environment; showing placeholder state only.",
     });
-  } else {
+  } else if (!orderOpsScheduleSnapshot) {
     futureOrdersAlerts.push({
-      id: "orders-placeholder-ready",
+      id: "order-automation-schedule-unavailable",
       tone: "warning",
-      title: "Future order issues placeholder",
-      detail: "Order sync/purchase/tracking automation is staged; monitor counts before enabling broad execution.",
+      title: "Order automation schedule state unavailable",
+      detail: "Could not confirm recurring ORDER_SYNC/TRACKING_SYNC schedules from the active queue namespace.",
+    });
+  } else if (!orderSyncSchedule?.active || !trackingSyncSchedule?.active) {
+    futureOrdersAlerts.push({
+      id: "order-automation-schedule-missing",
+      tone: "warning",
+      title: "Order automation schedule missing",
+      detail: `Recurring order automation is incomplete: order_sync=${orderSyncSchedule?.active ? "active" : "missing"}, tracking_sync=${trackingSyncSchedule?.active ? "active" : "missing"}.`,
     });
   }
 
@@ -2739,6 +2757,19 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       purchaseReviewPending: ordersExists ? toNum(ordersSummary.purchase_review_pending) : null,
       trackingPending: ordersExists ? toNum(ordersSummary.tracking_pending) : null,
       trackingSynced: ordersExists ? toNum(ordersSummary.tracking_synced) : null,
+      orderSyncScheduleActive: orderSyncSchedule?.active ?? null,
+      trackingSyncScheduleActive: trackingSyncSchedule?.active ?? null,
+      nextOrderSyncRun: orderSyncSchedule?.nextRun ?? null,
+      nextTrackingSyncRun: trackingSyncSchedule?.nextRun ?? null,
+      automationDetail: !ordersExists
+        ? "Order data is unavailable in this environment."
+        : manualOverrideSnapshot.entries.PAUSE_ORDER_SYNC.enabled
+          ? "Order sync automation is wired but manually paused."
+          : !orderOpsScheduleSnapshot
+            ? "Order automation schedules could not be confirmed from the live queue namespace."
+            : orderSyncSchedule?.active && trackingSyncSchedule?.active
+              ? "Recurring order sync and tracking sync are wired into the jobs worker."
+              : "Recurring order automation is only partially configured and needs schedule repair.",
       partialReason: ordersExists ? null : "orders table unavailable in this environment",
     },
     prioritizedAlerts: {

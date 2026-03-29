@@ -106,7 +106,7 @@ export async function getManualOverrideSnapshot(): Promise<ManualOverrideSnapsho
     activeCount,
     emergencyReadOnly: entries.EMERGENCY_READ_ONLY.enabled,
     limitations: [
-      "Current enforcement is guaranteed for /admin/control quick actions and override toggles.",
+      "Current enforcement is guaranteed for /admin/control quick actions, jobs.worker order sync/tracking, and supplier auto-purchase execution.",
       "If other entry points are added later, wire this shared override snapshot before enabling mutations.",
     ],
   };

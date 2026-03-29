@@ -1371,15 +1371,22 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           </div>
         </Section>
 
-        <Section title="Future Automation Readiness (Placeholder)">
+        <Section title="Order Automation">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
-            This block is forward-looking only. Use Order Operations (Compact) above for current day-to-day actions.
+            This block reflects the live recurring order-sync/tracking automation state. Supplier purchase/payment remains manual by design.
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="total orders" value={data.futureOrders.totalOrders ?? "-"} />
             <StatCard label="purchase review pending" value={data.futureOrders.purchaseReviewPending ?? "-"} />
             <StatCard label="tracking pending" value={data.futureOrders.trackingPending ?? "-"} />
             <StatCard label="tracking synced" value={data.futureOrders.trackingSynced ?? "-"} />
+            <StatCard label="order sync schedule" value={yesNoUnknown(data.futureOrders.orderSyncScheduleActive)} />
+            <StatCard label="tracking sync schedule" value={yesNoUnknown(data.futureOrders.trackingSyncScheduleActive)} />
+            <StatCard label="next order sync" value={formatDateTime(data.futureOrders.nextOrderSyncRun)} />
+            <StatCard label="next tracking sync" value={formatDateTime(data.futureOrders.nextTrackingSyncRun)} />
+          </div>
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/75">
+            {data.futureOrders.automationDetail}
           </div>
           {!data.futureOrders.supported ? (
             <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-xs text-amber-100">

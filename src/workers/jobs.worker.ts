@@ -19,6 +19,7 @@ import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSchedules";
 import { ensureAutonomousOpsSchedules } from "@/lib/jobs/enqueueAutonomousOpsSchedules";
+import { ensureOrderOpsSchedules } from "@/lib/jobs/enqueueOrderOpsSchedules";
 import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
 import { recoverMissedUpstreamFreshness } from "@/lib/jobs/freshnessRecovery";
 import { runListingPerformanceEngine } from "@/lib/listings/performanceEngine";
@@ -58,6 +59,16 @@ void ensureAutonomousOpsSchedules()
   })
   .catch((error) => {
     console.error("[jobs.worker] failed to ensure autonomous ops schedules", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+void ensureOrderOpsSchedules()
+  .then((result) => {
+    console.log("[jobs.worker] order ops schedules ensured", result);
+  })
+  .catch((error) => {
+    console.error("[jobs.worker] failed to ensure order ops schedules", {
       error: error instanceof Error ? error.message : String(error),
     });
   });

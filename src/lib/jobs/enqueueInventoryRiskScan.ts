@@ -19,6 +19,14 @@ type RepeatableEntry = {
   next?: number | null;
 };
 
+type SchedulerEntry = {
+  key?: string;
+  name?: string;
+  id?: string | null;
+  every?: number | null;
+  next?: number | null;
+};
+
 export type InventoryRiskScheduleSnapshot = {
   recurringJobId: string;
   cadenceMs: number;
@@ -40,11 +48,18 @@ function containsRecurringId(entry: RepeatableEntry, recurringJobId: string): bo
 function isInventoryRiskRepeatable(entry: RepeatableEntry, recurringJobId: string): boolean {
   if (entry.name !== JOB_NAMES.INVENTORY_RISK_SCAN) return false;
   if (Number(entry.every ?? 0) !== INVENTORY_RISK_SCAN_EVERY_MS) return false;
-  return containsRecurringId(entry, recurringJobId);
+  return containsRecurringId(entry, recurringJobId) || Boolean(entry.key);
+}
+
+function isInventoryRiskScheduler(entry: SchedulerEntry, recurringJobId: string): boolean {
+  if (entry.name !== JOB_NAMES.INVENTORY_RISK_SCAN) return false;
+  if (Number(entry.every ?? 0) !== INVENTORY_RISK_SCAN_EVERY_MS) return false;
+  return containsRecurringId(entry, recurringJobId) || Boolean(entry.key);
 }
 
 export function getInventoryRiskScheduleSnapshotFromEntries(input: {
   repeatableJobs: RepeatableEntry[];
+  schedulerJobs?: SchedulerEntry[];
   marketplaceKey?: "ebay";
 }): InventoryRiskScheduleSnapshot {
   const marketplaceKey = (input.marketplaceKey ?? "ebay") as "ebay";
@@ -53,8 +68,11 @@ export function getInventoryRiskScheduleSnapshotFromEntries(input: {
   const matching = input.repeatableJobs.filter((entry) =>
     isInventoryRiskRepeatable(entry, recurringJobId)
   );
+  const matchingSchedulers = (input.schedulerJobs ?? []).filter((entry) =>
+    isInventoryRiskScheduler(entry, recurringJobId)
+  );
 
-  const next = matching
+  const next = [...matchingSchedulers, ...matching]
     .map((entry) => Number(entry.next ?? NaN))
     .filter((value) => Number.isFinite(value) && value > 0)
     .sort((a, b) => a - b)[0];
@@ -62,9 +80,9 @@ export function getInventoryRiskScheduleSnapshotFromEntries(input: {
   return {
     recurringJobId,
     cadenceMs: INVENTORY_RISK_SCAN_EVERY_MS,
-    scheduleActive: matching.length > 0,
+    scheduleActive: matching.length > 0 || matchingSchedulers.length > 0,
     nextRun: typeof next === "number" ? new Date(next).toISOString() : null,
-    matchedEntries: matching.length,
+    matchedEntries: matching.length + matchingSchedulers.length,
   };
 }
 
@@ -72,9 +90,14 @@ export async function getInventoryRiskScheduleSnapshot(input?: {
   queue?: Queue;
   marketplaceKey?: "ebay";
 }): Promise<InventoryRiskScheduleSnapshot> {
-  const repeatableJobs = await (input?.queue ?? jobsQueue).getRepeatableJobs(0, 500);
+  const queue = input?.queue ?? jobsQueue;
+  const [repeatableJobs, schedulerJobs] = await Promise.all([
+    queue.getRepeatableJobs(0, 500) as Promise<RepeatableEntry[]>,
+    queue.getJobSchedulers(0, 500) as Promise<SchedulerEntry[]>,
+  ]);
   return getInventoryRiskScheduleSnapshotFromEntries({
-    repeatableJobs: repeatableJobs as RepeatableEntry[],
+    repeatableJobs,
+    schedulerJobs,
     marketplaceKey: input?.marketplaceKey,
   });
 }
@@ -134,7 +157,10 @@ export async function ensureInventoryRiskScanSchedule(input?: {
   const marketplaceKey = (input?.marketplaceKey ?? "ebay") as "ebay";
   const payload = { limit, marketplaceKey };
   const recurringJobId = getInventoryRiskRecurringJobId(marketplaceKey);
-  const repeatableJobs = (await jobsQueue.getRepeatableJobs(0, 500)) as RepeatableEntry[];
+  const [repeatableJobs, schedulerJobs] = await Promise.all([
+    jobsQueue.getRepeatableJobs(0, 500) as Promise<RepeatableEntry[]>,
+    jobsQueue.getJobSchedulers(0, 500) as Promise<SchedulerEntry[]>,
+  ]);
 
   let desiredEntrySeen = false;
   let removedCount = 0;
@@ -157,6 +183,10 @@ export async function ensureInventoryRiskScanSchedule(input?: {
       await jobsQueue.removeRepeatableByKey(String(entry.key));
       removedCount += 1;
     }
+  }
+
+  if (schedulerJobs.some((entry) => isInventoryRiskScheduler(entry, recurringJobId))) {
+    desiredEntrySeen = true;
   }
 
   if (!desiredEntrySeen) {

@@ -10,6 +10,14 @@ type RepeatableEntry = {
   next?: number | null;
 };
 
+type SchedulerEntry = {
+  key?: string;
+  name?: string;
+  id?: string | null;
+  every?: number | null;
+  next?: number | null;
+};
+
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
   prefix: BULL_PREFIX,
@@ -45,12 +53,27 @@ function isDesiredEntry(entry: RepeatableEntry, schedule: (typeof AUTONOMOUS_OPS
   return (
     entry.name === schedule.jobName &&
     Number(entry.every ?? 0) === schedule.everyMs &&
-    (String(entry.id ?? "") === schedule.jobId || String(entry.key ?? "").includes(schedule.jobId))
+    (String(entry.id ?? "") === schedule.jobId ||
+      String(entry.key ?? "").includes(schedule.jobId) ||
+      Boolean(entry.key))
+  );
+}
+
+function isDesiredScheduler(entry: SchedulerEntry, schedule: (typeof AUTONOMOUS_OPS_SCHEDULES)[number]) {
+  return (
+    entry.name === schedule.jobName &&
+    Number(entry.every ?? 0) === schedule.everyMs &&
+    (String(entry.id ?? "") === schedule.jobId ||
+      String(entry.key ?? "").includes(schedule.jobId) ||
+      Boolean(entry.key))
   );
 }
 
 export async function ensureAutonomousOpsSchedules() {
-  const repeatables = (await jobsQueue.getRepeatableJobs(0, 1000)) as RepeatableEntry[];
+  const [repeatables, schedulers] = await Promise.all([
+    jobsQueue.getRepeatableJobs(0, 1000) as Promise<RepeatableEntry[]>,
+    jobsQueue.getJobSchedulers(0, 1000) as Promise<SchedulerEntry[]>,
+  ]);
   let createdCount = 0;
   let removedCount = 0;
 
@@ -58,7 +81,9 @@ export async function ensureAutonomousOpsSchedules() {
     const existing = repeatables.filter(
       (entry) => entry.name === schedule.jobName && String(entry.key ?? "").includes("autonomous-ops-")
     );
-    const desired = existing.some((entry) => isDesiredEntry(entry, schedule));
+    const desired =
+      existing.some((entry) => isDesiredEntry(entry, schedule)) ||
+      schedulers.some((entry) => isDesiredScheduler(entry, schedule));
 
     for (const entry of existing) {
       if (isDesiredEntry(entry, schedule)) continue;
@@ -88,10 +113,14 @@ export async function ensureAutonomousOpsSchedules() {
 }
 
 export async function getAutonomousOpsScheduleSnapshot() {
-  const repeatables = (await jobsQueue.getRepeatableJobs(0, 1000)) as RepeatableEntry[];
+  const [repeatables, schedulers] = await Promise.all([
+    jobsQueue.getRepeatableJobs(0, 1000) as Promise<RepeatableEntry[]>,
+    jobsQueue.getJobSchedulers(0, 1000) as Promise<SchedulerEntry[]>,
+  ]);
   return AUTONOMOUS_OPS_SCHEDULES.map((schedule) => {
-    const matches = repeatables.filter((entry) => isDesiredEntry(entry, schedule));
-    const nextRunMs = matches
+    const matchingRepeatables = repeatables.filter((entry) => isDesiredEntry(entry, schedule));
+    const matchingSchedulers = schedulers.filter((entry) => isDesiredScheduler(entry, schedule));
+    const nextRunMs = [...matchingSchedulers, ...matchingRepeatables]
       .map((entry) => Number(entry.next ?? NaN))
       .filter((value) => Number.isFinite(value) && value > 0)
       .sort((a, b) => a - b)[0];
@@ -101,8 +130,8 @@ export async function getAutonomousOpsScheduleSnapshot() {
       jobName: schedule.jobName,
       jobId: schedule.jobId,
       everyMs: schedule.everyMs,
-      active: matches.length > 0,
-      matchedEntries: matches.length,
+      active: matchingSchedulers.length > 0 || matchingRepeatables.length > 0,
+      matchedEntries: matchingSchedulers.length + matchingRepeatables.length,
       nextRun: Number.isFinite(nextRunMs) ? new Date(nextRunMs).toISOString() : null,
     };
   });
