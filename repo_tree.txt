@@ -30,6 +30,8 @@
 │   ├── admin-control.md
 │   ├── architecture.md
 │   ├── code-review-2026-03-13.md
+│   ├── codespaces-secrets-policy.md
+│   ├── control-plane-architecture.md
 │   ├── database-migrations.md
 │   ├── ebay-image-policy.md
 │   ├── ebay-live-publish.md
@@ -42,6 +44,7 @@
 │   ├── railway-jobs-worker.md
 │   ├── runtime-diagnostics.md
 │   ├── scripts-hygiene-audit-2026-03-13.md
+│   ├── supplier-account-payment-safety.md
 │   ├── system-architecture.md
 │   └── system-command-center-update.md
 ├── drizzle
@@ -156,6 +159,7 @@
 │   ├── apply_supplier_shipping_quotes_migration.ts
 │   ├── approve_profitable_candidate.ts
 │   ├── approve_single_candidate_ready.ts
+│   ├── archive_detached_preview_rows.ts
 │   ├── backfill_customer_intelligence.ts
 │   ├── backfill_listing_gate_for_current_approved.ts
 │   ├── backfill_listing_previews_for_approved.ts
@@ -181,6 +185,7 @@
 │   ├── check_listing_previews_ready_source.mjs
 │   ├── check_listing_readiness_prereqs.mjs
 │   ├── check_listing_statuses_after_gate.mjs
+│   ├── check_live_state_integrity.ts
 │   ├── check_marketplace_price_urls.mjs
 │   ├── check_marketplace_prices.mjs
 │   ├── check_match_duplicates.mjs
@@ -196,6 +201,7 @@
 │   ├── check_order_automation_schema.ts
 │   ├── check_order_operator_mappings.ts
 │   ├── check_orders_table.mjs
+│   ├── check_payment_storage_policy.mjs
 │   ├── check_price_guard.ts
 │   ├── check_products_raw_titles.mjs
 │   ├── check_profit_breakdown.ts
@@ -256,6 +262,7 @@
 │   ├── inspect_trend_candidates.ts
 │   ├── install_psql.sh
 │   ├── lib
+│   │   ├── db.mjs
 │   │   ├── dbTarget.mjs
 │   │   ├── envState.mjs
 │   │   ├── mutationGuard.mjs
@@ -263,6 +270,7 @@
 │   │   ├── pgRetry.mjs
 │   │   ├── preflightMutation.sh
 │   │   ├── railwayWorkerEnv.ts
+│   │   ├── runtimeDiagnostics.mjs
 │   │   ├── runtimeDiagnostics.ts
 │   │   └── runtimeEnv.mjs
 │   ├── load_env_local.sh
@@ -301,6 +309,7 @@
 │   ├── remove_supplier_discover_job.ts
 │   ├── report_autonomous_pipeline_state.ts
 │   ├── review_matches.mjs
+│   ├── run_autonomous_operations.ts
 │   ├── run_check_audit_log.sh
 │   ├── run_check_marketplace_price_urls.sh
 │   ├── run_check_marketplace_prices.sh
@@ -337,6 +346,7 @@
 │   ├── run_profit_engine_direct.sh
 │   ├── run_profit_engine_direct.ts
 │   ├── run_revenue_enablement_verification.sh
+│   ├── run_shipping_orphan_resolution.ts
 │   ├── run_single_listing_publish.ts
 │   ├── run_targeted_candidate_expansion.ts
 │   ├── run_test_product_matcher.sh
@@ -344,6 +354,7 @@
 │   ├── run_trend_candidates_index_migration.sh
 │   ├── run_trend_candidates_migration.sh
 │   ├── run_worker_engine_with_preflight.ts
+│   ├── runtime_diagnostics.ts
 │   ├── select_sellable_products.ts
 │   ├── show_db_index.sh
 │   ├── sql
@@ -422,6 +433,8 @@
 │   │   │   │   ├── control
 │   │   │   │   │   └── run-action
 │   │   │   │   │       └── route.ts
+│   │   │   │   ├── control-plane
+│   │   │   │   │   └── route.ts
 │   │   │   │   ├── customers
 │   │   │   │   │   ├── [customerId]
 │   │   │   │   │   │   └── route.ts
@@ -488,6 +501,7 @@
 │   ├── components
 │   │   └── admin
 │   │       ├── AiListingDiagnostics.tsx
+│   │       ├── ControlPlaneOverviewPanel.tsx
 │   │       └── OptimizationDiagnostics.tsx
 │   ├── db
 │   │   ├── client.ts
@@ -506,17 +520,22 @@
 │   │   │   └── verifyListingPack.ts
 │   │   ├── audit
 │   │   │   └── writeAuditLog.ts
+│   │   ├── autonomousOps
+│   │   │   └── backbone.ts
 │   │   ├── bull.ts
 │   │   ├── bullConnection.ts
 │   │   ├── control
+│   │   │   ├── controlQuickActions.ts
 │   │   │   ├── getControlPanelData.ts
 │   │   │   ├── getMatchQualitySummary.ts
 │   │   │   ├── manualOverrides.ts
-│   │   │   └── runControlQuickAction.ts
+│   │   │   ├── runControlQuickAction.ts
+│   │   │   └── scaleRolloutConfig.ts
+│   │   ├── controlPlane
+│   │   │   └── getControlPlaneOverview.ts
 │   │   ├── customers
 │   │   │   └── admin.ts
 │   │   ├── dashboard
-│   │   │   ├── getControlPanelData.ts
 │   │   │   └── getDashboardData.ts
 │   │   ├── db
 │   │   │   ├── index.ts
@@ -527,6 +546,7 @@
 │   │   ├── db.ts
 │   │   ├── jobNames.ts
 │   │   ├── jobs
+│   │   │   ├── enqueueAutonomousOpsSchedules.ts
 │   │   │   ├── enqueueInventoryRiskScan.ts
 │   │   │   ├── enqueueMarketplacePriceScan.ts
 │   │   │   ├── enqueueProductMatch.ts
@@ -561,6 +581,7 @@
 │   │   │   ├── getApprovedListingsQueueData.ts
 │   │   │   ├── getListingExecutionCandidates.ts
 │   │   │   ├── idempotency.ts
+│   │   │   ├── integrity.ts
 │   │   │   ├── linkagePolicy.ts
 │   │   │   ├── listingThroughputController.ts
 │   │   │   ├── markListingReadyToPublish.ts
@@ -570,6 +591,7 @@
 │   │   │   ├── performanceEngine.ts
 │   │   │   ├── persistPostPublishEbayAudit.ts
 │   │   │   ├── prepareListingPreviews.ts
+│   │   │   ├── promoteReadyBatch.ts
 │   │   │   ├── publishIdempotency.ts
 │   │   │   ├── publishRateLimiter.ts
 │   │   │   ├── recovery.ts
@@ -600,6 +622,7 @@
 │   │   │   └── storage.ts
 │   │   ├── orders
 │   │   │   ├── autoPurchase.ts
+│   │   │   ├── autoPurchaseRateLimiter.ts
 │   │   │   ├── customerIntelligence.ts
 │   │   │   ├── ebayFetchOrders.ts
 │   │   │   ├── getAdminOrdersPageData.ts
@@ -621,6 +644,7 @@
 │   │   │   └── updateOrderStatus.ts
 │   │   ├── pricing
 │   │   │   ├── destinationResolver.ts
+│   │   │   ├── shippingAutomation.ts
 │   │   │   ├── shippingCalculator.ts
 │   │   │   ├── shippingConfig.ts
 │   │   │   └── shippingInference.ts
@@ -667,13 +691,15 @@
 │   │   │   ├── inventoryRiskMonitor.ts
 │   │   │   └── riskSignals.ts
 │   │   ├── runtime
+│   │   ├── runtimeEnv.ts
 │   │   ├── safety
 │   │   │   └── supplierLinkage.ts
 │   │   ├── server
-│   │   │   └── controlPanelData.ts
 │   │   ├── suppliers
 │   │   │   ├── cjApi.ts
-│   │   │   └── cjTracking.ts
+│   │   │   ├── cjTracking.ts
+│   │   │   ├── intelligence.ts
+│   │   │   └── telemetry.ts
 │   │   └── trends
 │   │       ├── expandTrendSignal.ts
 │   │       └── pullTrendSignals.ts
@@ -693,4 +719,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-100 directories, 594 files
+103 directories, 617 files
