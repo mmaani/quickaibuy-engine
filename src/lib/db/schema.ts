@@ -685,3 +685,140 @@ export type SupplierOrderRow = typeof supplierOrders.$inferSelect;
 export type SupplierOrderInsert = typeof supplierOrders.$inferInsert;
 export type ManualOverrideRow = typeof manualOverrides.$inferSelect;
 export type ManualOverrideInsert = typeof manualOverrides.$inferInsert;
+export const learningEvidenceEvents = pgTable(
+  "learning_evidence_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    evidenceType: text("evidence_type").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    supplierKey: text("supplier_key"),
+    marketplaceKey: text("marketplace_key"),
+    source: text("source").notNull(),
+    parserVersion: text("parser_version"),
+    confidence: numeric("confidence", { precision: 6, scale: 4 }),
+    freshnessSeconds: integer("freshness_seconds"),
+    validationStatus: text("validation_status").notNull(),
+    blockedReasons: text("blocked_reasons").array().notNull().default(sql`'{}'::text[]`),
+    downstreamOutcome: text("downstream_outcome"),
+    diagnostics: jsonb("diagnostics").$type<unknown>(),
+    observedAt: timestamp("observed_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    learningEvidenceTypeTimeIdx: index("learning_evidence_events_type_time_idx").on(
+      t.evidenceType,
+      t.observedAt
+    ),
+    learningEvidenceEntityIdx: index("learning_evidence_events_entity_idx").on(
+      t.entityType,
+      t.entityId,
+      t.observedAt
+    ),
+    learningEvidenceSupplierIdx: index("learning_evidence_events_supplier_idx").on(
+      t.supplierKey,
+      t.observedAt
+    ),
+  })
+);
+
+export const learningFeatures = pgTable(
+  "learning_features",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    featureKey: text("feature_key").notNull(),
+    subjectType: text("subject_type").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    featureValue: numeric("feature_value", { precision: 12, scale: 6 }),
+    confidence: numeric("confidence", { precision: 6, scale: 4 }),
+    sampleSize: integer("sample_size").notNull().default(0),
+    trendDirection: text("trend_direction"),
+    evidenceWindowStart: timestamp("evidence_window_start"),
+    evidenceWindowEnd: timestamp("evidence_window_end"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    learningFeaturesUnique: uniqueIndex("learning_features_feature_key_subject_type_subject_key_key").on(
+      t.featureKey,
+      t.subjectType,
+      t.subjectKey
+    ),
+    learningFeaturesSubjectIdx: index("learning_features_subject_idx").on(
+      t.subjectType,
+      t.subjectKey,
+      t.updatedAt
+    ),
+  })
+);
+
+export const learningMetricSnapshots = pgTable(
+  "learning_metric_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    metricKey: text("metric_key").notNull(),
+    segmentKey: text("segment_key").notNull().default("global"),
+    metricValue: numeric("metric_value", { precision: 12, scale: 6 }).notNull(),
+    sampleSize: integer("sample_size").notNull().default(0),
+    snapshotTs: timestamp("snapshot_ts").notNull().defaultNow(),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    learningMetricSnapshotsLookupIdx: index("learning_metric_snapshots_lookup_idx").on(
+      t.metricKey,
+      t.segmentKey,
+      t.snapshotTs
+    ),
+  })
+);
+
+export const learningDriftEvents = pgTable(
+  "learning_drift_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    metricKey: text("metric_key").notNull(),
+    segmentKey: text("segment_key").notNull().default("global"),
+    category: text("category").notNull(),
+    severity: text("severity").notNull(),
+    baselineValue: numeric("baseline_value", { precision: 12, scale: 6 }),
+    observedValue: numeric("observed_value", { precision: 12, scale: 6 }),
+    deltaValue: numeric("delta_value", { precision: 12, scale: 6 }),
+    reasonCode: text("reason_code").notNull(),
+    actionHint: text("action_hint"),
+    status: text("status").notNull().default("OPEN"),
+    diagnostics: jsonb("diagnostics").$type<unknown>(),
+    observedAt: timestamp("observed_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    learningDriftEventsOpenIdx: index("learning_drift_events_open_idx").on(t.status, t.severity, t.observedAt),
+  })
+);
+
+export const learningEvalLabels = pgTable(
+  "learning_eval_labels",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    labelType: text("label_type").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    predictedLabel: text("predicted_label"),
+    predictedConfidence: numeric("predicted_confidence", { precision: 6, scale: 4 }),
+    observedLabel: text("observed_label"),
+    observedConfidence: numeric("observed_confidence", { precision: 6, scale: 4 }),
+    qualityGap: numeric("quality_gap", { precision: 8, scale: 4 }),
+    gradingStatus: text("grading_status").notNull().default("PENDING"),
+    gradingNotes: text("grading_notes"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    learningEvalLabelsLookupIdx: index("learning_eval_labels_lookup_idx").on(
+      t.labelType,
+      t.gradingStatus,
+      t.updatedAt
+    ),
+  })
+);

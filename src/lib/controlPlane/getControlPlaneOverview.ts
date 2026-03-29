@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { getLearningHubScorecard, type LearningHubScorecard } from "@/lib/learningHub/scorecard";
 import {
   buildOperationalSummary,
   computePauseMap,
@@ -59,6 +60,7 @@ export type ControlPlaneOverview = {
     detail: string;
   }>;
   recommendations: AssistantRecommendation[];
+  learningHub: LearningHubScorecard | null;
   routeMap: Array<{
     route: string;
     loader: string;
@@ -296,6 +298,7 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   const latestRunDetails = await getLatestAutonomousRunDetails();
   const latestRun = parseLatestRun(latestRunDetails);
   const latestIntegrityHeal = extractLatestIntegrityHeal(latestRunDetails);
+  const learningHub = await getLearningHubScorecard();
   const pauses = Array.from(pauseMap.entries()).map(([stage, reason]) => ({ stage, reason }));
   const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun);
   const recommendations = buildRecommendations(summary, pauses, latestRun);
@@ -317,6 +320,7 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
     },
     anomalyGroups,
     recommendations,
+    learningHub,
     routeMap: [
       {
         route: "/dashboard",

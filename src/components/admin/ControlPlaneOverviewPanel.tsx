@@ -93,6 +93,30 @@ export function ControlPlaneOverviewPanel({
         <Stat label="Repeat customers" value={data.summary.repeatCustomerGrowth.repeatCustomers} />
       </div>
 
+      {data.learningHub ? (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Learning hub + data quality</div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat
+              label="Evidence pass / warn / fail"
+              value={`${data.learningHub.evidence.pass} / ${data.learningHub.evidence.warn} / ${data.learningHub.evidence.fail}`}
+            />
+            <Stat
+              label="Open drift (critical)"
+              value={`${data.learningHub.openDrift.total} (${data.learningHub.openDrift.critical})`}
+            />
+            <Stat
+              label="Reliability features"
+              value={`${data.learningHub.features.supplierReliabilityFeatures + data.learningHub.features.shippingReliabilityFeatures + data.learningHub.features.stockReliabilityFeatures}`}
+            />
+            <Stat
+              label="Evals pending / graded"
+              value={`${data.learningHub.evals.pending} / ${data.learningHub.evals.graded}`}
+            />
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
         <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
           <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">AI-assisted operator brief</div>
