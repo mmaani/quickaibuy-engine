@@ -50,8 +50,12 @@ export function readActiveEnvMetadata() {
 }
 
 export function inferActiveEnvSource(envPath = resolveRuntimeEnvPath()) {
-  if (process.env.DOTENV_CONFIG_PATH?.trim()) {
-    return normalizePath(process.env.DOTENV_CONFIG_PATH.trim());
+  const explicitEnvPath = process.env.DOTENV_CONFIG_PATH?.trim();
+  if (explicitEnvPath) {
+    const normalizedExplicit = normalizePath(explicitEnvPath);
+    if (normalizedExplicit && normalizedExplicit !== ACTIVE_ENV_FILE) {
+      return normalizedExplicit;
+    }
   }
 
   const normalizedPath = normalizePath(envPath);

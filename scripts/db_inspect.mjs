@@ -1,7 +1,4 @@
-import "dotenv/config";
-import pg from "pg";
-
-const { Client } = pg;
+import { withRuntimePgClient } from "./lib/db.mjs";
 
 const DEFAULT_SUMMARY_QUERIES = [
   {
@@ -69,15 +66,7 @@ function printRows(label, rows) {
 
 async function run() {
   const sql = process.argv.slice(2).join(" ").trim();
-
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
-  });
-
-  await client.connect();
-
-  try {
+  await withRuntimePgClient(async (client) => {
     if (!sql) {
       for (const q of DEFAULT_SUMMARY_QUERIES) {
         const res = await client.query(q.sql);
@@ -89,9 +78,7 @@ async function run() {
     const res = await client.query(sql);
     console.log("ROW COUNT:", res.rowCount ?? 0);
     console.dir(res.rows, { depth: null, colors: true, maxArrayLength: 200 });
-  } finally {
-    await client.end();
-  }
+  });
 }
 
 run().catch((err) => {

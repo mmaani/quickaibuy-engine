@@ -7,6 +7,7 @@
 - `.env` is the generated active env file used by default local tooling.
 - `.env.local` is kept in sync as a generated compatibility mirror for Next.js, which loads it ahead of `.env`.
 - `.env.active.json` records which source file generated `.env`.
+- `.env.vercel` and `codex*.private` files are not part of the canonical runtime path and should not be relied on for normal local operations.
 
 Default resolution order:
 
@@ -19,6 +20,7 @@ Default resolution order:
 - `pnpm env:status`
 - `pnpm env:dev`
 - `ALLOW_PROD_ENV_SWITCH=true pnpm env:prod`
+- `pnpm runtime:diag`
 - `pnpm db:status`
 - `pnpm db:assert-dev`
 - `pnpm db:assert-prod`
@@ -37,6 +39,8 @@ Classification uses:
 - active env source
 - `DATABASE_URL` host
 - `DATABASE_URL_DIRECT` host
+
+If `DOTENV_CONFIG_PATH=.env` is set explicitly, classification still resolves through `.env.active.json` so an active `.env` generated from `.env.dev` or `.env.prod` does not degrade to `UNKNOWN`.
 
 Patterns are defined in [config/db-targets.mjs](/workspaces/quickaibuy-engine/config/db-targets.mjs).
 

@@ -26,7 +26,9 @@ Shared shell guard helper: `scripts/lib/preflightMutation.sh`.
 - `.env.prod` → production-aligned snapshot
 - `.env` → generated active env file
 - `.env.local` → generated compatibility mirror for Next.js/local tooling that still auto-loads `.env.local`
+- `.env.vercel` / `codex*.private` → non-canonical secret/export surfaces; do not treat them as the normal local runtime source
 - `pnpm env:dev` / `pnpm env:prod` / `pnpm env:status`
+- `pnpm runtime:diag`
 - `pnpm db:status` / `pnpm db:assert-dev` / `pnpm db:assert-prod`
 
 See [docs/env-db-targeting.md](/workspaces/quickaibuy-engine/docs/env-db-targeting.md).
@@ -46,6 +48,8 @@ See [docs/env-db-targeting.md](/workspaces/quickaibuy-engine/docs/env-db-targeti
 | Queue namespace diagnostics | `pnpm exec tsx scripts/queue_namespace_diagnostics.ts` | MED | Yes | Platform Setup / Infrastructure |
 | Inventory-risk schedule check | `pnpm exec tsx scripts/check_inventory_risk_schedule.ts` | MED | Yes | Platform Setup / Infrastructure |
 | Worker runtime dependency preflight | `pnpm preflight:worker-runtime` | MED | Yes | Railway Deployment for jobs.worker |
+| Canonical runtime/env diagnostics | `pnpm runtime:diag` | MED | Yes | Platform Setup / Infrastructure |
+| Live listing integrity check | `pnpm check:live-integrity` | MED | Yes | Platform Setup / Infrastructure |
 | Runtime dashboard checks | `bash scripts/check_monitoring_dashboard_v1.sh` | MED | Yes | Platform Setup / Infrastructure |
 
 ## Renamed high-risk scripts
@@ -71,6 +75,15 @@ These ambiguous scripts were renamed to explicit-risk names:
 - New scripts must use a governance prefix above.
 - Do not add `_v2`, `_v3`, `_latest` variants without explicit deprecation plan and canonical replacement entry in this README.
 - Prefer one canonical script per operational intent.
+
+## Current deprecation candidates
+
+- `scripts/workers/delete_orphan_listing_previews.mjs`
+  - destructive orphan cleanup bypasses shared listing integrity helpers
+- `scripts/recover_first_listing_candidate.ts`
+  - mixed `.env.local`/`.env.vercel` fallback behavior is outside the active env model
+- `scripts/run_marketplace_scan_monitoring_latest.ts`
+  - versioned duplicate of the canonical monitoring command
 
 
 ## Phase 2 canonicalization (duplicate wrappers and versioned variants)
