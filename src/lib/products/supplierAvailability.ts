@@ -61,9 +61,11 @@ export function inferAvailabilityFromText(text: string): {
 
   const compact = normalized.replace(/\s+/g, " ").trim();
   const stockCountMatch = compact.match(
-    /(?:only|just|about|around)?\s*(\d{1,5})\s*(?:left|units?|pieces?|items?)\s*(?:in stock|available|remaining)?|(?:stock|inventory|available quantity)\s*[:=]?\s*(\d{1,5})/
+    /(?:only|just|about|around)?\s*(\d{1,5})\s*(?:left|units?|pieces?|items?)\s*(?:in stock|available|remaining)?|(?:"?(?:stockcount|stock_count|inventorycount|inventory_count|availablequantity|available_quantity|quantityavailable|quantity_available|totalavailquantity|availquantity)"?\s*[:=]\s*"?(?:true|false|null)?\s*,?\s*)?(\d{1,5})(?=\D|$)|(?:stock|inventory|available quantity|available qty|quantity available)\s*[:=]?\s*(\d{1,5})/
   );
-  const stockCount = stockCountMatch ? Number(stockCountMatch[1] ?? stockCountMatch[2]) : null;
+  const stockCount = stockCountMatch
+    ? Number(stockCountMatch[1] ?? stockCountMatch[2] ?? stockCountMatch[3])
+    : null;
 
   if (
     compact.includes("out of stock") ||
@@ -74,7 +76,10 @@ export function inferAvailabilityFromText(text: string): {
     compact.includes("temporarily out") ||
     compact.includes("item removed") ||
     compact.includes("store closed") ||
-    compact.includes("seller unavailable")
+    compact.includes("seller unavailable") ||
+    compact.includes("\"issoldout\":true") ||
+    compact.includes("\"soldout\":true") ||
+    compact.includes("\"inventorystatus\":\"out_of_stock\"")
   ) {
     return { signal: "OUT_OF_STOCK", confidence: 0.95 };
   }
@@ -92,7 +97,8 @@ export function inferAvailabilityFromText(text: string): {
     compact.includes("few left") ||
     compact.includes("almost sold out") ||
     compact.includes("selling fast") ||
-    compact.includes("limited quantity")
+    compact.includes("limited quantity") ||
+    compact.includes("\"inventorystatus\":\"low_stock\"")
   ) {
     return { signal: "LOW_STOCK", confidence: 0.8 };
   }
@@ -103,7 +109,11 @@ export function inferAvailabilityFromText(text: string): {
     compact.includes("ready to ship") ||
     compact.includes("ships within") ||
     compact.includes("inventory available") ||
-    compact.includes("stock available")
+    compact.includes("stock available") ||
+    compact.includes("\"issoldout\":false") ||
+    compact.includes("\"soldout\":false") ||
+    compact.includes("\"inventorystatus\":\"in_stock\"") ||
+    compact.includes("\"inventorystatus\":\"available\"")
   ) {
     return { signal: "IN_STOCK", confidence: 0.7 };
   }

@@ -60,13 +60,13 @@ function extractAvailabilityEvidence(rawText: string): {
   }
 
   const stockMatch = compact.match(
-    /(?:only|just)\s+(\d{1,5})\s+(?:left|pieces?|items?)|(?:stock|inventory|available quantity)\s*[:=]?\s*(\d{1,5})/i
+    /(?:only|just)\s+(\d{1,5})\s+(?:left|pieces?|items?)|(?:"?(?:stockCount|stock_count|inventoryCount|inventory_count|availableQuantity|available_quantity|quantityAvailable|quantity_available|totalAvailQuantity|availQuantity)"?\s*[:=]\s*"?)?(\d{1,5})(?=\D|$)|(?:stock|inventory|available quantity|available qty|quantity available)\s*[:=]?\s*(\d{1,5})/i
   );
   const inventoryBadgeMatch = compact.match(
-    /(in stock|out of stock|low stock|limited stock|few left|selling fast|ships within\s+\d+\s+days)/i
+    /(in stock|out of stock|low stock|limited stock|few left|selling fast|ships within\s+\d+\s+days|inventoryStatus\s*[:=]\s*"?[a-z_]+"?|isSoldOut\s*[:=]\s*(?:true|false)|soldOut\s*[:=]\s*(?:true|false))/i
   );
   const evidenceMatch = compact.match(
-    /(out of stock|sold out|currently unavailable|in stock|low stock|limited stock|few left|selling fast|available quantity\s*[:=]?\s*\d+)/i
+    /(out of stock|sold out|currently unavailable|in stock|low stock|limited stock|few left|selling fast|available quantity\s*[:=]?\s*\d+|availableQuantity\s*[:=]\s*\d+|quantityAvailable\s*[:=]\s*\d+|inventoryStatus\s*[:=]\s*"?[a-z_]+"?|isSoldOut\s*[:=]\s*(?:true|false)|soldOut\s*[:=]\s*(?:true|false))/i
   );
   const sellerStatusMatch = compact.match(
     /(seller unavailable|store closed|security verification|captcha|punish-page|challenge)/i
@@ -75,8 +75,122 @@ function extractAvailabilityEvidence(rawText: string): {
   return {
     evidenceText: evidenceMatch?.[0] ? sliceEvidence(evidenceMatch[0]) : null,
     inventoryBadge: inventoryBadgeMatch?.[0] ? sliceEvidence(inventoryBadgeMatch[0]) : null,
-    stockCount: stockMatch ? Number(stockMatch[1] ?? stockMatch[2]) : null,
+    stockCount: stockMatch ? Number(stockMatch[1] ?? stockMatch[2] ?? stockMatch[3]) : null,
     sellerStatusHint: sellerStatusMatch?.[0] ? sliceEvidence(sellerStatusMatch[0]) : null,
+  };
+}
+
+function extractAliExpressStructuredAvailability(rawText: string): {
+  signal: "IN_STOCK" | "LOW_STOCK" | "OUT_OF_STOCK" | "UNKNOWN";
+  confidence: number;
+  evidenceText: string | null;
+  inventoryBadge: string | null;
+  stockCount: number | null;
+} {
+  const compact = compactText(rawText);
+  if (!compact) {
+    return {
+      signal: "UNKNOWN",
+      confidence: 0.3,
+      evidenceText: null,
+      inventoryBadge: null,
+      stockCount: null,
+    };
+  }
+
+  const stockMatch = compact.match(
+    /"(?:availableQuantity|available_quantity|quantityAvailable|quantity_available|stockCount|stock_count|inventoryCount|inventory_count|totalAvailQuantity|availQuantity)"\s*:\s*"?(\d{1,5})"?/i
+  );
+  const stockCount = stockMatch?.[1] ? Number(stockMatch[1]) : null;
+  const inventoryStatusMatch = compact.match(
+    /"(?:inventoryStatus|inventory_status|availabilityStatus|availability_status|availabilitySignal|availability_signal)"\s*:\s*"?(in_stock|available|low_stock|limited_stock|out_of_stock|sold_out|unavailable|unknown)"?/i
+  );
+  const soldOutMatch = compact.match(/"(?:isSoldOut|soldOut|sold_out)"\s*:\s*(true|false)/i);
+  const availableForSaleMatch = compact.match(/"(?:isAvailable|availableForSale|canPurchase)"\s*:\s*(true|false)/i);
+  const variantCountMatch = compact.match(
+    /"(?:skuQuantity|sku_quantity|skuAvailableQuantity|sku_available_quantity)"\s*:\s*"?(\d{1,5})"?/i
+  );
+
+  const evidenceText = sliceEvidence(
+    inventoryStatusMatch?.[0] ??
+      soldOutMatch?.[0] ??
+      availableForSaleMatch?.[0] ??
+      variantCountMatch?.[0] ??
+      stockMatch?.[0] ??
+      ""
+  );
+
+  if (soldOutMatch?.[1] === "true") {
+    return {
+      signal: "OUT_OF_STOCK",
+      confidence: 0.96,
+      evidenceText,
+      inventoryBadge: inventoryStatusMatch?.[1] ?? "soldOut=true",
+      stockCount,
+    };
+  }
+
+  if (inventoryStatusMatch?.[1]) {
+    const normalized = inventoryStatusMatch[1].toUpperCase();
+    if (normalized === "OUT_OF_STOCK" || normalized === "SOLD_OUT" || normalized === "UNAVAILABLE") {
+      return {
+        signal: "OUT_OF_STOCK",
+        confidence: 0.95,
+        evidenceText,
+        inventoryBadge: inventoryStatusMatch[1],
+        stockCount,
+      };
+    }
+    if (normalized === "LOW_STOCK" || normalized === "LIMITED_STOCK") {
+      return {
+        signal: "LOW_STOCK",
+        confidence: 0.88,
+        evidenceText,
+        inventoryBadge: inventoryStatusMatch[1],
+        stockCount,
+      };
+    }
+    if (normalized === "IN_STOCK" || normalized === "AVAILABLE") {
+      return {
+        signal: stockCount != null && stockCount <= 20 ? "LOW_STOCK" : "IN_STOCK",
+        confidence: 0.84,
+        evidenceText,
+        inventoryBadge: inventoryStatusMatch[1],
+        stockCount,
+      };
+    }
+  }
+
+  if (stockCount != null) {
+    return {
+      signal: stockCount <= 0 ? "OUT_OF_STOCK" : stockCount <= 20 ? "LOW_STOCK" : "IN_STOCK",
+      confidence: 0.82,
+      evidenceText,
+      inventoryBadge: variantCountMatch?.[0] ? sliceEvidence(variantCountMatch[0]) : null,
+      stockCount,
+    };
+  }
+
+  if (soldOutMatch?.[1] === "false" || availableForSaleMatch?.[1] === "true") {
+    return {
+      signal: "IN_STOCK",
+      confidence: 0.72,
+      evidenceText,
+      inventoryBadge: soldOutMatch?.[0]
+        ? sliceEvidence(soldOutMatch[0])
+        : availableForSaleMatch?.[0]
+          ? sliceEvidence(availableForSaleMatch[0])
+          : null,
+      stockCount: null,
+    };
+  }
+
+  return {
+    signal: "UNKNOWN",
+    confidence: 0.3,
+    evidenceText: null,
+    inventoryBadge: null,
+    stockCount: null,
   };
 }
 
@@ -371,6 +485,7 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
 
     const inferredAvailability = inferAvailabilityFromText(fetched.text);
     const evidence = extractAvailabilityEvidence(fetched.text);
+    const structuredAvailability = extractAliExpressStructuredAvailability(fetched.text);
     const shipping = extractShippingEvidence(fetched.text);
     const priceEvidence = extractPriceEvidence(fetched.text);
     const listingValidity = inferListingValidity(fetched.text);
@@ -382,17 +497,32 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
     const images = extractDetailImages(fetched.text);
     const mergedImages = Array.from(new Set([...(product.images ?? []), ...images])).slice(0, 48);
     const availabilitySignal =
-      inferredAvailability.signal !== "UNKNOWN"
-        ? inferredAvailability.signal
-        : product.availabilitySignal ?? "UNKNOWN";
+      structuredAvailability.signal !== "UNKNOWN"
+        ? structuredAvailability.signal
+        : inferredAvailability.signal !== "UNKNOWN"
+          ? inferredAvailability.signal
+          : product.availabilitySignal ?? "UNKNOWN";
     const availabilityConfidence =
-      inferredAvailability.signal !== "UNKNOWN"
-        ? inferredAvailability.confidence
-        : (product.availabilityConfidence ?? 0.35);
+      structuredAvailability.signal !== "UNKNOWN"
+        ? structuredAvailability.confidence
+        : inferredAvailability.signal !== "UNKNOWN"
+          ? inferredAvailability.confidence
+          : (product.availabilityConfidence ?? 0.35);
     const evidencePresent = Boolean(
-      evidence.evidenceText || evidence.inventoryBadge || evidence.stockCount != null || evidence.sellerStatusHint
+      structuredAvailability.evidenceText ||
+        structuredAvailability.inventoryBadge ||
+        structuredAvailability.stockCount != null ||
+        evidence.evidenceText ||
+        evidence.inventoryBadge ||
+        evidence.stockCount != null ||
+        evidence.sellerStatusHint
     );
-    const evidenceQuality = availabilitySignal === "UNKNOWN" ? "MEDIUM" : "HIGH";
+    const evidenceQuality =
+      structuredAvailability.signal !== "UNKNOWN" || structuredAvailability.stockCount != null
+        ? "HIGH"
+        : availabilitySignal === "UNKNOWN"
+          ? "MEDIUM"
+          : "HIGH";
 
     return {
       ...product,
@@ -414,10 +544,14 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
         availabilityConfidence,
         availabilityEvidencePresent: evidencePresent,
         availabilityEvidenceQuality: evidenceQuality,
-        availabilityEvidenceText: evidence.evidenceText,
-        inventoryBadge: evidence.inventoryBadge,
-        stockCount: evidence.stockCount,
+        availabilityEvidenceText: structuredAvailability.evidenceText ?? evidence.evidenceText,
+        inventoryBadge: structuredAvailability.inventoryBadge ?? evidence.inventoryBadge,
+        stockCount: structuredAvailability.stockCount ?? evidence.stockCount,
         sellerStatusHint: evidence.sellerStatusHint,
+        variantAvailabilityEvidence:
+          structuredAvailability.evidenceText && structuredAvailability.evidenceText !== evidence.evidenceText
+            ? structuredAvailability.evidenceText
+            : null,
         priceText: priceEvidence.priceText,
         priceSignal: priceEvidence.signal,
         shippingSignal: shipping.signal,
@@ -432,7 +566,10 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
         shippingGuarantee: shipping.shippingGuarantee,
         listingValidity: listingValidity.status,
         listingValidityReason: listingValidity.reason,
-        evidenceSource: "product_detail",
+        evidenceSource:
+          structuredAvailability.signal !== "UNKNOWN" || structuredAvailability.stockCount != null
+            ? "product_detail_structured"
+            : "product_detail",
         detailQuality: fetched.mode === "direct" ? "HIGH" : "MEDIUM",
         enrichmentQuality: shipping.signal === "DIRECT" ? "HIGH" : "MEDIUM",
         detailTextSample: sliceEvidence(fetched.text),

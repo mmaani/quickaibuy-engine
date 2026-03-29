@@ -81,7 +81,16 @@ export async function getMatchedSupplierRefreshTargets(input?: {
         ARRAY[]::text[]
       ) AS "candidateIds"
     FROM refresh_targets rt
-    ORDER BY CASE WHEN rt.supplier_key = 'aliexpress' THEN 0 ELSE 1 END, rt.supplier_key, rt.supplier_product_id
+    ORDER BY
+      CASE
+        WHEN rt.supplier_key IN ('cjdropshipping', 'cj dropshipping') THEN 0
+        WHEN rt.supplier_key = 'temu' THEN 1
+        WHEN rt.supplier_key = 'alibaba' THEN 2
+        WHEN rt.supplier_key = 'aliexpress' THEN 3
+        ELSE 4
+      END,
+      rt.supplier_key,
+      rt.supplier_product_id
     LIMIT ${limit}
   `);
 

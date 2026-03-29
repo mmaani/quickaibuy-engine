@@ -246,6 +246,31 @@ function isTargetedDiscoveryFriendly(item: SupplierProduct): boolean {
   );
 }
 
+function supplierDiscoveryPriority(item: SupplierProduct): number {
+  const source = canonicalSupplierSource(item.platform);
+  if (source === "cjdropshipping") return 4;
+  if (source === "temu") return 3;
+  if (source === "alibaba") return 2;
+  if (source === "aliexpress") return 1;
+  return 0;
+}
+
+function shouldDeprioritizeSupplier(item: SupplierProduct): boolean {
+  const source = canonicalSupplierSource(item.platform);
+  if (source !== "aliexpress") return false;
+  const availabilitySignal = String(item.availabilitySignal ?? "").trim().toUpperCase();
+  const evidenceQuality = String(item.raw?.availabilityEvidenceQuality ?? "").trim().toUpperCase();
+  const shippingSignal = String(item.raw?.shippingSignal ?? "").trim().toUpperCase();
+  const telemetrySignals = new Set((item.telemetrySignals ?? []).map((value) => String(value).toLowerCase()));
+
+  return (
+    availabilitySignal === "UNKNOWN" &&
+    evidenceQuality !== "HIGH" &&
+    (shippingSignal === "MISSING" || shippingSignal === "INFERRED") &&
+    (telemetrySignals.has("low_quality") || telemetrySignals.has("fallback") || telemetrySignals.size === 0)
+  );
+}
+
 export async function runSupplierDiscover(limitPerKeyword = 20): Promise<SupplierDiscoverResult> {
   const candidateLimit = Math.max(
     1,
@@ -271,7 +296,11 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
       searchTemuByKeyword(keyword, limitPerKeyword),
     ]);
 
-    const allProducts = [...cj, ...aliexpress, ...alibaba, ...temu];
+    const allProducts = [...cj, ...aliexpress, ...alibaba, ...temu].sort((left, right) => {
+      const priorityDelta = supplierDiscoveryPriority(right) - supplierDiscoveryPriority(left);
+      if (priorityDelta !== 0) return priorityDelta;
+      return canonicalSupplierSource(left.platform).localeCompare(canonicalSupplierSource(right.platform));
+    });
     scannedProducts += allProducts.length;
 
     for (const item of allProducts) {
@@ -325,12 +354,14 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
       };
       const shippingUsable = isShippingSignalUsable(item);
       const targetedFriendly = isTargetedDiscoveryFriendly(item);
+      const deprioritized = shouldDeprioritizeSupplier(item);
       if (quality.eligible) {
         scoredProducts++;
         sourceCounter.eligible_count += 1;
         productsToPersist.push(item);
       } else {
         const shouldPersist =
+          !deprioritized &&
           shippingUsable &&
           targetedFriendly &&
           shouldPersistParsedSnapshot({ item, normalizedRow, policy: quality });
@@ -353,6 +384,9 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
             sourceCounter.rejected_unknown_reason_count += 1;
           }
           bumpRejectionReason(sourceCounter, dropOff.reason);
+        } else if (deprioritized) {
+          sourceCounter.rejected_availability_count += 1;
+          bumpRejectionReason(sourceCounter, "deprioritized_low_evidence_supplier");
         }
       }
     }
