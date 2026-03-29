@@ -18,9 +18,11 @@ import { runTrackingSyncWorker } from "./trackingSync.worker";
 import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSchedules";
+import { ensureAutonomousOpsSchedules } from "@/lib/jobs/enqueueAutonomousOpsSchedules";
 import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
 import { recoverMissedUpstreamFreshness } from "@/lib/jobs/freshnessRecovery";
 import { runListingPerformanceEngine } from "@/lib/listings/performanceEngine";
+import { runAutonomousOperations } from "@/lib/autonomousOps/backbone";
 
 loadRuntimeEnv();
 
@@ -46,6 +48,16 @@ void ensureUpstreamRecurringSchedules()
   })
   .catch((error) => {
     console.error("[jobs.worker] failed to ensure upstream recurring schedules", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+void ensureAutonomousOpsSchedules()
+  .then((result) => {
+    console.log("[jobs.worker] autonomous ops schedules ensured", result);
+  })
+  .catch((error) => {
+    console.error("[jobs.worker] failed to ensure autonomous ops schedules", {
       error: error instanceof Error ? error.message : String(error),
     });
   });
@@ -686,6 +698,40 @@ export const jobsWorker = new Worker(
             jobId: String(job.id ?? ""),
             ...result,
           },
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return result;
+      }
+
+      case JOB_NAMES.AUTONOMOUS_OPS_BACKBONE: {
+        const result = await runAutonomousOperations({
+          phase:
+            job.data?.phase === "diagnostics_refresh" ||
+            job.data?.phase === "prepare" ||
+            job.data?.phase === "publish"
+              ? job.data.phase
+              : "full",
+          actorId: JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
+          actorType: "WORKER",
+          supplierRefreshLimit: Number(job.data?.supplierRefreshLimit ?? 10),
+          marketplaceRefreshLimit: Number(job.data?.marketplaceRefreshLimit ?? 15),
+          shippingLimit: Number(job.data?.shippingLimit ?? 50),
+          prepareLimit: Number(job.data?.prepareLimit ?? 25),
+          publishLimit: Number(job.data?.publishLimit ?? 3),
+        });
+
+        console.log("[jobs.worker] completed job", {
+          id: job.id,
+          name: job.name,
+          result,
         });
 
         await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
