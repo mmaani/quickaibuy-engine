@@ -1,5 +1,7 @@
 import RefreshButton from "@/app/_components/RefreshButton";
 import { getDashboardData, type StageStatus } from "@/lib/dashboard/getDashboardData";
+import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
+import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -367,9 +369,10 @@ function RadarRow({
 
 export default async function DashboardPage() {
   let data: Awaited<ReturnType<typeof getDashboardData>> | null = null;
+  let controlPlane: Awaited<ReturnType<typeof getControlPlaneOverview>> | null = null;
 
   try {
-    data = await getDashboardData();
+    [data, controlPlane] = await Promise.all([getDashboardData(), getControlPlaneOverview()]);
   } catch {}
 
   if (!data) {
@@ -500,6 +503,8 @@ export default async function DashboardPage() {
             </div>
           </div>
         </header>
+
+        {controlPlane ? <ControlPlaneOverviewPanel data={controlPlane} /> : null}
 
         {data.alerts.length ? (
           <Section

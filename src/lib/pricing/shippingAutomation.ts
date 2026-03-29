@@ -3,6 +3,9 @@ import { db } from "@/lib/db";
 import { inferShippingFromEvidence } from "@/lib/pricing/shippingInference";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { runProfitEngine } from "@/lib/profit/profitEngine";
+import { refreshSingleSupplierProduct } from "@/lib/products/refreshSingleSupplierProduct";
+import { compareSupplierIntelligence, computeSupplierIntelligenceSignal } from "@/lib/suppliers/intelligence";
+import { getSupplierRefreshSuccessRateMap } from "@/lib/suppliers/telemetry";
 
 type ActorType = "ADMIN" | "SYSTEM" | "WORKER";
 
@@ -16,10 +19,19 @@ export type ShippingBlockedCandidateRow = {
   shippingEstimates: unknown;
   rawPayload: unknown;
   snapshotTs: string | null;
+  marketplaceKey: string;
+  marketplaceListingId: string;
   shippingQuoteDestination: string | null;
   shippingQuoteCost: string | null;
   shippingQuoteLastVerifiedAt: string | null;
   shippingQuoteSourceType: string | null;
+};
+
+type AlternateSupplierRecoveryTarget = {
+  supplierKey: string;
+  supplierProductId: string;
+  shippingEstimates: unknown;
+  rawPayload: unknown;
 };
 
 export type ShippingGapClassification =
@@ -36,6 +48,10 @@ export type ShippingAutomationResult = {
   persistedQuotes: number;
   recomputedCandidates: number;
   stillBlocked: number;
+  exactRefreshAttempts: number;
+  exactRefreshRecovered: number;
+  alternateSupplierAttempts: number;
+  alternateSupplierRecovered: number;
   bySupplier: Array<{
     supplierKey: string;
     blocked: number;
@@ -141,6 +157,8 @@ export async function findShippingBlockedCandidates(limit = 100): Promise<Shippi
       lp.shipping_estimates AS "shippingEstimates",
       lp.raw_payload AS "rawPayload",
       lp.snapshot_ts::text AS "snapshotTs",
+      lower(pc.marketplace_key) AS "marketplaceKey",
+      pc.marketplace_listing_id AS "marketplaceListingId",
       qu.destination_country::text AS "shippingQuoteDestination",
       qu.shipping_cost::text AS "shippingQuoteCost",
       qu.last_verified_at::text AS "shippingQuoteLastVerifiedAt",
@@ -164,6 +182,92 @@ export async function findShippingBlockedCandidates(limit = 100): Promise<Shippi
   return result.rows ?? [];
 }
 
+async function getLatestShippingEvidence(input: {
+  supplierKey: string;
+  supplierProductId: string;
+}): Promise<{ shippingEstimates: unknown; rawPayload: unknown; snapshotTs: string | null }> {
+  const result = await db.execute<{
+    shippingEstimates: unknown;
+    rawPayload: unknown;
+    snapshotTs: string | null;
+  }>(sql`
+    SELECT
+      pr.shipping_estimates AS "shippingEstimates",
+      pr.raw_payload AS "rawPayload",
+      pr.snapshot_ts::text AS "snapshotTs"
+    FROM products_raw pr
+    WHERE lower(pr.supplier_key) = ${String(input.supplierKey).trim().toLowerCase()}
+      AND pr.supplier_product_id = ${String(input.supplierProductId).trim()}
+    ORDER BY pr.snapshot_ts DESC NULLS LAST, pr.id DESC
+    LIMIT 1
+  `);
+  return result.rows?.[0] ?? { shippingEstimates: null, rawPayload: null, snapshotTs: null };
+}
+
+async function getAlternateSupplierTargets(
+  row: ShippingBlockedCandidateRow,
+  refreshSuccessRates: Map<string, number>
+): Promise<AlternateSupplierRecoveryTarget[]> {
+  const result = await db.execute<AlternateSupplierRecoveryTarget>(sql`
+    WITH latest_products AS (
+      SELECT DISTINCT ON (lower(pr.supplier_key), pr.supplier_product_id)
+        lower(pr.supplier_key) AS supplier_key,
+        pr.supplier_product_id AS supplier_product_id,
+        pr.shipping_estimates AS shipping_estimates,
+        pr.raw_payload AS raw_payload,
+        pr.snapshot_ts
+      FROM products_raw pr
+      ORDER BY lower(pr.supplier_key), pr.supplier_product_id, pr.snapshot_ts DESC NULLS LAST, pr.id DESC
+    )
+    SELECT DISTINCT
+      lower(m.supplier_key) AS "supplierKey",
+      m.supplier_product_id AS "supplierProductId",
+      lp.shipping_estimates AS "shippingEstimates",
+      lp.raw_payload AS "rawPayload"
+    FROM matches m
+    LEFT JOIN latest_products lp
+      ON lp.supplier_key = lower(m.supplier_key)
+     AND lp.supplier_product_id = m.supplier_product_id
+    WHERE lower(m.marketplace_key) = lower(${row.marketplaceKey})
+      AND m.marketplace_listing_id = ${row.marketplaceListingId}
+      AND upper(coalesce(m.status, '')) = 'ACTIVE'
+      AND lower(m.supplier_key) <> ${row.supplierKey}
+      AND m.supplier_product_id <> ${row.supplierProductId}
+  `);
+
+  return (result.rows ?? []).sort((left, right) =>
+    compareSupplierIntelligence(
+      computeSupplierIntelligenceSignal({
+        supplierKey: left.supplierKey,
+        shippingEstimates: left.shippingEstimates,
+        rawPayload: left.rawPayload,
+        refreshSuccessRate: refreshSuccessRates.get(left.supplierKey) ?? null,
+      }),
+      computeSupplierIntelligenceSignal({
+        supplierKey: right.supplierKey,
+        shippingEstimates: right.shippingEstimates,
+        rawPayload: right.rawPayload,
+        refreshSuccessRate: refreshSuccessRates.get(right.supplierKey) ?? null,
+      })
+    )
+  );
+}
+
+async function isCandidateStillShippingBlocked(candidateId: string): Promise<boolean> {
+  const result = await db.execute<{ blocked: boolean }>(sql`
+    SELECT EXISTS (
+      SELECT 1
+      FROM profitable_candidates pc
+      WHERE pc.id = ${candidateId}
+        AND (
+          pc.listing_block_reason = 'MISSING_SHIPPING_INTELLIGENCE'
+          OR pc.listing_block_reason LIKE 'shipping intelligence unresolved:%'
+        )
+    ) AS blocked
+  `);
+  return Boolean(result.rows?.[0]?.blocked);
+}
+
 export async function automateShippingIntelligence(input?: {
   limit?: number;
   actorId?: string;
@@ -172,10 +276,15 @@ export async function automateShippingIntelligence(input?: {
   const actorId = input?.actorId ?? "automateShippingIntelligence";
   const actorType = normalizeActorType(input?.actorType);
   const rows = await findShippingBlockedCandidates(input?.limit ?? 100);
+  const refreshSuccessRates = await getSupplierRefreshSuccessRateMap();
   const gapCounts = new Map<ShippingGapClassification, number>();
   const supplierStats = new Map<string, { blocked: number; persistedQuotes: number }>();
   const persisted: ShippingAutomationResult["persisted"] = [];
   let recomputedCandidates = 0;
+  let exactRefreshAttempts = 0;
+  let exactRefreshRecovered = 0;
+  let alternateSupplierAttempts = 0;
+  let alternateSupplierRecovered = 0;
 
   for (const row of rows) {
     const rootCause = classifyShippingGap(row);
@@ -184,15 +293,73 @@ export async function automateShippingIntelligence(input?: {
     supplierStat.blocked += 1;
     supplierStats.set(row.supplierKey, supplierStat);
 
-    const inferred = inferShippingFromEvidence({
+    let shippingEstimates = row.shippingEstimates;
+    let rawPayload = row.rawPayload;
+    let inferred = inferShippingFromEvidence({
       supplierKey: row.supplierKey,
       destinationCountry: "US",
-      shippingEstimates: row.shippingEstimates,
-      rawPayload: row.rawPayload,
+      shippingEstimates,
+      rawPayload,
       defaultShippingUsd: null,
     });
 
+    if (
+      rootCause === "STALE_OR_MISSING_SUPPLIER_SNAPSHOT" ||
+      rootCause === "SUPPLIER_PAYLOAD_LACKS_SHIPPING" ||
+      rootCause === "PARSING_OR_PERSIST_GAP"
+    ) {
+      exactRefreshAttempts += 1;
+      const refresh = await refreshSingleSupplierProduct({
+        supplierKey: row.supplierKey,
+        supplierProductId: row.supplierProductId,
+        requireExactMatch: true,
+        updateExisting: true,
+        searchLimit: 60,
+      });
+
+      if (refresh.refreshedSnapshotId || refresh.refreshed) {
+        const latest = await getLatestShippingEvidence({
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+        });
+        shippingEstimates = latest.shippingEstimates;
+        rawPayload = latest.rawPayload;
+        inferred = inferShippingFromEvidence({
+          supplierKey: row.supplierKey,
+          destinationCountry: "US",
+          shippingEstimates,
+          rawPayload,
+          defaultShippingUsd: null,
+        });
+      }
+    }
+
     if (inferred.shippingCostUsd == null || inferred.confidence == null || inferred.confidence < 0.6) {
+      const canTryAlternateSupplier = row.decisionStatus !== "APPROVED";
+      if (canTryAlternateSupplier) {
+        const alternates = await getAlternateSupplierTargets(row, refreshSuccessRates);
+        for (const alternate of alternates.slice(0, 2)) {
+          alternateSupplierAttempts += 1;
+          await refreshSingleSupplierProduct({
+            supplierKey: alternate.supplierKey,
+            supplierProductId: alternate.supplierProductId,
+            requireExactMatch: true,
+            updateExisting: true,
+            searchLimit: 60,
+          });
+          await runProfitEngine({
+            limit: 25,
+            marketplaceKey: row.marketplaceKey,
+            marketplaceListingId: row.marketplaceListingId,
+            supplierKey: alternate.supplierKey,
+            supplierProductId: alternate.supplierProductId,
+          });
+        }
+
+        if (!(await isCandidateStillShippingBlocked(row.candidateId))) {
+          alternateSupplierRecovered += 1;
+        }
+      }
       continue;
     }
 
@@ -243,6 +410,8 @@ export async function automateShippingIntelligence(input?: {
       limit: 25,
       supplierKey: row.supplierKey,
       supplierProductId: row.supplierProductId,
+      marketplaceKey: row.marketplaceKey,
+      marketplaceListingId: row.marketplaceListingId,
     });
     recomputedCandidates += 1;
     supplierStat.persistedQuotes += 1;
@@ -272,6 +441,10 @@ export async function automateShippingIntelligence(input?: {
         rootCause,
       },
     });
+
+    if (!(await isCandidateStillShippingBlocked(row.candidateId))) {
+      exactRefreshRecovered += 1;
+    }
   }
 
   const stillBlockedRows = await findShippingBlockedCandidates(input?.limit ?? 100);
@@ -282,6 +455,10 @@ export async function automateShippingIntelligence(input?: {
     persistedQuotes: persisted.length,
     recomputedCandidates,
     stillBlocked: stillBlockedRows.length,
+    exactRefreshAttempts,
+    exactRefreshRecovered,
+    alternateSupplierAttempts,
+    alternateSupplierRecovered,
     bySupplier: Array.from(supplierStats.entries()).map(([supplierKey, stats]) => ({
       supplierKey,
       blocked: stats.blocked,

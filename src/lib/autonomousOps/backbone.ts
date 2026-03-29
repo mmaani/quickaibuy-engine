@@ -16,11 +16,12 @@ import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
 import { runProfitEngine } from "@/lib/profit/profitEngine";
 import { prepareListingPreviews } from "@/lib/listings/prepareListingPreviews";
 import { promoteApprovedPreviewsToReady } from "@/lib/listings/promoteReadyBatch";
+import { getSupplierRefreshTelemetry } from "@/lib/suppliers/telemetry";
 import { runListingExecution } from "@/workers/listingExecute.worker";
 
 export type AutonomousOpsPhase = "full" | "diagnostics_refresh" | "prepare" | "publish";
 type ActorType = "ADMIN" | "WORKER" | "SYSTEM";
-type StageKey =
+export type StageKey =
   | "runtime_diagnostics"
   | "integrity_scan"
   | "integrity_heal"
@@ -61,7 +62,17 @@ export type AutonomousOpsSummary = {
   blockReasons: Array<{ reason: string; count: number }>;
   integrity: Awaited<ReturnType<typeof getListingIntegritySummary>>;
   shippingBlocks: number;
-  supplierReliability: Array<{ supplierKey: string; candidates: number; shippingBlocked: number; supplierBlocked: number }>;
+  supplierReliability: Array<{
+    supplierKey: string;
+    candidates: number;
+    shippingBlocked: number;
+    supplierBlocked: number;
+    refreshSuccessRate: number | null;
+    exactMatches: number;
+    refreshAttempts: number;
+    rateLimitEvents: number;
+    exactMatchMisses: number;
+  }>;
   marketplaceReliability: {
     staleMarketplaceCandidates: number;
     freshMarketplaceRows24h: number;
@@ -88,7 +99,7 @@ export type AutonomousOpsRunResult = {
   summary: AutonomousOpsSummary;
 };
 
-type RuntimeDiagnostics = {
+export type RuntimeDiagnostics = {
   dotenvPath: string;
   envSource: string | null;
   dbTargetClassification: string | null;
@@ -145,7 +156,7 @@ function toStageErrorDetails(error: unknown) {
   return { message: String(error), stack: null };
 }
 
-async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
+export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
   const mod = await import("../../../scripts/lib/runtimeDiagnostics.mjs");
   const diagnostics = await mod.getRuntimeDiagnostics({ includeConnectivity: false });
   return {
@@ -278,8 +289,8 @@ async function getStaleMarketplaceCandidates(limit = 20) {
   return result.rows ?? [];
 }
 
-async function buildOperationalSummary(runtime: RuntimeDiagnostics): Promise<AutonomousOpsSummary> {
-  const [pipeline, blockReasons, integrity, shippingBlocked, supplierReliability, marketplaceReliability, publishStats, manualQueue, repeatGrowth] =
+export async function buildOperationalSummary(runtime: RuntimeDiagnostics): Promise<AutonomousOpsSummary> {
+  const [pipeline, blockReasons, integrity, shippingBlocked, supplierReliability, supplierRefreshTelemetry, marketplaceReliability, publishStats, manualQueue, repeatGrowth] =
     await Promise.all([
       getPipelineCounts(),
       getBlockedReasonDistribution(),
@@ -302,6 +313,7 @@ async function buildOperationalSummary(runtime: RuntimeDiagnostics): Promise<Aut
         GROUP BY 1
         ORDER BY candidates DESC, "supplierKey" ASC
       `),
+      getSupplierRefreshTelemetry(),
       db.execute<{ staleMarketplaceCandidates: number; freshMarketplaceRows24h: number; staleMarketplaceRows24h: number }>(sql`
         SELECT
           (
@@ -339,6 +351,10 @@ async function buildOperationalSummary(runtime: RuntimeDiagnostics): Promise<Aut
       `),
     ]);
 
+  const telemetryBySupplier = new Map(
+    supplierRefreshTelemetry.map((row) => [row.supplierKey, row] as const)
+  );
+
   return {
     runtime: {
       dotenvPath: runtime.dotenvPath,
@@ -351,7 +367,20 @@ async function buildOperationalSummary(runtime: RuntimeDiagnostics): Promise<Aut
     blockReasons,
     integrity,
     shippingBlocks: shippingBlocked.length,
-    supplierReliability: supplierReliability.rows ?? [],
+    supplierReliability: (supplierReliability.rows ?? []).map((row) => {
+      const telemetry = telemetryBySupplier.get(String(row.supplierKey ?? "").trim().toLowerCase());
+      return {
+        supplierKey: row.supplierKey,
+        candidates: row.candidates,
+        shippingBlocked: row.shippingBlocked,
+        supplierBlocked: row.supplierBlocked,
+        refreshSuccessRate: telemetry?.refreshSuccessRate ?? null,
+        exactMatches: telemetry?.exactMatches ?? 0,
+        refreshAttempts: telemetry?.attempts ?? 0,
+        rateLimitEvents: telemetry?.rateLimitEvents ?? 0,
+        exactMatchMisses: telemetry?.exactMatchMisses ?? 0,
+      };
+    }),
     marketplaceReliability:
       marketplaceReliability.rows?.[0] ?? {
         staleMarketplaceCandidates: 0,
@@ -372,7 +401,7 @@ async function buildOperationalSummary(runtime: RuntimeDiagnostics): Promise<Aut
   };
 }
 
-async function computePauseMap(runtime: RuntimeDiagnostics, summary: AutonomousOpsSummary) {
+export async function computePauseMap(runtime: RuntimeDiagnostics, summary: AutonomousOpsSummary) {
   const pauses = new Map<StageKey, string>();
   const publishFailureSpike = Number(summary.publish.failed24h ?? 0) >= Number(process.env.AUTONOMOUS_PUBLISH_FAILURE_SPIKE_THRESHOLD ?? 3);
   const staleSpike =

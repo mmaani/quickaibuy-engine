@@ -30,6 +30,8 @@ import {
   type CompactBatchReviewMode,
 } from "@/lib/orders";
 import { canRecordSupplierPurchaseForOrderStatus } from "@/lib/orders/statuses";
+import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
+import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import {
   getReviewActorIdFromAuthorizationHeader,
   isAuthorizedReviewAuthorizationHeader,
@@ -377,7 +379,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
   const requestedOrderId = one(resolved?.orderId);
   const requestedQuickAction = one(resolved?.quickAction);
 
-  const allRows = await getAdminOrdersRows({ filter: "all", limit: 200 });
+  const [allRows, controlPlane] = await Promise.all([
+    getAdminOrdersRows({ filter: "all", limit: 200 }),
+    getControlPlaneOverview(),
+  ]);
   const rows = filter === "all" ? allRows : await getAdminOrdersRows({ filter, limit: 200 });
   const selectedOrderId = requestedOrderId || rows[0]?.orderId || null;
   const detail = selectedOrderId ? await getAdminOrderDetail(selectedOrderId) : null;
@@ -569,6 +574,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
             </div>
           ) : null}
         </header>
+
+        <div className="mt-5">
+          <ControlPlaneOverviewPanel data={controlPlane} variant="compact" />
+        </div>
 
         <section className="glass-panel mt-5 rounded-3xl border border-white/10 p-4">
           <div className="mb-4 rounded-2xl border border-white/10 bg-black/20 p-4">

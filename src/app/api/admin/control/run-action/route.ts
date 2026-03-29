@@ -1,33 +1,13 @@
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { getManualOverrideSnapshot } from "@/lib/control/manualOverrides";
+import { getControlQuickActionBlockedReason } from "@/lib/control/controlQuickActions";
 import { runControlQuickAction } from "@/lib/control/runControlQuickAction";
 import {
   getReviewActorIdFromAuthorizationHeader,
   isAuthorizedReviewAuthorizationHeader,
   isReviewConsoleConfigured,
 } from "@/lib/review/auth";
-
-function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>): string | null {
-  if (!snapshot.available) return "Manual override store unavailable. Actions blocked for safety.";
-  if (snapshot.entries.EMERGENCY_READ_ONLY.enabled) return "Emergency read-only mode is active.";
-  if (
-    snapshot.entries.PAUSE_PUBLISHING.enabled &&
-    (action === "promote" || action === "dry-run" || action === "monitor")
-  ) {
-    return "Publishing is paused.";
-  }
-  if (snapshot.entries.PAUSE_LISTING_PREPARATION.enabled && action === "prepare") {
-    return "Listing preparation is paused.";
-  }
-  if (snapshot.entries.PAUSE_MARKETPLACE_SCAN.enabled && action === "scan") {
-    return "Marketplace scan is paused.";
-  }
-  if (snapshot.entries.PAUSE_ORDER_SYNC.enabled && action === "order-sync") {
-    return "Order sync is paused.";
-  }
-  return null;
-}
 
 export async function POST(request: Request) {
   const auth = (await headers()).get("authorization");
@@ -40,7 +20,7 @@ export async function POST(request: Request) {
   const action = String(formData.get("actionKey") ?? "").trim();
 
   const overrideSnapshot = await getManualOverrideSnapshot();
-  const reason = blockedReason(action, overrideSnapshot);
+  const reason = getControlQuickActionBlockedReason(action, overrideSnapshot);
   if (reason) {
     return NextResponse.redirect(
       new URL(`/admin/control?actionError=${encodeURIComponent(reason)}`, request.url),

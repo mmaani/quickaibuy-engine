@@ -14,7 +14,9 @@ import { LISTING_STATUSES } from "@/lib/listings/statuses";
 import type { RecoveryState } from "@/lib/listings/recoveryState";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
 import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
+import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import { OptimizationDiagnostics } from "@/components/admin/OptimizationDiagnostics";
+import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,10 +124,11 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
   const resumeUpdated = String(resolvedSearchParams?.resumeUpdated ?? "").trim() === "1";
   const resumeError = String(resolvedSearchParams?.resumeError ?? "").trim();
 
-  const [overview, filterOptions, rows] = await Promise.all([
+  const [overview, filterOptions, rows, controlPlane] = await Promise.all([
     getListingsQueueOverview(),
     getListingsQueueFilterOptions(),
     getApprovedQueueItems(filters),
+    getControlPlaneOverview(),
   ]);
 
   const selectedCandidateId = filters.candidateId || rows[0]?.id || "";
@@ -172,6 +175,8 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
           {resumeUpdated ? <div className="mt-4 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">Paused listing resumed to PREVIEW. Promotion remains explicit and operator-triggered.</div> : null}
           {resumeError ? <div className="mt-4 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{resumeError}</div> : null}
         </header>
+
+        <ControlPlaneOverviewPanel data={controlPlane} variant="compact" />
 
         {activeRiskLegend ? (
           <section className="mt-5 rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">

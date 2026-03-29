@@ -1,10 +1,15 @@
+import { computeSupplierIntelligenceSignal } from "@/lib/suppliers/intelligence";
+
 type SupplierSelectionRow = {
   candidateId: string;
   marketplaceKey: string;
   marketplaceListingId: string;
+  supplierKey?: unknown;
+  supplierProductId?: unknown;
   supplierPrice: unknown;
   marginPct: unknown;
   estimatedProfit: unknown;
+  shippingEstimates?: unknown;
   supplierRawPayload: unknown;
 };
 
@@ -49,8 +54,29 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   const marginComponent = Math.max(0, Math.min(0.25, marginPct / 200));
   const mediaComponent = Math.max(0, Math.min(0.25, mediaQuality * 0.25));
   const stockReliabilityComponent = Math.max(0, Math.min(0.25, availabilityConfidence * 0.25));
+  const intelligence = computeSupplierIntelligenceSignal({
+    supplierKey: String(row.supplierKey ?? payload?.supplierKey ?? ""),
+    availabilitySignal: payload?.availabilitySignal ?? payload?.availability_status,
+    availabilityConfidence,
+    shippingEstimates: row.shippingEstimates ?? payload?.shippingEstimates ?? payload?.shipping_estimates,
+    rawPayload: payload,
+    shippingConfidence: payload?.shippingConfidence ?? payload?.shipping_confidence,
+    snapshotQuality: payload?.snapshotQuality ?? payload?.snapshot_quality,
+  });
+  const supplierIntelligenceComponent = intelligence.reliabilityScore * 0.3;
+  const aliExpressPenalty = intelligence.shouldDeprioritize ? 0.18 : 0;
 
-  return Number((priceComponent + marginComponent + mediaComponent + stockReliabilityComponent - shippingPenalty).toFixed(6));
+  return Number(
+    (
+      priceComponent +
+      marginComponent +
+      mediaComponent +
+      stockReliabilityComponent +
+      supplierIntelligenceComponent -
+      shippingPenalty -
+      aliExpressPenalty
+    ).toFixed(6)
+  );
 }
 
 export function selectBestSupplierRowsBeforeListing<T extends SupplierSelectionRow>(rows: T[]): T[] {

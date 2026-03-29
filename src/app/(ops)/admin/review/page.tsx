@@ -15,7 +15,9 @@ import {
   type ReviewListItem,
 } from "@/lib/review/console";
 import { isReviewConsoleConfigured } from "@/lib/review/auth";
+import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
 import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
+import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import { OptimizationDiagnostics } from "@/components/admin/OptimizationDiagnostics";
 
 export const runtime = "nodejs";
@@ -457,9 +459,10 @@ export default async function ReviewPage({
   const batchSkipped = Number(String(resolvedSearchParams?.batchSkipped ?? "0").trim() || "0");
   const batchSkipSummary = parseBatchSkipSummary(String(resolvedSearchParams?.batchSkipSummary ?? "").trim());
   const filters = getReviewFiltersFromSearchParams(resolvedSearchParams);
-  const [filterOptions, candidates] = await Promise.all([
+  const [filterOptions, candidates, controlPlane] = await Promise.all([
     getReviewFilterOptions(),
     getReviewCandidates(filters),
+    getControlPlaneOverview(),
   ]);
   const safeCandidateCount = candidates.filter((candidate) => isSafePresetCandidate(candidate)).length;
 
@@ -574,6 +577,8 @@ export default async function ReviewPage({
             </div>
           </form>
         </header>
+
+        <ControlPlaneOverviewPanel data={controlPlane} variant="compact" />
 
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,760px)_minmax(0,1fr)]">
           <section className="glass-panel rounded-3xl border border-white/10 p-4">

@@ -4,6 +4,9 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import RefreshButton from "@/app/_components/RefreshButton";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
+import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
+import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
+import { CONTROL_QUICK_ACTIONS, getControlQuickActionBlockedReason } from "@/lib/control/controlQuickActions";
 import { LISTINGS_RISK_FILTERS, LISTINGS_ROUTE } from "@/lib/listings/getApprovedListingsQueueData";
 import { getManualOverrideSnapshot, setManualOverride, type ManualOverrideKey } from "@/lib/control/manualOverrides";
 import {
@@ -268,33 +271,12 @@ function buildListingsRiskHref(riskFilter: string): string {
   return `${LISTINGS_ROUTE}?${params.toString()}`;
 }
 
-function blockedReason(action: string, snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>): string | null {
-  if (!snapshot.available) return "Manual override store unavailable. Actions blocked for safety.";
-  if (snapshot.entries.EMERGENCY_READ_ONLY.enabled) return "Emergency read-only mode is active.";
-  if (
-    snapshot.entries.PAUSE_PUBLISHING.enabled &&
-    (action === "promote" || action === "dry-run" || action === "monitor")
-  ) {
-    return "Publishing is paused.";
-  }
-  if (snapshot.entries.PAUSE_LISTING_PREPARATION.enabled && action === "prepare") {
-    return "Listing preparation is paused.";
-  }
-  if (snapshot.entries.PAUSE_MARKETPLACE_SCAN.enabled && action === "scan") {
-    return "Marketplace scan is paused.";
-  }
-  if (snapshot.entries.PAUSE_ORDER_SYNC.enabled && action === "order-sync") {
-    return "Order sync is paused.";
-  }
-  return null;
-}
-
 function getQuickActionState(
   action: string,
   snapshot: Awaited<ReturnType<typeof getManualOverrideSnapshot>>,
   data: Awaited<ReturnType<typeof getControlPanelData>>
 ): { blockedReason: string | null; caution: string | null } {
-  const overrideBlocked = blockedReason(action, snapshot);
+  const overrideBlocked = getControlQuickActionBlockedReason(action, snapshot);
   if (overrideBlocked) {
     return { blockedReason: overrideBlocked, caution: null };
   }
@@ -310,9 +292,9 @@ function getQuickActionState(
     data.listingLifecycle.dailyCap.exhausted;
   const publishRateBlocked = !data.listingLifecycle.publishRateLimit.allowed;
 
-  if (action === "promote") {
+  if (action === "autonomous-full" || action === "autonomous-prepare") {
     if (dailyCapExhausted) {
-      return { blockedReason: "Daily publish cap is exhausted. Wait for cap reset before promoting.", caution: null };
+      return { blockedReason: "Daily publish cap is exhausted. Wait for cap reset before running promotion/publish stages.", caution: null };
     }
     if (publishRateBlocked) {
       return {
@@ -328,23 +310,23 @@ function getQuickActionState(
     }
     if (hasPublishFailures) {
       return {
-        blockedReason: "Recent publish failures need review before promoting more listings.",
+        blockedReason: "Recent publish failures need review before allowing autonomous listing progression.",
         caution: null,
       };
     }
   }
 
-  if ((action === "prepare" || action === "dry-run") && (hasSafetyBlocks || hasRecheckNeeded)) {
+  if ((action === "autonomous-refresh" || action === "autonomous-prepare") && (hasSafetyBlocks || hasRecheckNeeded)) {
     return {
       blockedReason: null,
-      caution: "Safety blocks exist. Use this action for diagnostics, then recover rows in /admin/listings.",
+      caution: "Safety blocks exist. Use the autonomous pass for diagnostics/recovery, then review blocked rows in /admin/listings.",
     };
   }
 
-  if (action === "monitor" && hasPublishFailures) {
+  if (action === "autonomous-full" && hasPublishFailures) {
     return {
       blockedReason: null,
-      caution: "Publish failures exist. Review failure reasons after running monitor.",
+      caution: "Publish failures exist. Review failure reasons after the autonomous run completes.",
     };
   }
 
@@ -372,9 +354,10 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   await requireAdmin();
   const resolvedSearchParams = await searchParams;
   let data: Awaited<ReturnType<typeof getControlPanelData>> | null = null;
+  let controlPlane: Awaited<ReturnType<typeof getControlPlaneOverview>> | null = null;
 
   try {
-    data = await getControlPanelData();
+    [data, controlPlane] = await Promise.all([getControlPanelData(), getControlPlaneOverview()]);
   } catch {}
 
   if (!data) {
@@ -411,18 +394,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
     (data.purchaseSafety.blockedSupplierDrift ?? 0) > 0 ||
     (data.purchaseSafety.blockedEconomics ?? 0) > 0;
 
-  const quickActions: Array<{ key: string; label: string }> = [
-    { key: "supplier", label: "Run supplier discover" },
-    { key: "match", label: "Run matching" },
-    { key: "scan", label: "Run marketplace scan" },
-    { key: "profit", label: "Run profit engine" },
-    { key: "order-sync", label: "Run eBay order sync" },
-    { key: "inventory-risk-scan", label: "Run inventory risk scan" },
-    { key: "prepare", label: "Prepare listing previews" },
-    { key: "promote", label: "Promote listing previews ready" },
-    { key: "dry-run", label: "Capture listing execution diagnostic snapshot" },
-    { key: "monitor", label: "Capture listing monitor diagnostic snapshot" },
-  ];
+  const quickActions = CONTROL_QUICK_ACTIONS;
 
   const nextSteps: string[] = [];
   if ((data.inventoryRisk.autoPausedListings ?? 0) > 0) {
@@ -461,16 +433,16 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   );
   const quickActionGuidance = [
     {
-      title: "Run pipeline steps",
-      description: "Use supplier, matching, marketplace scan, and profit engine when source data needs a refresh.",
+      title: "Run the canonical orchestrator first",
+      description: "Use autonomous refresh, prepare, or full-cycle actions before falling back to lower-level maintenance work.",
     },
     {
-      title: "Use diagnostics before publishing",
-      description: "Prepare, execution snapshot, and monitor snapshot help you check state without bypassing review rules.",
+      title: "Use the exception consoles after automation",
+      description: "Review, Listings, and Orders are for exceptions and operator decisions after the backbone has refreshed and healed state.",
     },
     {
       title: "Manual actions stay manual",
-      description: "Publishing, listing recovery, and order handling still require the existing operator-driven flow.",
+      description: "Supplier purchase/payment and exceptional investigations remain the only human tasks.",
     },
   ];
   const sourceHealthCards = buildSourceHealthCards(data);
@@ -497,6 +469,26 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <div className="mt-3 rounded-xl border border-rose-300/30 bg-rose-500/10 p-3 text-sm text-rose-100">{actionError}</div>
           ) : null}
         </header>
+
+        {controlPlane ? <ControlPlaneOverviewPanel data={controlPlane} /> : null}
+
+        {controlPlane ? (
+          <Section title="Control-Plane Route Map">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/70">
+              Dashboard and admin pages now share one autonomous backbone truth source for runtime, pauses, integrity, shipping blocks, and remaining human work.
+            </div>
+            <div className="mt-4">
+              <DataTable
+                rows={controlPlane.routeMap.map((route) => ({
+                  route: route.route,
+                  loader: route.loader,
+                  focus: route.primaryFocus,
+                }))}
+                empty="No route map available."
+              />
+            </div>
+          </Section>
+        ) : null}
 
         <Section title="What To Do Next">
           {nextSteps.length ? (

@@ -10,6 +10,11 @@ import { searchCjByKeyword } from "@/lib/products/suppliers/cjdropshipping";
 import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
 import { supplierProductToRawInsert } from "@/lib/products/supplierSnapshots";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
+import {
+  canonicalSupplierKey,
+  compareSupplierIntelligence,
+  computeSupplierIntelligenceForDiscover,
+} from "@/lib/suppliers/intelligence";
 
 export type SupplierDiscoverResult = {
   processedCandidates: number;
@@ -79,12 +84,7 @@ const SIMPLE_VARIANT_NEGATIVE_HINTS = [
 ];
 
 function canonicalSupplierSource(source: string | null | undefined): string {
-  const normalized = String(source ?? "").trim().toLowerCase();
-  if (normalized === "cj dropshipping" || normalized === "cjdropshipping") return "cjdropshipping";
-  if (normalized === "aliexpress" || normalized === "ali_express") return "aliexpress";
-  if (normalized === "alibaba") return "alibaba";
-  if (normalized === "temu") return "temu";
-  return normalized || "unknown";
+  return canonicalSupplierKey(source) || "unknown";
 }
 
 function createSourceBreakdown(source: string): MutableSupplierSourceBreakdown {
@@ -246,29 +246,8 @@ function isTargetedDiscoveryFriendly(item: SupplierProduct): boolean {
   );
 }
 
-function supplierDiscoveryPriority(item: SupplierProduct): number {
-  const source = canonicalSupplierSource(item.platform);
-  if (source === "cjdropshipping") return 4;
-  if (source === "temu") return 3;
-  if (source === "alibaba") return 2;
-  if (source === "aliexpress") return 1;
-  return 0;
-}
-
 function shouldDeprioritizeSupplier(item: SupplierProduct): boolean {
-  const source = canonicalSupplierSource(item.platform);
-  if (source !== "aliexpress") return false;
-  const availabilitySignal = String(item.availabilitySignal ?? "").trim().toUpperCase();
-  const evidenceQuality = String(item.raw?.availabilityEvidenceQuality ?? "").trim().toUpperCase();
-  const shippingSignal = String(item.raw?.shippingSignal ?? "").trim().toUpperCase();
-  const telemetrySignals = new Set((item.telemetrySignals ?? []).map((value) => String(value).toLowerCase()));
-
-  return (
-    availabilitySignal === "UNKNOWN" &&
-    evidenceQuality !== "HIGH" &&
-    (shippingSignal === "MISSING" || shippingSignal === "INFERRED") &&
-    (telemetrySignals.has("low_quality") || telemetrySignals.has("fallback") || telemetrySignals.size === 0)
-  );
+  return computeSupplierIntelligenceForDiscover(item).shouldDeprioritize;
 }
 
 export async function runSupplierDiscover(limitPerKeyword = 20): Promise<SupplierDiscoverResult> {
@@ -297,7 +276,10 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     ]);
 
     const allProducts = [...cj, ...aliexpress, ...alibaba, ...temu].sort((left, right) => {
-      const priorityDelta = supplierDiscoveryPriority(right) - supplierDiscoveryPriority(left);
+      const priorityDelta = compareSupplierIntelligence(
+        computeSupplierIntelligenceForDiscover(left),
+        computeSupplierIntelligenceForDiscover(right)
+      );
       if (priorityDelta !== 0) return priorityDelta;
       return canonicalSupplierSource(left.platform).localeCompare(canonicalSupplierSource(right.platform));
     });

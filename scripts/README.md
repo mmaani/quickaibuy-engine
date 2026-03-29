@@ -84,6 +84,16 @@ These ambiguous scripts were renamed to explicit-risk names:
   - mixed `.env.local`/`.env.vercel` fallback behavior is outside the active env model
 - `scripts/run_marketplace_scan_monitoring_latest.ts`
   - versioned duplicate of the canonical monitoring command
+- `scripts/enqueue_listing_prepare.ts`
+  - routine listing progression is now owned by `pnpm ops:autonomous`
+- `scripts/enqueue_listing_prepare_approved.ts`
+  - prepare-only behavior is superseded by the autonomous prepare phase
+- `scripts/promote_listing_previews_ready.ts`
+  - ready-promotion is now part of the autonomous prepare cycle
+- `scripts/publish_one_ready_listing.ts`
+  - one-off publish is not the canonical control-plane path
+- `scripts/run_shipping_orphan_resolution.ts`
+  - shipping recovery now lives in shared automation helpers plus the autonomous backbone
 
 
 ## Phase 2 canonicalization (duplicate wrappers and versioned variants)
@@ -92,6 +102,7 @@ The following scripts are kept for one transition phase as **deprecated warning 
 
 | Canonical command | Deprecated command | Replacement path |
 |---|---|---|
+| `pnpm ops:autonomous` | `pnpm exec tsx scripts/enqueue_listing_prepare.ts`, `pnpm exec tsx scripts/enqueue_listing_prepare_approved.ts`, `pnpm exec tsx scripts/promote_listing_previews_ready.ts`, `pnpm exec tsx scripts/publish_one_ready_listing.ts`, `pnpm exec tsx scripts/run_shipping_orphan_resolution.ts` | Use the canonical autonomous backbone for routine diagnostics, healing, refresh, prepare, shipping recovery, and guarded publish flow. |
 | `node scripts/check_audit_log.mjs` | `bash scripts/run_check_audit_log.sh` | Run canonical command directly. |
 | `node scripts/check_marketplace_price_urls.mjs` | `bash scripts/run_check_marketplace_price_urls.sh` | Run canonical command directly. |
 | `node --import dotenv/config scripts/check_marketplace_prices.mjs` | `bash scripts/run_check_marketplace_prices.sh` | Run canonical command directly. |

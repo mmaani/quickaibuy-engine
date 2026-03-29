@@ -5,6 +5,8 @@ import { handleMarketplaceScanJob } from "@/lib/jobs/marketplaceScan";
 import { handleMatchProductsJob } from "@/lib/jobs/matchProducts";
 import { runProfitEngine } from "@/lib/profit/profitEngine";
 import { refreshSingleSupplierProduct } from "@/lib/products/refreshSingleSupplierProduct";
+import { compareSupplierIntelligence, computeSupplierIntelligenceSignal } from "@/lib/suppliers/intelligence";
+import { getSupplierRefreshSuccessRateMap } from "@/lib/suppliers/telemetry";
 import { sql } from "drizzle-orm";
 
 export type MatchedSupplierRefreshTarget = {
@@ -12,6 +14,8 @@ export type MatchedSupplierRefreshTarget = {
   supplierProductId: string;
   currentSnapshotId: string | null;
   candidateIds: string[];
+  shippingEstimates: unknown;
+  rawPayload: unknown;
 };
 
 export type MatchedSupplierRefreshOutcome = {
@@ -28,6 +32,8 @@ type RefreshTargetRow = {
   supplierProductId: string;
   currentSnapshotId: string | null;
   candidateIds: string[] | null;
+  shippingEstimates: unknown;
+  rawPayload: unknown;
 };
 
 export async function getMatchedSupplierRefreshTargets(input?: {
@@ -70,6 +76,22 @@ export async function getMatchedSupplierRefreshTargets(input?: {
         ORDER BY pr.snapshot_ts DESC, pr.id DESC
         LIMIT 1
       ) AS "currentSnapshotId",
+      (
+        SELECT pr.shipping_estimates
+        FROM products_raw pr
+        WHERE LOWER(pr.supplier_key) = rt.supplier_key
+          AND pr.supplier_product_id = rt.supplier_product_id
+        ORDER BY pr.snapshot_ts DESC, pr.id DESC
+        LIMIT 1
+      ) AS "shippingEstimates",
+      (
+        SELECT pr.raw_payload
+        FROM products_raw pr
+        WHERE LOWER(pr.supplier_key) = rt.supplier_key
+          AND pr.supplier_product_id = rt.supplier_product_id
+        ORDER BY pr.snapshot_ts DESC, pr.id DESC
+        LIMIT 1
+      ) AS "rawPayload",
       COALESCE(
         ARRAY(
           SELECT DISTINCT pc.id::text
@@ -94,12 +116,35 @@ export async function getMatchedSupplierRefreshTargets(input?: {
     LIMIT ${limit}
   `);
 
+  const refreshSuccessRates = await getSupplierRefreshSuccessRateMap();
+
   return (result.rows ?? []).map((row) => ({
     supplierKey: String(row.supplierKey ?? "").trim().toLowerCase(),
     supplierProductId: String(row.supplierProductId ?? "").trim(),
     currentSnapshotId: row.currentSnapshotId ? String(row.currentSnapshotId) : null,
     candidateIds: Array.isArray(row.candidateIds) ? row.candidateIds.map((value) => String(value)) : [],
-  }));
+    shippingEstimates: row.shippingEstimates ?? null,
+    rawPayload: row.rawPayload ?? null,
+  })).sort((left, right) => {
+    const intelligenceOrder = compareSupplierIntelligence(
+      computeSupplierIntelligenceSignal({
+        supplierKey: left.supplierKey,
+        shippingEstimates: left.shippingEstimates,
+        rawPayload: left.rawPayload,
+        refreshSuccessRate: refreshSuccessRates.get(left.supplierKey) ?? null,
+      }),
+      computeSupplierIntelligenceSignal({
+        supplierKey: right.supplierKey,
+        shippingEstimates: right.shippingEstimates,
+        rawPayload: right.rawPayload,
+        refreshSuccessRate: refreshSuccessRates.get(right.supplierKey) ?? null,
+      })
+    );
+    if (intelligenceOrder !== 0) return intelligenceOrder;
+    return `${left.supplierKey}:${left.supplierProductId}`.localeCompare(
+      `${right.supplierKey}:${right.supplierProductId}`
+    );
+  });
 }
 
 async function getApprovedCandidatesForSupplierProduct(input: {
