@@ -58,11 +58,15 @@
 │   │   │   └── drift-and-anomaly.md
 │   │   ├── learning-hub
 │   │   │   ├── ai-evals-and-labeling.md
-│   │   │   └── learning-loop.md
+│   │   │   ├── learning-loop.md
+│   │   │   ├── product-knowledge-graph.md
+│   │   │   └── product-market-intelligence.md
 │   │   ├── listings
+│   │   │   ├── attribute-intelligence.md
 │   │   │   ├── listing-lifecycle.md
 │   │   │   └── listing-quality.md
 │   │   ├── matching
+│   │   │   ├── marketplace-fit-intelligence.md
 │   │   │   ├── match-quality.md
 │   │   │   └── product-matching.md
 │   │   ├── orders
@@ -75,6 +79,7 @@
 │   │   │   ├── shipping-intelligence.md
 │   │   │   └── shipping-recovery-engine.md
 │   │   ├── supplier-intelligence
+│   │   │   ├── category-supplier-strategy.md
 │   │   │   ├── supplier-failure-patterns.md
 │   │   │   └── supplier-ranking.md
 │   │   └── troubleshooting
@@ -410,13 +415,13 @@
 │   ├── test_listing_verification_and_audit.ts
 │   ├── test_paused_listing_lifecycle_guardrails.ts
 │   ├── test_product_discover.mjs
+│   ├── test_product_market_intelligence.ts
 │   ├── test_product_matcher.mjs
 │   ├── test_profit_hard_gate.ts
 │   ├── test_query_budget_allocator.mjs
 │   ├── test_supplier_discover.ts
 │   ├── test_supplier_linkage_closure.ts
 │   ├── test_trend_expand.mjs
-│   ├── tmp_learning_hub_probe.ts
 │   ├── update_repo_tree.mjs
 │   ├── validate_inventory_risk_scenarios.ts
 │   ├── validate_listing_schema_alignment.mjs
@@ -602,11 +607,14 @@
 │   │   ├── leads
 │   │   │   └── notifications.ts
 │   │   ├── learningHub
+│   │   │   ├── __tests__
+│   │   │   │   └── productMarketIntelligence.test.ts
 │   │   │   ├── contracts.ts
 │   │   │   ├── drift.ts
 │   │   │   ├── evals.ts
 │   │   │   ├── featureStore.ts
 │   │   │   ├── pipelineWriters.ts
+│   │   │   ├── productMarketIntelligence.ts
 │   │   │   ├── scorecard.ts
 │   │   │   └── types.ts
 │   │   ├── listings
@@ -766,4 +774,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-119 directories, 648 files
+120 directories, 655 files
