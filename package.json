@@ -51,7 +51,8 @@
     "check:schema-drift": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/check_schema_drift.ts",
     "enqueue:listing-optimize": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/enqueue_listing_optimize.ts",
     "worker:railway-env:build": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/build_railway_worker_env.ts",
-    "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts"
+    "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts",
+    "resolve:shipping-orphan": "DOTENV_CONFIG_PATH=.env.local node --import dotenv/config --import tsx scripts/run_shipping_orphan_resolution.ts"
   },
   "dependencies": {
     "bullmq": "^5.70.2",
