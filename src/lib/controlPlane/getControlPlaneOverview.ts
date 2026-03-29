@@ -9,6 +9,7 @@ import {
   type AutonomousOpsSummary,
   type StageKey,
 } from "@/lib/autonomousOps/backbone";
+import type { FullCycleRunResult } from "@/lib/autonomousOps/fullCycle";
 
 type LatestRunSnapshot = {
   generatedAt: string | null;
@@ -43,15 +44,25 @@ export type ControlPlaneOverview = {
     dbTargetClassification: string | null;
     hasEbayClientId: boolean;
     hasEbayClientSecret: boolean;
+    sensitiveFilesPresent: string[];
+    sensitiveFilePolicy: {
+      canonical: Array<{ file: string; present: boolean }>;
+      compatibility: Array<{ file: string; present: boolean }>;
+      shouldNotBePresent: Array<{ file: string; present: boolean }>;
+      operatingBranch: "main";
+      canonicalFullCycleCommand: "pnpm ops:full-cycle";
+    } | null;
   };
   summary: AutonomousOpsSummary;
   pauses: Array<{ stage: StageKey; reason: string }>;
   latestRun: LatestRunSnapshot | null;
+  latestFullCycleRun: LatestRunSnapshot | null;
   latestIntegrityHeal: IntegrityHealSnapshot | null;
   health: {
     pipelineState: "healthy" | "watch" | "paused";
     humanActionRequired: boolean;
     manualWorkLabel: string;
+    safeToRunFullCycleNow: boolean;
   };
   anomalyGroups: Array<{
     key: string;
@@ -70,7 +81,7 @@ export type ControlPlaneOverview = {
 
 function parseLatestRun(details: unknown): LatestRunSnapshot | null {
   if (!details || typeof details !== "object") return null;
-  const run = details as Partial<AutonomousOpsRunResult>;
+  const run = details as Partial<AutonomousOpsRunResult & FullCycleRunResult>;
   const stages = Array.isArray(run.stages) ? run.stages : [];
   const pauses = Array.isArray(run.pauses) ? run.pauses : [];
   return {
@@ -127,6 +138,17 @@ async function getLatestAutonomousRunDetails(): Promise<unknown | null> {
     SELECT details
     FROM audit_log
     WHERE event_type = 'AUTONOMOUS_OPS_BACKBONE_COMPLETED'
+    ORDER BY event_ts DESC
+    LIMIT 1
+  `);
+  return result.rows?.[0]?.details ?? null;
+}
+
+async function getLatestFullCycleRunDetails(): Promise<unknown | null> {
+  const result = await db.execute<{ details: unknown }>(sql`
+    SELECT details
+    FROM audit_log
+    WHERE event_type = 'FULL_CYCLE_RUN_COMPLETED'
     ORDER BY event_ts DESC
     LIMIT 1
   `);
@@ -297,22 +319,38 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   const pauseMap = await computePauseMap(runtime, summary);
   const latestRunDetails = await getLatestAutonomousRunDetails();
   const latestRun = parseLatestRun(latestRunDetails);
+  const latestFullCycleRunDetails = await getLatestFullCycleRunDetails();
+  const latestFullCycleRun = parseLatestRun(latestFullCycleRunDetails);
   const latestIntegrityHeal = extractLatestIntegrityHeal(latestRunDetails);
   const learningHub = await getLearningHubScorecard();
   const pauses = Array.from(pauseMap.entries()).map(([stage, reason]) => ({ stage, reason }));
   const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun);
   const recommendations = buildRecommendations(summary, pauses, latestRun);
+  const safeToRunFullCycleNow =
+    runtime.hasEbayClientId &&
+    runtime.hasEbayClientSecret &&
+    pauses.length === 0 &&
+    summary.integrity.orphanReadyToPublishCount === 0 &&
+    summary.integrity.detachedPreviewCount === 0 &&
+    summary.integrity.orphanActiveCount === 0 &&
+    summary.integrity.brokenLineageCount === 0;
 
   return {
     generatedAt: new Date().toISOString(),
-    runtime,
+    runtime: {
+      ...runtime,
+      sensitiveFilesPresent: runtime.sensitiveFilesPresent ?? [],
+      sensitiveFilePolicy: runtime.sensitiveFilePolicy ?? null,
+    },
     summary,
     pauses,
     latestRun,
+    latestFullCycleRun,
     latestIntegrityHeal,
     health: {
       pipelineState: pauses.length > 0 ? "paused" : anomalyGroups.length > 0 ? "watch" : "healthy",
       humanActionRequired: summary.manualPurchaseQueueCount > 0,
+      safeToRunFullCycleNow,
       manualWorkLabel:
         summary.manualPurchaseQueueCount > 0
           ? `${summary.manualPurchaseQueueCount} orders need supplier purchase/payment`

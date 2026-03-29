@@ -58,6 +58,9 @@ export function ControlPlaneOverviewPanel({
   const compact = variant === "compact";
   const runtimeSourceLabel = data.runtime.envSource ?? data.runtime.dotenvPath ?? "unknown";
   const latestRunLabel = latestRun?.generatedAt ? formatDateTime(latestRun.generatedAt) : "unavailable";
+  const latestFullCycleLabel = data.latestFullCycleRun?.generatedAt
+    ? formatDateTime(data.latestFullCycleRun.generatedAt)
+    : "unavailable";
   const topSuppliers = [...data.summary.supplierReliability]
     .sort((left, right) => right.candidates - left.candidates)
     .slice(0, compact ? 2 : 4);
@@ -91,6 +94,29 @@ export function ControlPlaneOverviewPanel({
         <Stat label="Ready to publish" value={data.summary.pipeline.readyToPublish} />
         <Stat label="Manual purchase queue" value={data.summary.manualPurchaseQueueCount} />
         <Stat label="Repeat customers" value={data.summary.repeatCustomerGrowth.repeatCustomers} />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+        <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Operating mode</div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat label="Operating branch" value={data.runtime.sensitiveFilePolicy?.operatingBranch ?? "main"} />
+          <Stat label="Canonical command" value={data.runtime.sensitiveFilePolicy?.canonicalFullCycleCommand ?? "pnpm ops:full-cycle"} />
+          <Stat label="Full-cycle available" value={data.runtime.sensitiveFilePolicy ? "yes" : "yes"} />
+          <Stat label="Safe to run now" value={data.health.safeToRunFullCycleNow ? "yes" : "no"} />
+        </div>
+        <div className="mt-3 text-sm text-white/70">
+          Last full-cycle run {latestFullCycleLabel}. Result {data.latestFullCycleRun?.ok == null ? "unknown" : data.latestFullCycleRun.ok ? "ok" : "failed"}.
+        </div>
+        {data.latestFullCycleRun?.stages?.length ? (
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {data.latestFullCycleRun.stages.slice(0, compact ? 4 : 9).map((stage) => (
+              <div key={stage.key} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/75">
+                {stage.key}: {stage.status}
+                {stage.reasonCode ? ` (${stage.reasonCode})` : ""}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {data.learningHub ? (
@@ -181,6 +207,13 @@ export function ControlPlaneOverviewPanel({
               </div>
             )}
           </div>
+          {data.runtime.sensitiveFilePolicy ? (
+            <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75">
+              <div>Canonical files: {data.runtime.sensitiveFilePolicy.canonical.filter((file) => file.present).map((file) => file.file).join(", ") || "none detected"}</div>
+              <div className="mt-1">Compatibility files: {data.runtime.sensitiveFilePolicy.compatibility.filter((file) => file.present).map((file) => file.file).join(", ") || "none detected"}</div>
+              <div className="mt-1">Should remove from normal working exports: {data.runtime.sensitiveFilePolicy.shouldNotBePresent.filter((file) => file.present).map((file) => file.file).join(", ") || "none detected"}</div>
+            </div>
+          ) : null}
         </div>
       </div>
 

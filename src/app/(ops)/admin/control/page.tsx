@@ -433,8 +433,8 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   );
   const quickActionGuidance = [
     {
-      title: "Run the canonical orchestrator first",
-      description: "Use autonomous refresh, prepare, or full-cycle actions before falling back to lower-level maintenance work.",
+      title: "Run the canonical full-cycle first",
+      description: "Use pnpm ops:full-cycle or the matching control action before falling back to lower-level maintenance work.",
     },
     {
       title: "Use the exception consoles after automation",

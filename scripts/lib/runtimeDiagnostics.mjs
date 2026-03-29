@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns/promises";
+import net from "node:net";
 import { diagnosePgConnectivity } from "./pgRetry.mjs";
 import { getDbTargetContext } from "./dbTarget.mjs";
 import {
@@ -12,13 +14,16 @@ import {
   loadRuntimeEnv,
 } from "./envState.mjs";
 
-const SENSITIVE_REPO_FILES = [
-  ".env.prod",
-  ".env.vercel",
-  "codex.secrets.private",
-  "codex.dev.secrets.private",
-  "codex.prod.secrets.private",
-];
+const FILE_POLICY = {
+  canonical: [".env", ".env.active.json", ".env.dev", ".env.prod"],
+  compatibility: [".env.local"],
+  shouldNotBePresent: [
+    ".env.vercel",
+    "codex.secrets.private",
+    "codex.dev.secrets.private",
+    "codex.prod.secrets.private",
+  ],
+};
 
 function exists(relPath) {
   return fs.existsSync(path.resolve(relPath));
@@ -28,10 +33,131 @@ function truthyEnv(key) {
   return Boolean(String(process.env[key] ?? "").trim());
 }
 
+async function lookupHost(host) {
+  try {
+    const addresses = await dns.lookup(host, { all: true });
+    return {
+      ok: true,
+      addresses: addresses.map((entry) => entry.address),
+      family: addresses.map((entry) => entry.family),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error?.code ?? null,
+      message: error instanceof Error ? error.message : String(error),
+      addresses: [],
+      family: [],
+    };
+  }
+}
+
+function tcpProbe(host, port, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.destroy();
+      } catch {}
+      resolve(result);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.on("connect", () => finish({ ok: true }));
+    socket.on("timeout", () => finish({ ok: false, code: "ETIMEDOUT", message: "TCP connection timed out" }));
+    socket.on("error", (error) =>
+      finish({
+        ok: false,
+        code: error?.code ?? null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+  });
+}
+
+async function diagnoseRedisConnectivity(options = {}) {
+  const redisUrl = String(process.env.REDIS_URL ?? "").trim();
+  if (!redisUrl) {
+    return {
+      configured: false,
+      host: null,
+      port: null,
+      dns_ok: false,
+      dns_addresses: [],
+      tcp_ok: false,
+      error_kind: "missing",
+      error_code: "MISSING_REDIS_URL",
+      error_message: "REDIS_URL is not configured",
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(redisUrl);
+  } catch (error) {
+    return {
+      configured: true,
+      host: null,
+      port: null,
+      dns_ok: false,
+      dns_addresses: [],
+      tcp_ok: false,
+      error_kind: "parse",
+      error_code: "INVALID_REDIS_URL",
+      error_message: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const host = parsed.hostname || null;
+  const port = parsed.port ? Number(parsed.port) : 6379;
+  if (!host) {
+    return {
+      configured: true,
+      host: null,
+      port,
+      dns_ok: false,
+      dns_addresses: [],
+      tcp_ok: false,
+      error_kind: "parse",
+      error_code: "INVALID_REDIS_HOST",
+      error_message: "REDIS_URL does not include a hostname",
+    };
+  }
+
+  const dnsResult = await lookupHost(host);
+  const tcpResult = dnsResult.ok ? await tcpProbe(host, port, Number(options.timeoutMs ?? 5000)) : { ok: false };
+
+  return {
+    configured: true,
+    host,
+    port,
+    dns_ok: Boolean(dnsResult.ok),
+    dns_addresses: dnsResult.addresses,
+    tcp_ok: Boolean(tcpResult.ok),
+    error_kind: dnsResult.ok ? (tcpResult.ok ? null : "tcp") : "dns",
+    error_code: dnsResult.ok ? (tcpResult.ok ? null : tcpResult.code ?? null) : dnsResult.code ?? null,
+    error_message: dnsResult.ok ? (tcpResult.ok ? null : tcpResult.message ?? null) : dnsResult.message ?? null,
+  };
+}
+
 export async function getRuntimeDiagnostics(options = {}) {
   const dotenvPath = loadRuntimeEnv();
   const dbTarget = getDbTargetContext({ loadEnv: true, envPath: dotenvPath });
   const includeConnectivity = options.includeConnectivity !== false;
+  const sensitiveFilePolicy = {
+    canonical: FILE_POLICY.canonical.map((file) => ({ file, present: exists(file) })),
+    compatibility: FILE_POLICY.compatibility.map((file) => ({ file, present: exists(file) })),
+    shouldNotBePresent: FILE_POLICY.shouldNotBePresent.map((file) => ({ file, present: exists(file) })),
+    operatingBranch: /** @type {"main"} */ ("main"),
+    canonicalFullCycleCommand: /** @type {"pnpm ops:full-cycle"} */ ("pnpm ops:full-cycle"),
+  };
+  const sensitiveFilesPresent = sensitiveFilePolicy.shouldNotBePresent
+    .filter((item) => item.present)
+    .map((item) => item.file);
 
   return {
     dotenvPath,
@@ -51,7 +177,13 @@ export async function getRuntimeDiagnostics(options = {}) {
       prodSource: exists(PROD_ENV_FILE),
       legacyProdSource: exists(LEGACY_PROD_ENV_FILE),
     },
-    sensitiveFilesPresent: SENSITIVE_REPO_FILES.filter((file) => exists(file)),
-    connectivity: includeConnectivity ? await diagnosePgConnectivity({ attempts: 1 }) : null,
+    sensitiveFilePolicy,
+    sensitiveFilesPresent,
+    connectivity: includeConnectivity
+      ? {
+          postgres: await diagnosePgConnectivity({ attempts: 1 }),
+          redis: await diagnoseRedisConnectivity({ timeoutMs: 5000 }),
+        }
+      : null,
   };
 }

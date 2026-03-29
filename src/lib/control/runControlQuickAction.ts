@@ -2,6 +2,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { enqueueInventoryRiskScan } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { syncEbayOrders } from "@/lib/orders/syncEbayOrders";
 import { runAutonomousOperations } from "@/lib/autonomousOps/backbone";
+import { runCanonicalFullCycle } from "@/lib/autonomousOps/fullCycle";
 
 export async function runControlQuickAction(action: string, actorId: string): Promise<string> {
   let message = "Action completed.";
@@ -21,12 +22,11 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
     });
     message = `Autonomous prepare cycle completed. ok=${result.ok}. ready_to_publish=${result.summary.pipeline.readyToPublish}.`;
   } else if (action === "autonomous-full") {
-    const result = await runAutonomousOperations({
-      phase: "full",
+    const result = await runCanonicalFullCycle({
       actorId: `admin-control:${actorId}`,
       actorType: "ADMIN",
     });
-    message = `Autonomous full cycle completed. ok=${result.ok}. pauses=${result.pauses.length}, ready_to_publish=${result.summary.pipeline.readyToPublish}.`;
+    message = `Canonical full cycle completed via pnpm ops:full-cycle. ok=${result.ok}. pauses=${result.pauses.length}, ready_to_publish=${result.summary.pipeline.readyToPublish}.`;
   } else if (action === "order-sync") {
     const result = await syncEbayOrders({
       limit: Number(process.env.ORDER_SYNC_FETCH_LIMIT ?? 50),

@@ -130,6 +130,14 @@ export type RuntimeDiagnostics = {
   dbTargetClassification: string | null;
   hasEbayClientId: boolean;
   hasEbayClientSecret: boolean;
+  sensitiveFilePolicy?: {
+    canonical: Array<{ file: string; present: boolean }>;
+    compatibility: Array<{ file: string; present: boolean }>;
+    shouldNotBePresent: Array<{ file: string; present: boolean }>;
+    operatingBranch: "main";
+    canonicalFullCycleCommand: "pnpm ops:full-cycle";
+  };
+  sensitiveFilesPresent?: string[];
 };
 
 function normalizeActorType(value?: string): ActorType {
@@ -192,6 +200,10 @@ export async function getRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
       : null,
     hasEbayClientId: Boolean(diagnostics.hasEbayClientId),
     hasEbayClientSecret: Boolean(diagnostics.hasEbayClientSecret),
+    sensitiveFilePolicy: diagnostics.sensitiveFilePolicy ?? undefined,
+    sensitiveFilesPresent: Array.isArray(diagnostics.sensitiveFilesPresent)
+      ? diagnostics.sensitiveFilesPresent.map((value: unknown) => String(value))
+      : undefined,
   };
 }
 

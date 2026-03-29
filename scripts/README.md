@@ -33,10 +33,21 @@ Shared shell guard helper: `scripts/lib/preflightMutation.sh`.
 
 See [docs/env-db-targeting.md](/workspaces/quickaibuy-engine/docs/env-db-targeting.md).
 
+## Canonical operating mode on `main`
+
+- `main` is the operating branch.
+- Branch choice does not override runtime target; active runtime still comes from `.env` and DB target classification.
+- Daily operation uses one canonical command: `pnpm ops:full-cycle`.
+- `pnpm ops:autonomous` remains the lower-level backbone phase runner, not the daily operator command.
+
 ## Canonical command map
 
 | Intent | Canonical command | Risk | Prod-safe | Owner thread |
 |---|---|---:|---|---|
+| Run the canonical daily operating cycle | `pnpm ops:full-cycle` | HIGH | Guarded | Production Operating Mode + Canonical Full-Cycle Launcher |
+| Run the backbone phase runner directly | `pnpm ops:autonomous [full\|diagnostics_refresh\|prepare\|publish]` | HIGH | Guarded | Autonomous Operations Backbone |
+| Run runtime diagnostics | `pnpm runtime:diag` | MED | Yes | Platform Setup / Infrastructure |
+| Run live integrity diagnostics | `pnpm check:live-integrity` | MED | Yes | Platform Setup / Infrastructure |
 | Execute one SQL migration file | `node scripts/mutate_execute_sql_file.mjs migrations/<file>.sql` | HIGH | No (guarded) | Platform Setup / Infrastructure |
 | Run trend-candidates migration | `bash scripts/run_trend_candidates_migration.sh` | HIGH | No (guarded) | Platform Setup / Infrastructure |
 | Run matches migration | `bash scripts/run_matches_migration.sh` | HIGH | No (guarded) | Platform Setup / Infrastructure |
@@ -105,6 +116,13 @@ These ambiguous scripts were renamed to explicit-risk names:
   - replaced by Learning Hub scorecards in the control plane
 - `scripts/check_match_quality.ts`
   - replaced by Learning Hub match evidence + scorecard surfacing
+
+## Sensitive-file operating policy
+
+- Canonical: `.env`, `.env.active.json`, `.env.dev`, `.env.prod`
+- Compatibility-only: `.env.local`
+- Should not be present in normal working exports: `.env.vercel`, `codex*.private`
+- `pnpm runtime:diag` is the authoritative operator view for this classification.
 
 
 ## Phase 2 canonicalization (duplicate wrappers and versioned variants)

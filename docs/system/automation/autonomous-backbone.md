@@ -2,6 +2,23 @@
 
 Summary: The autonomous backbone coordinates diagnostics, recovery, refresh, candidate progression, and guarded publish with stage-level pause reasoning.
 
+## Canonical operating command
+
+- Daily operation from `main` uses `pnpm ops:full-cycle`.
+- `pnpm ops:autonomous` remains the lower-level phase runner for diagnostics, prepare, publish, or direct backbone execution.
+- The full-cycle runner wraps:
+  - runtime diagnostics
+  - live-state integrity check
+  - autonomous diagnostics/refresh
+  - supplier wave / refresh
+  - marketplace refresh
+  - shipping recovery
+  - candidate recompute
+  - prepare
+  - publish-ready promotion
+  - guarded publish
+  - final summary
+
 ## Stage model
 - Runtime preflight
 - Integrity healing

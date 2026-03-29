@@ -14,8 +14,17 @@ type FeatureUpsertInput = {
   metadata?: Record<string, unknown>;
 };
 
+function buildTextArraySql(values: string[]) {
+  if (!values.length) {
+    return sql`ARRAY[]::text[]`;
+  }
+  return sql`ARRAY[${sql.join(values.map((value) => sql`${value}`), sql`, `)}]::text[]`;
+}
+
 export async function recordLearningEvidence(input: LearningEvidenceRecord) {
   const assessed = evaluateEvidenceContracts(input);
+  const blockedReasonsSql = buildTextArraySql(assessed.blockedReasons ?? []);
+  const diagnosticsJson = input.diagnostics == null ? null : JSON.stringify(input.diagnostics);
   await db.execute(sql`
     INSERT INTO learning_evidence_events (
       evidence_type,
@@ -43,9 +52,9 @@ export async function recordLearningEvidence(input: LearningEvidenceRecord) {
       ${input.confidence ?? null},
       ${input.freshnessSeconds ?? null},
       ${assessed.status},
-      ${assessed.blockedReasons},
+      ${blockedReasonsSql},
       ${input.downstreamOutcome ?? null},
-      ${input.diagnostics ?? null},
+      ${diagnosticsJson}::jsonb,
       ${input.observedAt ?? new Date()}
     )
   `);
@@ -54,6 +63,7 @@ export async function recordLearningEvidence(input: LearningEvidenceRecord) {
 }
 
 export async function upsertLearningFeature(input: FeatureUpsertInput) {
+  const metadataJson = input.metadata == null ? null : JSON.stringify(input.metadata);
   await db.execute(sql`
     INSERT INTO learning_features (
       feature_key,
@@ -75,7 +85,7 @@ export async function upsertLearningFeature(input: FeatureUpsertInput) {
       ${input.confidence ?? null},
       ${input.sampleSize ?? 0},
       ${input.trendDirection ?? null},
-      ${input.metadata ?? null},
+      ${metadataJson}::jsonb,
       now(),
       now()
     )

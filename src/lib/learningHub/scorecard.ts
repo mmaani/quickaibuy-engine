@@ -145,7 +145,7 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
           reason,
           count(*)::int AS count
         FROM (
-          SELECT jsonb_array_elements_text(blocked_reasons) AS reason
+          SELECT unnest(blocked_reasons) AS reason
           FROM learning_evidence_events
           WHERE observed_at >= now() - interval '14 days'
             AND blocked_reasons IS NOT NULL
