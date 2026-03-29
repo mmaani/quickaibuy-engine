@@ -547,7 +547,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
             <div>
               <h1 className="text-3xl font-bold">Orders Console</h1>
               <p className="mt-2 text-sm text-white/65">
-                Beginner-safe order operations: Review, approve, record supplier order, record tracking, check readiness, sync to eBay.
+                Order exception console for supplier purchase, tracking confirmation, and blocked linkage/sync investigations. Routine order sync and tracking refresh are automated.
               </p>
             </div>
             <RefreshButton />
@@ -580,10 +580,43 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
         </div>
 
         <section className="glass-panel mt-5 rounded-3xl border border-white/10 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Orders Exception Triage</h2>
+              <p className="mt-2 text-sm text-white/65">
+                Human work here should be limited to supplier purchase/payment and exceptional investigations. Sync discovery and tracking polling are automated.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/80">
+              Manual purchase queue: <span className="font-semibold text-emerald-100">{batchCounts["waiting-purchase"]}</span>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Visible rows</div><div className="mt-2 text-2xl font-semibold text-white">{rows.length}</div></div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Needs review</div><div className="mt-2 text-2xl font-semibold text-white">{batchCounts["needs-review"]}</div></div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Waiting purchase</div><div className="mt-2 text-2xl font-semibold text-white">{batchCounts["waiting-purchase"]}</div></div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Waiting tracking</div><div className="mt-2 text-2xl font-semibold text-white">{batchCounts["waiting-tracking"]}</div></div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Ready sync</div><div className="mt-2 text-2xl font-semibold text-white">{batchCounts["ready-sync"]}</div></div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Blocked/manual</div><div className="mt-2 text-2xl font-semibold text-white">{batchCounts["blocked-review"]}</div></div>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Purchase/payment remains manual by design. Everything before that should arrive here already synchronized and safety-checked.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Missing supplier linkage and failed sync states are exception work. Treat them as data-integrity issues, not routine throughput.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Compact review should help you open the next exception quickly, not replace the automated order pipeline.
+            </div>
+          </div>
+        </section>
+
+        <section className="glass-panel mt-5 rounded-3xl border border-white/10 p-4">
           <div className="mb-4 rounded-2xl border border-white/10 bg-black/20 p-4">
             <div className="text-xs uppercase tracking-[0.16em] text-white/45">Operator help</div>
             <div className="mt-2 text-sm text-white/75">
-              Use compact review to decide which order to open next. All execution stays per order in the detail panel.
+              Use compact review to identify the next real exception. All execution stays per order in the detail panel.
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
               {ordersHelpLegend.map((item) => (
@@ -630,7 +663,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams?:
               </div>
             </div>
             <div className="max-w-md rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
-              Compact batch review keeps all execution per order. Use it to find the next safe order to open, then use the detail panel to perform the actual step.
+              Compact batch review does not replace automation. Use it to find the next blocked or manual order, then handle the actual supplier step in the detail panel.
             </div>
           </div>
           <div className="mt-4 text-xs uppercase tracking-[0.16em] text-white/45">Review filters</div>

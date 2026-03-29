@@ -223,10 +223,19 @@ function buildRecommendations(
       const rightScore = (right.refreshSuccessRate ?? 0) - right.shippingBlocked / Math.max(right.candidates, 1);
       return leftScore - rightScore;
     })[0];
-  if (weakestSupplier && weakestSupplier.supplierKey === "aliexpress") {
+  if (
+    weakestSupplier &&
+    weakestSupplier.supplierKey === "aliexpress" &&
+    (
+      weakestSupplier.shippingBlocked > 0 ||
+      weakestSupplier.rateLimitEvents > 0 ||
+      weakestSupplier.exactMatchMisses > 0 ||
+      (weakestSupplier.refreshSuccessRate ?? 1) < 0.95
+    )
+  ) {
     recommendations.push({
       title: "Keep AliExpress contained behind stronger suppliers",
-      detail: `AliExpress remains the weakest live supplier path: refresh success ${(weakestSupplier.refreshSuccessRate ?? 0) * 100}% with ${weakestSupplier.shippingBlocked}/${weakestSupplier.candidates} candidates shipping-blocked.`,
+      detail: `AliExpress remains a low-priority supplier path: refresh success ${(weakestSupplier.refreshSuccessRate ?? 0) * 100}% with ${weakestSupplier.shippingBlocked}/${weakestSupplier.candidates} candidates shipping-blocked and ${weakestSupplier.rateLimitEvents + weakestSupplier.exactMatchMisses} reliability pressure events.`,
       severity: "warning",
     });
   }

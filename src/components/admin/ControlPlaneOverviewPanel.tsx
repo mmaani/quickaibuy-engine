@@ -56,6 +56,8 @@ export function ControlPlaneOverviewPanel({
 }) {
   const latestRun = data.latestRun;
   const compact = variant === "compact";
+  const runtimeSourceLabel = data.runtime.envSource ?? data.runtime.dotenvPath ?? "unknown";
+  const latestRunLabel = latestRun?.generatedAt ? formatDateTime(latestRun.generatedAt) : "unavailable";
   const topSuppliers = [...data.summary.supplierReliability]
     .sort((left, right) => right.candidates - left.candidates)
     .slice(0, compact ? 2 : 4);
@@ -69,9 +71,9 @@ export function ControlPlaneOverviewPanel({
             {compact ? "Runtime Truth Strip" : "Canonical Autonomous Backbone Status"}
           </h2>
           <div className="mt-2 text-sm text-white/65">
-            Runtime source {data.runtime.envSource ?? "unknown"} on DB target {data.runtime.dbTargetClassification ?? "unknown"}.
+            Runtime source {runtimeSourceLabel} on DB target {data.runtime.dbTargetClassification ?? "unknown"}.
             {" "}
-            Latest run {latestRun?.generatedAt ? formatDateTime(latestRun.generatedAt) : "not recorded"}.
+            Latest run {latestRunLabel}.
           </div>
         </div>
         <div className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] ${toneClass(data.health.pipelineState)}`}>
@@ -80,7 +82,7 @@ export function ControlPlaneOverviewPanel({
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <Stat label="Env source" value={data.runtime.envSource ?? "unknown"} />
+        <Stat label="Env source" value={runtimeSourceLabel} />
         <Stat label="DB target" value={data.runtime.dbTargetClassification ?? "unknown"} />
         <Stat label="Shipping blocks" value={data.summary.shippingBlocks} />
         <Stat label="Ready to publish" value={data.summary.pipeline.readyToPublish} />

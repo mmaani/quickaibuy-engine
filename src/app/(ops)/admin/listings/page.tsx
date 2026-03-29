@@ -107,6 +107,25 @@ function recoveryTone(state: RecoveryState): string {
   return "text-white/55";
 }
 
+function isRecoveryBlocked(state: RecoveryState): boolean {
+  return (
+    state === "BLOCKED_STALE_MARKETPLACE" ||
+    state === "BLOCKED_SUPPLIER_DRIFT" ||
+    state === "BLOCKED_STALE_SUPPLIER" ||
+    state === "BLOCKED_OTHER_FAIL_CLOSED"
+  );
+}
+
+function triageLabel(row: QueueListItem): { label: string; tone: string } {
+  if (row.rePromotionReady) return { label: "Ready to re-promote", tone: "text-emerald-200" };
+  if (row.reEvaluationNeeded) return { label: "Re-evaluate", tone: "text-amber-200" };
+  if (row.pausedByInventoryRisk) return { label: "Paused by risk", tone: "text-rose-200" };
+  if (isRecoveryBlocked(row.recoveryState)) return { label: "Blocked recovery", tone: "text-rose-200" };
+  if (row.previewStatus === "INCOMPLETE") return { label: "Refresh preview", tone: "text-amber-200" };
+  if (row.previewStatus === "PREPARED") return { label: "Preview prepared", tone: "text-cyan-200" };
+  return { label: "Needs automation", tone: "text-white/70" };
+}
+
 export default async function ListingsPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   const resolvedSearchParams = await searchParams;
   const filters = getListingsQueueFiltersFromSearchParams(resolvedSearchParams);
@@ -130,6 +149,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
     getApprovedQueueItems(filters),
     getControlPlaneOverview(),
   ]);
+  const blockedRecoveryCount = rows.filter((row) => isRecoveryBlocked(row.recoveryState)).length;
+  const reevaluationCount = rows.filter((row) => row.reEvaluationNeeded).length;
+  const repromotionCount = rows.filter((row) => row.rePromotionReady).length;
+  const autoPausedCount = rows.filter((row) => row.pausedByInventoryRisk).length;
 
   const selectedCandidateId = filters.candidateId || rows[0]?.id || "";
   const detail = selectedCandidateId ? await getListingsQueueDetail(selectedCandidateId) : null;
@@ -177,6 +200,38 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
         </header>
 
         <ControlPlaneOverviewPanel data={controlPlane} variant="compact" />
+
+        <section className="mt-5 glass-panel rounded-3xl border border-white/10 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Listings Exception Triage</h2>
+              <p className="mt-2 text-sm text-white/65">
+                Routine preview preparation and promotion should happen through automation. Use this page for blocked recovery, re-evaluation, and explicit operator checks.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/80">
+              Ready to publish now: <span className="font-semibold text-emerald-100">{overview.readyToPublishCount}</span>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <KeyValue label="Visible rows" value={String(rows.length)} />
+            <KeyValue label="Blocked recovery" value={String(blockedRecoveryCount)} />
+            <KeyValue label="Needs re-evaluation" value={String(reevaluationCount)} />
+            <KeyValue label="Ready for re-promotion" value={String(repromotionCount)} />
+            <KeyValue label="Auto-paused by risk" value={String(autoPausedCount)} />
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Re-evaluation and re-promotion rows should clear through guarded listing recovery, not ad hoc operator edits.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Risk-paused rows stay fail-closed until supplier truth, shipping, and pricing checks recover.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Manual promotion is fallback only. The normal path remains automated PREVIEW to READY_TO_PUBLISH.
+            </div>
+          </div>
+        </section>
 
         {activeRiskLegend ? (
           <section className="mt-5 rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">
@@ -251,6 +306,7 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                         "commercial state",
                         "recovery",
                         "duplicate",
+                        "triage",
                     ].map((h) => <th key={h} className="border-b border-white/10 px-3 py-2 text-left text-[11px] uppercase tracking-[0.16em] text-white/55">{h}</th>)}
                     </tr>
                   </thead>
@@ -291,6 +347,11 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                             ) : (
                               <span className="text-emerald-200">NO</span>
                             )}
+                          </td>
+                          <td className="border-b border-white/5 px-3 py-3">
+                            <span className={`text-xs uppercase tracking-[0.12em] ${triageLabel(row).tone}`}>
+                              {triageLabel(row).label}
+                            </span>
                           </td>
                         </tr>
                       );

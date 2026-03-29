@@ -19,6 +19,23 @@ function isTrue(value) {
   return String(value ?? "").trim().toLowerCase() === "true";
 }
 
+function classifyRuntimeEnvHint() {
+  const appEnv = String(process.env.APP_ENV ?? "").trim().toLowerCase();
+  if (appEnv === "production" || appEnv === "prod") return "PROD";
+  if (appEnv === "preview" || appEnv === "staging" || appEnv === "stage") return "PREVIEW";
+  if (appEnv === "development" || appEnv === "dev" || appEnv === "local") return "DEV";
+
+  const vercelEnv = String(process.env.VERCEL_ENV ?? "").trim().toLowerCase();
+  if (vercelEnv === "production") return "PROD";
+  if (vercelEnv === "preview") return "PREVIEW";
+
+  const nodeEnv = String(process.env.NODE_ENV ?? "").trim().toLowerCase();
+  if (nodeEnv === "production") return "PROD";
+  if (nodeEnv === "development") return "DEV";
+
+  return null;
+}
+
 function scoreRule(rule, envSource, hosts) {
   let score = 0;
   const reasons = [];
@@ -41,6 +58,7 @@ function scoreRule(rule, envSource, hosts) {
 export function classifyDbTarget(input) {
   const envSource = input.envSource ?? null;
   const hosts = [input.databaseUrlHost, input.databaseUrlDirectHost].filter(Boolean);
+  const runtimeEnvHint = classifyRuntimeEnvHint();
   let best = {
     classification: "UNKNOWN",
     score: 0,
@@ -56,6 +74,14 @@ export function classifyDbTarget(input) {
         reasons: scored.reasons,
       };
     }
+  }
+
+  if (best.score === 0 && runtimeEnvHint) {
+    return {
+      classification: runtimeEnvHint,
+      reason: `Runtime environment hint matched ${runtimeEnvHint}.`,
+      reasons: [`runtime environment matched ${runtimeEnvHint}`],
+    };
   }
 
   return {

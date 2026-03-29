@@ -222,6 +222,39 @@ function isSafePresetCandidate(candidate: ReviewListItem): boolean {
   );
 }
 
+function hasShippingException(candidate: ReviewListItem): boolean {
+  return candidate.riskFlags.some((flag) => flag === "SHIPPING_SIGNAL_MISSING" || flag === "SHIPPING_SIGNAL_WEAK");
+}
+
+function hasSupplierException(candidate: ReviewListItem): boolean {
+  return candidate.riskFlags.some((flag) =>
+    [
+      "SUPPLIER_LOW_STOCK",
+      "SUPPLIER_OUT_OF_STOCK",
+      "SUPPLIER_AVAILABILITY_UNKNOWN",
+      "AVAILABILITY_NOT_CONFIRMED",
+      "SUPPLIER_BLOCKED",
+      "STALE_SUPPLIER_SNAPSHOT",
+      "SUPPLIER_SIGNAL_INSUFFICIENT",
+    ].includes(flag)
+  );
+}
+
+function hasMarketplaceException(candidate: ReviewListItem): boolean {
+  return (
+    candidate.riskFlags.includes("STALE_MARKETPLACE_SNAPSHOT") ||
+    (candidate.listingBlockReason ?? "").toUpperCase().includes("MARKETPLACE SNAPSHOT AGE")
+  );
+}
+
+function getPrimaryTriageLabel(candidate: ReviewListItem): { label: string; tone: string } {
+  if (isSafePresetCandidate(candidate)) return { label: "Safe for batch", tone: "text-emerald-200" };
+  if (hasMarketplaceException(candidate)) return { label: "Refresh marketplace", tone: "text-amber-200" };
+  if (hasShippingException(candidate)) return { label: "Resolve shipping", tone: "text-amber-200" };
+  if (hasSupplierException(candidate)) return { label: "Supplier evidence", tone: "text-rose-200" };
+  return { label: "Manual review", tone: "text-amber-200" };
+}
+
 function RiskBadge({ flag }: { flag: string }) {
   const isBlocking =
     flag === "LOW_MATCH_CONFIDENCE" ||
@@ -465,6 +498,12 @@ export default async function ReviewPage({
     getControlPlaneOverview(),
   ]);
   const safeCandidateCount = candidates.filter((candidate) => isSafePresetCandidate(candidate)).length;
+  const staleMarketplaceCount = candidates.filter((candidate) => hasMarketplaceException(candidate)).length;
+  const shippingExceptionCount = candidates.filter((candidate) => hasShippingException(candidate)).length;
+  const supplierExceptionCount = candidates.filter((candidate) => hasSupplierException(candidate)).length;
+  const approvedAwaitingPreviewCount = candidates.filter(
+    (candidate) => candidate.decisionStatus === "APPROVED" && !candidate.listingStatus
+  ).length;
 
   const selectedCandidateId = filters.candidateId || candidates[0]?.id || "";
   const detail = selectedCandidateId ? await getCandidateDetail(selectedCandidateId) : null;
@@ -580,6 +619,38 @@ export default async function ReviewPage({
 
         <ControlPlaneOverviewPanel data={controlPlane} variant="compact" />
 
+        <section className="mt-5 glass-panel rounded-3xl border border-white/10 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Review Exception Triage</h2>
+              <p className="mt-2 text-sm text-white/65">
+                Automation should clear stale, refreshable, and publish-safe flow first. This queue is for true exceptions.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/80">
+              Safe for batch now: <span className="font-semibold text-emerald-100">{safeCandidateCount}</span>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <KeyValue label="Visible candidates" value={String(candidates.length)} />
+            <KeyValue label="Marketplace refresh needed" value={String(staleMarketplaceCount)} />
+            <KeyValue label="Shipping exceptions" value={String(shippingExceptionCount)} />
+            <KeyValue label="Supplier evidence exceptions" value={String(supplierExceptionCount)} />
+            <KeyValue label="Approved awaiting preview" value={String(approvedAwaitingPreviewCount)} />
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Refresh and recompute blockers should leave this queue through the backbone, not through manual approval.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Shipping and supplier-evidence failures stay fail-closed until deterministic data improves.
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/75">
+              Batch approve is reserved for clearly safe rows only. Everything else needs evidence or automation recovery first.
+            </div>
+          </div>
+        </section>
+
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,760px)_minmax(0,1fr)]">
           <section className="glass-panel rounded-3xl border border-white/10 p-4">
             <form action="/api/admin/review/decision" method="post">
@@ -669,11 +740,9 @@ export default async function ReviewPage({
                                 data-review-candidate-checkbox
                                 data-safe-preset-eligible={isSafePresetCandidate(candidate) ? "1" : "0"}
                               />
-                              {candidate.decisionStatus === "MANUAL_REVIEW" || candidate.blockingRiskFlags.length ? (
-                                <div className="mt-2 text-[10px] uppercase tracking-[0.12em] text-amber-200">Manual required</div>
-                              ) : (
-                                <div className="mt-2 text-[10px] uppercase tracking-[0.12em] text-emerald-200">Safe for batch</div>
-                              )}
+                              <div className={`mt-2 text-[10px] uppercase tracking-[0.12em] ${getPrimaryTriageLabel(candidate).tone}`}>
+                                {getPrimaryTriageLabel(candidate).label}
+                              </div>
                             </td>
                             <td className="border-b border-white/5 px-3 py-3 align-top">
                               <a href={buildReviewHref(filters, candidate.id)} className="block text-cyan-100">
