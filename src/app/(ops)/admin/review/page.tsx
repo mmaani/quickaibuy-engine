@@ -760,6 +760,11 @@ export default async function ReviewPage({
                                   {candidate.riskFlags.slice(0, 2).map((flag) => (
                                     <RiskBadge key={flag} flag={flag} />
                                   ))}
+                                  {candidate.marketOpportunityType ? (
+                                    <span className="rounded-full border border-cyan-300/30 bg-cyan-400/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100">
+                                      {candidate.marketOpportunityType.replaceAll("_", " ")}
+                                    </span>
+                                  ) : null}
                                   {candidate.listingEligible ? (
                                     <span className="rounded-full border border-emerald-300/30 bg-emerald-400/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
                                       Eligible
@@ -779,7 +784,12 @@ export default async function ReviewPage({
                             <td className="border-b border-white/5 px-3 py-3 align-top">{formatMoney(candidate.estimatedProfit)}</td>
                             <td className="border-b border-white/5 px-3 py-3 align-top">{formatPercent(candidate.marginPct)}</td>
                             <td className="border-b border-white/5 px-3 py-3 align-top">{formatPercent(candidate.roiPct)}</td>
-                            <td className="border-b border-white/5 px-3 py-3 align-top">{candidate.decisionStatus}</td>
+                            <td className="border-b border-white/5 px-3 py-3 align-top">
+                              <div>{candidate.decisionStatus}</div>
+                              <div className="mt-1 text-xs text-white/60">
+                                Adj: {formatMoney(candidate.reliabilityAdjustedProfit)}
+                              </div>
+                            </td>
                             <td className="border-b border-white/5 px-3 py-3 align-top text-xs text-white/55">
                               {formatDateTime(candidate.calcTs)}
                             </td>
@@ -889,7 +899,11 @@ export default async function ReviewPage({
                       />
                       <KeyValue label="Marketplace" value={`${detail.candidate.marketplaceKey} / ${detail.candidate.marketplaceListingId}`} />
                       <KeyValue label="Estimated Profit" value={formatMoney(detail.candidate.estimatedProfit)} />
+                      <KeyValue label="Reliability-Adjusted Profit" value={formatMoney(detail.candidate.reliabilityAdjustedProfit)} />
                       <KeyValue label="Margin / ROI" value={`${formatPercent(detail.candidate.marginPct)} / ${formatPercent(detail.candidate.roiPct)}`} />
+                      <KeyValue label="Market Opportunity Type" value={detail.candidate.marketOpportunityType ?? "-"} />
+                      <KeyValue label="Shipping Confidence" value={detail.candidate.shippingConfidence == null ? "-" : `${(detail.candidate.shippingConfidence * 100).toFixed(0)}%`} />
+                      <KeyValue label="AI Validation" value={detail.candidate.aiValidationUsed ? `used (${detail.candidate.aiValidationStatus ?? "unknown"})` : "not used"} />
                       <KeyValue label="Match Confidence" value={detail.match?.confidence?.toFixed(4) ?? "-"} />
                       <KeyValue label="Calculated" value={formatDateTime(detail.candidate.calcTs)} />
                       <KeyValue label="Listing Status" value={formatListingStatus(detail.candidate.listingStatus)} />

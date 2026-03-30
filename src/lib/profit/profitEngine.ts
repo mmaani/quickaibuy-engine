@@ -24,6 +24,8 @@ import { evaluateProfitHardGate } from "./hardProfitGate";
 import { recordProfitLearning } from "@/lib/learningHub/pipelineWriters";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
+import { validateAmbiguousTopCandidates } from "./aiOpportunityValidation";
+import { buildMarketDepthSignal, computeReliabilityAdjustedProfit } from "./opportunitySignals";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -52,6 +54,7 @@ type ProfitRow = {
   shippingPrice: string | null;
   marketplaceTitle: string | null;
   marketSnapshotTs: Date | string | null;
+  marketPriceSeries: unknown;
 };
 
 type ExistingCandidateState = {
@@ -116,6 +119,10 @@ type CandidateOption = {
   listingBlockReason: string | null;
   riskFlags: string[];
   reason: string;
+  marketDepth: ReturnType<typeof buildMarketDepthSignal>;
+  reliabilityAdjustedProfit: ReturnType<typeof computeReliabilityAdjustedProfit>;
+  supplierReliabilityScore: number;
+  aiValidation: Awaited<ReturnType<typeof validateAmbiguousTopCandidates>>[string];
 };
 
 // Supplier drift threshold for post-approval protection.
@@ -198,7 +205,12 @@ function chooseBestSupplierOption(options: CandidateOption[]): CandidateOption {
         Number(!right.availabilityManualReview && !right.availabilityUnsafe),
       compareNullableNumbersDesc(left.availabilityConfidence, right.availabilityConfidence),
       compareNullableNumbersAsc(left.landedSupplierCost, right.landedSupplierCost),
+      compareNullableNumbersDesc(
+        left.reliabilityAdjustedProfit.adjustedProfitUsd,
+        right.reliabilityAdjustedProfit.adjustedProfitUsd
+      ),
       compareNullableNumbersDesc(left.estimatedProfit, right.estimatedProfit),
+      compareNullableNumbersDesc(left.supplierReliabilityScore, right.supplierReliabilityScore),
       compareNullableNumbersDesc(left.roiPct, right.roiPct),
       compareNullableNumbersDesc(left.marginPct, right.marginPct),
       left.sourceQualityRank - right.sourceQualityRank,
@@ -384,7 +396,25 @@ export async function runProfitEngine(input?: {
       lmp.price AS "marketPrice",
       lmp.shipping_price AS "shippingPrice",
       lmp.matched_title AS "marketplaceTitle",
-      lmp.snapshot_ts AS "marketSnapshotTs"
+      lmp.snapshot_ts AS "marketSnapshotTs",
+      (
+        SELECT COALESCE(jsonb_agg(depth.price ORDER BY depth.snapshot_ts DESC), '[]'::jsonb)
+        FROM (
+          SELECT mpd.price, mpd.snapshot_ts
+          FROM marketplace_prices mpd
+          WHERE mpd.marketplace_listing_id = rm.marketplace_listing_id
+            AND (
+              CASE
+                WHEN LOWER(mpd.marketplace_key) LIKE 'amazon%' THEN 'amazon'
+                WHEN LOWER(mpd.marketplace_key) LIKE 'ebay%' THEN 'ebay'
+                ELSE LOWER(mpd.marketplace_key)
+              END
+            ) = rm.marketplace_key_norm
+            AND mpd.price IS NOT NULL
+          ORDER BY mpd.snapshot_ts DESC, mpd.id DESC
+          LIMIT 32
+        ) depth
+      ) AS "marketPriceSeries"
     FROM ranked_matches rm
     INNER JOIN latest_products lp
       ON lp.supplier_key = rm.supplier_key
@@ -579,6 +609,13 @@ export async function runProfitEngine(input?: {
       supplierRawPayload && Array.isArray(supplierRawPayload.telemetrySignals)
         ? (supplierRawPayload.telemetrySignals as string[])
         : [];
+    const marketPriceSeries = Array.isArray(row.marketPriceSeries)
+      ? row.marketPriceSeries.map((value) => toNum(value)).filter((value): value is number => value != null && value > 0)
+      : [];
+    const marketDepth = buildMarketDepthSignal(
+      marketPriceSeries.length ? marketPriceSeries : [marketPrice],
+      marketPrice
+    );
     const pipeline = evaluateProductPipelinePolicy({
       title: row.supplierTitle,
       marketplaceTitle: row.marketplaceTitle,
@@ -640,6 +677,27 @@ export async function runProfitEngine(input?: {
       telemetrySignals,
     });
     const supplierEvidenceCodes = supplierEvidence.codes;
+    const sourceReliabilityComponent = (sourceQualityRank(rawSupplierQuality) + 1) / 4;
+    const availabilityComponent = Math.max(0, Math.min(1, availability.confidence ?? 0.45));
+    const rateLimitPressurePenalty = telemetrySignals.some((signal) =>
+      ["rate_limit", "challenge", "blocked", "provider_block"].includes(signal.toLowerCase())
+    )
+      ? 0.15
+      : 0;
+    const supplierReliabilityScore = Math.max(
+      0,
+      Math.min(1, sourceReliabilityComponent * 0.4 + availabilityComponent * 0.45 + (pipeline.score / 100) * 0.15 - rateLimitPressurePenalty)
+    );
+    const reliabilityAdjustedProfit = computeReliabilityAdjustedProfit({
+      nominalProfitUsd: estimatedProfit,
+      supplierCostUsd: supplierCost,
+      shippingCostUsd: shipping,
+      platformFeesUsd: estimatedFees,
+      reserveCostUsd: Math.max(0, estimatedCogs - supplierCost - shipping),
+      supplierReliabilityScore,
+      shippingConfidenceScore: shippingResolution.sourceConfidence ?? 0.4,
+      marketNoiseRatio: marketDepth.noiseRatio,
+    });
     const shippingUnsafe = Boolean(shippingResolution.errorReason);
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const pipelineHardBlocked = pipeline.flags.some((flag) => PIPELINE_HARD_BLOCK_FLAGS.has(flag));
@@ -813,8 +871,39 @@ export async function runProfitEngine(input?: {
       listingBlockReason,
       riskFlags,
       reason,
+      marketDepth,
+      reliabilityAdjustedProfit,
+      supplierReliabilityScore,
+      aiValidation: {
+        used: false,
+        sameProduct: null,
+        brandAligned: null,
+        productFormAligned: null,
+        packSpecMismatch: null,
+        confidence: null,
+        explanation: "Pending selective ambiguity check.",
+        source: "skipped",
+      },
     });
   }
+
+  const aiValidationByCandidateKey = await validateAmbiguousTopCandidates(
+    candidateOptions.map((option) => {
+      const ambiguityScore = 1 - Math.min(1, Math.max(0, option.matchConfidence));
+      return {
+        candidateKey: `${option.normalizedSupplierKey}:${option.supplierProductId}:${option.marketplaceKey}:${option.marketplaceListingId}`,
+        supplierTitle: String(option.row.supplierTitle ?? ""),
+        marketplaceTitle: String(option.row.marketplaceTitle ?? ""),
+        ambiguityScore,
+        estimatedProfitUsd: option.estimatedProfit,
+      };
+    })
+  );
+
+  candidateOptions.forEach((option) => {
+    const key = `${option.normalizedSupplierKey}:${option.supplierProductId}:${option.marketplaceKey}:${option.marketplaceListingId}`;
+    option.aiValidation = aiValidationByCandidateKey[key] ?? option.aiValidation;
+  });
 
   const winningOptions = Array.from(
     candidateOptions.reduce((map, option) => {
@@ -940,6 +1029,17 @@ export async function runProfitEngine(input?: {
     const alternativeSourceCount = Math.max(0, peerOptions.length - 1);
     const estimatedFeesJson = {
       ...option.estimatedFees,
+      opportunitySignalV2: {
+        nominalProfitUsd: round2(option.estimatedProfit),
+        reliabilityAdjustedProfitUsd: round2(option.reliabilityAdjustedProfit.adjustedProfitUsd),
+        reliabilityScore: option.reliabilityAdjustedProfit.reliabilityScore,
+        reliabilityPenaltyUsd: option.reliabilityAdjustedProfit.penaltyUsd,
+        penalties: option.reliabilityAdjustedProfit.penalties,
+        supplierReliabilityScore: option.supplierReliabilityScore,
+        marketDepth: option.marketDepth,
+        opportunityType: option.marketDepth.opportunityType,
+      },
+      aiValidationV1: option.aiValidation,
       economics_hard_pass: option.economicsHardPass,
       economics_block_reason: option.economicsBlockReason,
       economics_verified_at: option.economicsVerifiedAt,
@@ -968,6 +1068,16 @@ export async function runProfitEngine(input?: {
         supplierSelectionReason: option.listingEligible
           ? "CHEAPEST_VIABLE_LANDED_COST"
           : "NO_FULLY_VIABLE_SUPPLIER_MANUAL_REVIEW",
+        rejectedAlternatives: peerOptions
+          .filter((candidate) => candidate !== option)
+          .map((candidate) => ({
+            supplierKey: candidate.normalizedSupplierKey,
+            supplierProductId: candidate.supplierProductId,
+            reason: candidate.listingBlockReason ?? candidate.reason,
+            estimatedProfitUsd: round2(candidate.estimatedProfit),
+            reliabilityAdjustedProfitUsd: round2(candidate.reliabilityAdjustedProfit.adjustedProfitUsd),
+            shippingValidity: candidate.shippingValidity,
+          })),
         landedCostRanking,
         consideredSources: peerOptions
           .map((candidate) => candidate.normalizedSupplierKey)
