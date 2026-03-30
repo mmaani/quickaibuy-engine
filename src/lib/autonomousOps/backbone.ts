@@ -406,12 +406,76 @@ async function getStaleSupplierTargets(limit = 20) {
         lp.snapshot_ts < NOW() - INTERVAL '48 hours'
         OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_SUPPLIER%'
         OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER EVIDENCE%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIP_FROM_COUNTRY%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIPPING_TRANSPARENCY%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIPPING_INTELLIGENCE%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SHIPPING_CONFIDENCE_TOO_LOW%'
       )
     GROUP BY 1, 2
     LIMIT ${safeLimit}
   `);
   const keys = new Set((result.rows ?? []).map((row) => `${row.supplierKey}:${row.supplierProductId}`));
   return targets.filter((row) => keys.has(`${row.supplierKey}:${row.supplierProductId}`)).slice(0, safeLimit);
+}
+
+async function getRecoveryReevaluationTargets(limit = 20) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
+  const result = await db.execute<{
+    supplierKey: string;
+    supplierProductId: string;
+    productRawId: string | null;
+  }>(sql`
+    WITH latest_products AS (
+      SELECT DISTINCT ON (lower(pr.supplier_key), pr.supplier_product_id)
+        lower(pr.supplier_key) AS supplier_key,
+        pr.supplier_product_id,
+        pr.id::text AS product_raw_id
+      FROM products_raw pr
+      ORDER BY lower(pr.supplier_key), pr.supplier_product_id, pr.snapshot_ts DESC NULLS LAST, pr.id DESC
+    ),
+    latest_listing AS (
+      SELECT DISTINCT ON (l.candidate_id, lower(l.marketplace_key))
+        l.candidate_id,
+        lower(l.marketplace_key) AS marketplace_key,
+        l.status,
+        l.response
+      FROM listings l
+      ORDER BY l.candidate_id, lower(l.marketplace_key), l.updated_at DESC NULLS LAST, l.created_at DESC NULLS LAST, l.id DESC
+    )
+    SELECT DISTINCT
+      lower(pc.supplier_key) AS "supplierKey",
+      pc.supplier_product_id AS "supplierProductId",
+      lp.product_raw_id AS "productRawId"
+    FROM profitable_candidates pc
+    LEFT JOIN latest_products lp
+      ON lp.supplier_key = lower(pc.supplier_key)
+     AND lp.supplier_product_id = pc.supplier_product_id
+    LEFT JOIN latest_listing ll
+      ON ll.candidate_id = pc.id
+     AND ll.marketplace_key = lower(pc.marketplace_key)
+    WHERE lower(pc.marketplace_key) = 'ebay'
+      AND upper(coalesce(pc.decision_status, '')) = 'APPROVED'
+      AND (
+        coalesce(pc.listing_eligible, false) = false
+        OR upper(coalesce(ll.status, '')) = 'PREVIEW'
+      )
+      AND (
+        upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_MARKETPLACE%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_SUPPLIER%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SUPPLIER_DRIFT%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIP_FROM_COUNTRY%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIPPING_TRANSPARENCY%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIPPING_INTELLIGENCE%'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%SHIPPING_SIGNAL_%'
+        OR (
+          jsonb_typeof(ll.response -> 'payloadGate' -> 'errors') = 'array'
+          AND jsonb_array_length(ll.response -> 'payloadGate' -> 'errors') > 0
+        )
+      )
+    ORDER BY "supplierKey", "supplierProductId"
+    LIMIT ${safeLimit}
+  `);
+  return result.rows ?? [];
 }
 
 async function getStaleMarketplaceCandidates(limit = 20) {
@@ -441,8 +505,25 @@ async function getStaleMarketplaceCandidates(limit = 20) {
     LEFT JOIN latest_products lp
       ON lp.supplier_key = lower(pc.supplier_key)
      AND lp.supplier_product_id = pc.supplier_product_id
+    LEFT JOIN listings l
+      ON l.candidate_id = pc.id
+     AND lower(l.marketplace_key) = lower(pc.marketplace_key)
     WHERE lower(pc.marketplace_key) = 'ebay'
-      AND pc.listing_block_reason LIKE 'marketplace snapshot age %'
+      AND (
+        pc.listing_block_reason LIKE 'marketplace snapshot age %'
+        OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%STALE_MARKETPLACE%'
+        OR (
+          upper(coalesce(pc.decision_status, '')) = 'APPROVED'
+          AND (
+            upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIP_FROM_COUNTRY%'
+            OR upper(coalesce(pc.listing_block_reason, '')) LIKE '%MISSING_SHIPPING_TRANSPARENCY%'
+            OR (
+              jsonb_typeof(l.response -> 'payloadGate' -> 'errors') = 'array'
+              AND jsonb_array_length(l.response -> 'payloadGate' -> 'errors') > 0
+            )
+          )
+        )
+      )
     ORDER BY pc.calc_ts DESC NULLS LAST, pc.id DESC
     LIMIT ${safeLimit}
   `);
@@ -886,7 +967,22 @@ export async function runAutonomousOperations(input?: {
       });
     } else {
       try {
-        const targets = await getStaleSupplierTargets(input?.supplierRefreshLimit ?? 10);
+        const canonicalTargets = await getStaleSupplierTargets(input?.supplierRefreshLimit ?? 10);
+        const recoveryTargets = await getRecoveryReevaluationTargets(input?.supplierRefreshLimit ?? 10);
+        const targetMap = new Map<string, { supplierKey: string; supplierProductId: string }>();
+        for (const row of canonicalTargets) {
+          targetMap.set(`${row.supplierKey}:${row.supplierProductId}`, row);
+        }
+        for (const row of recoveryTargets) {
+          const key = `${row.supplierKey}:${row.supplierProductId}`;
+          if (!targetMap.has(key)) {
+            targetMap.set(key, {
+              supplierKey: row.supplierKey,
+              supplierProductId: row.supplierProductId,
+            });
+          }
+        }
+        const targets = Array.from(targetMap.values()).slice(0, input?.supplierRefreshLimit ?? 10);
         const outcomes = [];
         for (const target of targets) {
           const result = await refreshMatchedSupplierRows({
@@ -938,6 +1034,13 @@ export async function runAutonomousOperations(input?: {
     } else {
       try {
         const result = await runMarketplaceRecovery(input?.marketplaceRefreshLimit ?? 15);
+        const recoveryTargets = await getRecoveryReevaluationTargets(input?.marketplaceRefreshLimit ?? 15);
+        for (const target of recoveryTargets) {
+          if (target.productRawId) result.productRawIds.push(target.productRawId);
+          result.supplierProducts.push(`${target.supplierKey}:${target.supplierProductId}`);
+        }
+        result.productRawIds = Array.from(new Set(result.productRawIds));
+        result.supplierProducts = Array.from(new Set(result.supplierProducts));
         result.productRawIds.forEach((id) => refreshProductRawIds.add(id));
         result.supplierProducts.forEach((id) => refreshSupplierProducts.add(id));
         stages.push({
@@ -1147,6 +1250,17 @@ export async function runAutonomousOperations(input?: {
       });
     } else {
       try {
+        const missingPublishContextReasons: string[] = [];
+        if (actorType !== "WORKER") missingPublishContextReasons.push("WORKER_REQUIRED");
+        if (executionSource !== "control-plane") missingPublishContextReasons.push("CONTROL_PLANE_REQUIRED");
+        if (missingPublishContextReasons.length > 0) {
+          stages.push({
+            key: "guarded_publish_execution",
+            status: "paused",
+            reasonCode: `PUBLISH_HARD_LOCK_BLOCKED: ${missingPublishContextReasons.join(" | ")}`,
+            counts: { executed: 0, skipped: 0, failed: 0 },
+          });
+        } else {
         const result = await runListingExecution({
           limit: input?.publishLimit ?? 3,
           marketplaceKey: "ebay",
@@ -1158,17 +1272,18 @@ export async function runAutonomousOperations(input?: {
             viaControlPlane: executionSource === "control-plane",
           },
         });
-        stages.push({
-          key: "guarded_publish_execution",
-          status: "completed",
-          reasonCode: null,
-          counts: {
-            executed: Number(result.executed ?? 0),
-            skipped: Number(result.skipped ?? 0),
-            failed: Number(result.failed ?? 0),
-          },
-          details: result,
-        });
+          stages.push({
+            key: "guarded_publish_execution",
+            status: "completed",
+            reasonCode: null,
+            counts: {
+              executed: Number(result.executed ?? 0),
+              skipped: Number(result.skipped ?? 0),
+              failed: Number(result.failed ?? 0),
+            },
+            details: result,
+          });
+        }
       } catch (error) {
         stages.push({
           key: "guarded_publish_execution",

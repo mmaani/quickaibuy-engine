@@ -1,5 +1,5 @@
 import { loadRuntimeEnv } from "@/lib/runtimeEnv";
-import { runAutonomousOperations } from "@/lib/autonomousOps/backbone";
+import { enqueueAutonomousOpsBackbone } from "@/lib/jobs/enqueueAutonomousOpsBackbone";
 
 loadRuntimeEnv();
 
@@ -10,13 +10,21 @@ async function main() {
       ? phaseArg
       : "full";
 
-  const result = await runAutonomousOperations({
+  const job = await enqueueAutonomousOpsBackbone({
     phase,
-    actorId: "scripts/run_autonomous_operations.ts",
-    actorType: "SYSTEM",
+    triggerSource: "control-plane",
+    idempotencySuffix: `script-${Date.now()}`,
   });
 
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify({
+    ok: true,
+    enqueued: true,
+    phase,
+    jobId: String(job.id ?? ""),
+    queue: "AUTONOMOUS_OPS_BACKBONE",
+    triggerSource: "control-plane",
+    note: "Run executes canonically in jobs.worker via control-plane-governed backbone.",
+  }, null, 2));
 }
 
 main().catch((error) => {

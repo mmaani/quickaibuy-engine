@@ -80,7 +80,11 @@ type CandidateOption = {
   shippingConfidence: number | null;
   shippingOriginCountry: string | null;
   shippingSourceType: string | null;
+  shippingMethod: string | null;
+  shippingTransparencyState: "PRESENT" | "MISSING";
+  shippingValidity: "PASS" | "BLOCKED";
   shippingErrorReason: string | null;
+  deliveryEstimateMinDays: number | null;
   deliveryEstimateMaxDays: number | null;
   landedSupplierCost: number;
   shippingDriftDetected: boolean;
@@ -711,10 +715,13 @@ export async function runProfitEngine(input?: {
       shippingBreakdown: {
         destinationCountry,
         originCountry: shippingResolution.resolvedOriginCountry,
+        shippingMethod: shippingResolution.shippingMethod,
         baseShippingCostUsd: shippingResolution.shippingCostUsd,
         shippingReserveUsd: shippingResolution.shippingReserveUsd,
         totalShippingUsd: shipping,
         resolutionMode: shippingResolution.resolutionMode,
+        shippingTransparencyState: shippingResolution.shippingTransparencyState,
+        shippingValidity: shippingResolution.shippingValidity,
         quoteAgeHours: shippingResolution.quoteAgeHours,
         sourceConfidence: shippingResolution.sourceConfidence,
         sourceType: shippingResolution.sourceType,
@@ -770,7 +777,11 @@ export async function runProfitEngine(input?: {
       shippingConfidence: shippingResolution.sourceConfidence,
       shippingOriginCountry: shippingResolution.resolvedOriginCountry,
       shippingSourceType: shippingResolution.sourceType,
+      shippingMethod: shippingResolution.shippingMethod,
+      shippingTransparencyState: shippingResolution.shippingTransparencyState,
+      shippingValidity: shippingResolution.shippingValidity,
       shippingErrorReason: shippingResolution.errorReason,
+      deliveryEstimateMinDays: shippingResolution.deliveryEstimateMinDays,
       deliveryEstimateMaxDays: shippingResolution.deliveryEstimateMaxDays,
       landedSupplierCost,
       shippingDriftDetected,
@@ -945,10 +956,15 @@ export async function runProfitEngine(input?: {
         selectedShippingCostUsd: round2(option.shipping),
         shippingOriginCountry: option.shippingOriginCountry,
         shippingDestinationCountry: option.destinationCountry,
+        shippingMethod: option.shippingMethod,
         shippingResolutionMode: option.shippingResolutionMode,
+        shippingTransparencyState: option.shippingTransparencyState,
+        shippingValidity: option.shippingValidity,
         shippingQuoteAgeHours: option.shippingQuoteAgeHours,
         shippingSourceConfidence: option.shippingConfidence,
         shippingErrorReason: option.shippingErrorReason,
+        deliveryEstimateMinDays: option.deliveryEstimateMinDays,
+        deliveryEstimateMaxDays: option.deliveryEstimateMaxDays,
         supplierSelectionReason: option.listingEligible
           ? "CHEAPEST_VIABLE_LANDED_COST"
           : "NO_FULLY_VIABLE_SUPPLIER_MANUAL_REVIEW",
