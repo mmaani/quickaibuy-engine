@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { getShippingConfig } from "@/lib/pricing/shippingConfig";
 import { inferShippingFromEvidence, type SupplierShippingProfile } from "@/lib/pricing/shippingInference";
+import { resolveShipFromOrigin, type OriginValidity } from "@/lib/products/shipFromOrigin";
 
 export type ShippingResolutionMode =
   | "EXACT_QUOTE"
@@ -24,8 +25,11 @@ export type ShippingResolutionError =
 export type ShippingResolution = {
   resolvedOriginCountry: string | null;
   resolvedOriginSource: "explicit" | "inferred" | "weak";
+  resolvedOriginValidity: OriginValidity;
   resolvedOriginConfidence: number;
   resolvedOriginUnresolvedReason: string | null;
+  resolvedSupplierWarehouseCountry: string | null;
+  resolvedLogisticsOriginHint: string | null;
   destinationCountry: string;
   shippingCostUsd: number;
   shippingReserveUsd: number;
@@ -171,6 +175,11 @@ export async function resolveShippingCost(input: {
     rawPayload: input.rawPayload,
     profile,
   });
+  const resolvedOriginEvidence = resolveShipFromOrigin({
+    rawPayload: input.rawPayload,
+    shippingEstimates: input.shippingEstimates,
+    destinationCountry,
+  });
 
   let resolutionMode: ShippingResolutionMode = "UNRESOLVED";
   let baseShippingUsd: number | null = null;
@@ -180,8 +189,11 @@ export async function resolveShippingCost(input: {
   let maxDays: number | null = null;
   let originCountry: string | null = null;
   let originSource: "explicit" | "inferred" | "weak" = "weak";
+  let originValidity: OriginValidity = "WEAK_OR_UNRESOLVED";
   let originConfidence = 0;
   let originUnresolvedReason: string | null = null;
+  let supplierWarehouseCountry: string | null = resolvedOriginEvidence.supplierWarehouseCountry;
+  let logisticsOriginHint: string | null = resolvedOriginEvidence.logisticsOriginHint;
   let stale = false;
   let quoteAgeHours: number | null = null;
 
@@ -194,6 +206,7 @@ export async function resolveShippingCost(input: {
     maxDays = row.estimatedMaxDays;
     originCountry = row.originCountry;
     originSource = row.originCountry ? "explicit" : "weak";
+    originValidity = row.originCountry ? "EXPLICIT" : "WEAK_OR_UNRESOLVED";
     originConfidence = row.originCountry ? Math.max(originConfidence, 0.92) : originConfidence;
     const verifiedAt = toDate(row.lastVerifiedAt);
     if (verifiedAt) {
@@ -222,8 +235,16 @@ export async function resolveShippingCost(input: {
     maxDays = inferred.estimatedMaxDays;
     originCountry = inferred.originCountry;
     originSource = inferred.originSource;
+    originValidity =
+      inferred.originConfidence >= 0.9
+        ? "EXPLICIT"
+        : inferred.originConfidence >= 0.75
+          ? "STRONG_INFERRED"
+          : "WEAK_OR_UNRESOLVED";
     originConfidence = inferred.originConfidence;
     originUnresolvedReason = inferred.originUnresolvedReason;
+    supplierWarehouseCountry = resolvedOriginEvidence.supplierWarehouseCountry;
+    logisticsOriginHint = resolvedOriginEvidence.logisticsOriginHint;
     stale = false;
     quoteAgeHours = 0;
   }
@@ -237,8 +258,11 @@ export async function resolveShippingCost(input: {
     return {
       resolvedOriginCountry: originCountry,
       resolvedOriginSource: originSource,
+      resolvedOriginValidity: originValidity,
       resolvedOriginConfidence: originConfidence,
       resolvedOriginUnresolvedReason: originUnresolvedReason,
+      resolvedSupplierWarehouseCountry: supplierWarehouseCountry,
+      resolvedLogisticsOriginHint: logisticsOriginHint,
       destinationCountry,
       shippingCostUsd: 0,
       shippingReserveUsd: 0,
@@ -256,7 +280,7 @@ export async function resolveShippingCost(input: {
     };
   }
 
-  if (!originCountry) errorReason = "MISSING_SHIP_FROM_COUNTRY";
+  if (!originCountry || originValidity === "WEAK_OR_UNRESOLVED") errorReason = "MISSING_SHIP_FROM_COUNTRY";
   if (!errorReason && shippingTransparencyState === "MISSING") {
     errorReason = "MISSING_SHIPPING_TRANSPARENCY";
   }
@@ -278,8 +302,11 @@ export async function resolveShippingCost(input: {
   return {
     resolvedOriginCountry: originCountry,
     resolvedOriginSource: originSource,
+    resolvedOriginValidity: originValidity,
     resolvedOriginConfidence: originConfidence,
     resolvedOriginUnresolvedReason: originUnresolvedReason,
+    resolvedSupplierWarehouseCountry: supplierWarehouseCountry,
+    resolvedLogisticsOriginHint: logisticsOriginHint,
     destinationCountry,
     shippingCostUsd: round2(baseShippingUsd),
     shippingReserveUsd,

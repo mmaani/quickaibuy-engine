@@ -20,6 +20,9 @@ test("resolveShipFromOrigin extracts deterministic origin from nested variant + 
 
   assert.equal(result.originCountry, "US");
   assert.equal(result.originSource, "explicit");
+  assert.equal(result.originValidity, "EXPLICIT");
+  assert.equal(result.supplierWarehouseCountry, null);
+  assert.equal(result.logisticsOriginHint, "US");
   assert.ok(result.originConfidence >= 0.9);
   assert.equal(result.unresolvedReason, null);
 });
@@ -50,4 +53,23 @@ test("inferShippingFromEvidence does not guess origin from profile when supplier
   assert.equal(result.originCountry, null);
   assert.equal(result.originSource, "weak");
   assert.ok(result.originConfidence < 0.75);
+});
+
+test("resolveShipFromOrigin keeps weak/unresolved state for destination-mismatched evidence", () => {
+  const result = resolveShipFromOrigin({
+    destinationCountry: "US",
+    rawPayload: {
+      shipping: {
+        routes: [{ destinationCountry: "GB", shipFromCountry: "US" }],
+      },
+      logistics: {
+        destinationCountry: "CA",
+        originCountry: "CN",
+      },
+    },
+  });
+
+  assert.equal(result.originCountry, null);
+  assert.equal(result.originValidity, "WEAK_OR_UNRESOLVED");
+  assert.equal(result.unresolvedReason, "NO_SHIP_FROM_EVIDENCE_FOUND");
 });

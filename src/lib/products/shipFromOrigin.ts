@@ -2,6 +2,7 @@ import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 import type { ShippingEstimate } from "@/lib/products/suppliers/types";
 
 export type OriginSource = "explicit" | "inferred" | "weak";
+export type OriginValidity = "EXPLICIT" | "STRONG_INFERRED" | "WEAK_OR_UNRESOLVED";
 
 export type OriginEvidence = {
   path: string;
@@ -13,8 +14,10 @@ export type OriginEvidence = {
 export type ShipFromResolution = {
   originCountry: string | null;
   warehouseCountry: string | null;
+  supplierWarehouseCountry: string | null;
   logisticsOriginHint: string | null;
   originSource: OriginSource;
+  originValidity: OriginValidity;
   originConfidence: number;
   evidence: OriginEvidence[];
   unresolvedReason: string | null;
@@ -133,6 +136,23 @@ function collectFromShippingEstimates(estimates: ShippingEstimate[], sink: Candi
   });
 }
 
+function strongestCountryByKinds(
+  byCountry: Map<string, { weight: number; evidence: OriginEvidence[] }>,
+  kinds: OriginEvidence["kind"][]
+): string | null {
+  const wanted = new Set(kinds);
+  const scored = Array.from(byCountry.entries())
+    .map(([country, state]) => ({
+      country,
+      score: state.evidence
+        .filter((entry) => wanted.has(entry.kind))
+        .reduce((sum, entry) => sum + entry.weight, 0),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => (right.score === left.score ? left.country.localeCompare(right.country) : right.score - left.score));
+  return scored[0]?.country ?? null;
+}
+
 export function resolveShipFromOrigin(input: {
   rawPayload?: unknown;
   shippingEstimates?: unknown;
@@ -171,8 +191,8 @@ export function resolveShipFromOrigin(input: {
   const winnerWeight = winner?.[1].weight ?? 0;
   const evidence = winner?.[1].evidence ?? [];
   const strongestEvidenceWeight = evidence.reduce((max, entry) => Math.max(max, entry.weight), 0);
-  const hasWarehouse = evidence.some((entry) => entry.kind === "warehouse");
-  const hasLogistics = evidence.some((entry) => entry.kind === "logistics");
+  const warehouseCountry = strongestCountryByKinds(byCountry, ["warehouse"]);
+  const logisticsOriginHint = strongestCountryByKinds(byCountry, ["logistics", "shipping_estimate", "variant"]);
   const originConfidence = clamp01(
     !originCountry
       ? 0
@@ -183,12 +203,16 @@ export function resolveShipFromOrigin(input: {
   );
   const originSource: OriginSource =
     originConfidence >= 0.9 ? "explicit" : originConfidence >= 0.75 ? "inferred" : "weak";
+  const originValidity: OriginValidity =
+    originConfidence >= 0.9 ? "EXPLICIT" : originConfidence >= 0.75 ? "STRONG_INFERRED" : "WEAK_OR_UNRESOLVED";
 
   return {
     originCountry,
-    warehouseCountry: hasWarehouse ? originCountry : null,
-    logisticsOriginHint: hasLogistics ? originCountry : null,
+    warehouseCountry,
+    supplierWarehouseCountry: warehouseCountry,
+    logisticsOriginHint,
     originSource,
+    originValidity,
     originConfidence,
     evidence,
     unresolvedReason: originCountry
