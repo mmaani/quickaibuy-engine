@@ -171,6 +171,56 @@ test("US market selection prefers resolved-origin supplier over cheaper unresolv
   assert.equal(selected[0]?.candidateId, "c-cj-strong");
 });
 
+test("US market selection allows strong known-origin international supplier to beat weak expensive US row", () => {
+  const weakUs = buildRow({
+    candidateId: "c-us-weak",
+    supplierKey: "cjdropshipping",
+    supplierPrice: 16,
+    marginPct: 24,
+    estimatedProfit: 9,
+    supplierRawPayload: {
+      mediaQualityScore: 0.74,
+      availabilityConfidence: 0.8,
+      availabilitySignal: "IN_STOCK",
+      shippingConfidence: 0.84,
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
+      snapshotQuality: "MEDIUM",
+      deliveryEstimateMinDays: 8,
+      deliveryEstimateMaxDays: 11,
+    },
+  });
+
+  const strongChina = buildRow({
+    candidateId: "c-cn-strong",
+    supplierKey: "alibaba",
+    supplierPrice: 7,
+    marginPct: 46,
+    estimatedProfit: 18,
+    supplierRawPayload: {
+      mediaQualityScore: 0.9,
+      availabilityConfidence: 0.94,
+      availabilitySignal: "IN_STOCK",
+      shippingConfidence: 0.91,
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "CN",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "CN",
+      snapshotQuality: "HIGH",
+      deliveryEstimateMinDays: 6,
+      deliveryEstimateMaxDays: 9,
+    },
+  });
+
+  assert.ok(computeSupplierSelectionScore(strongChina) > computeSupplierSelectionScore(weakUs));
+  const selected = selectBestSupplierRowsBeforeListing([weakUs, strongChina]);
+  assert.equal(selected[0]?.candidateId, "c-cn-strong");
+});
+
 test("no post-approval supplier rebinding for READY/ACTIVE statuses", () => {
   assert.equal(canRewritePinnedSupplierLinkageForListingStatus("PREVIEW"), true);
   assert.equal(isSupplierLinkageImmutableForListingStatus("PREVIEW"), false);

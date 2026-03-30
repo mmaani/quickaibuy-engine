@@ -77,6 +77,35 @@ test("CJ with known US warehouse outranks weak AliExpress for US market", () => 
   assert.ok(cj.reliabilityScore > ali.reliabilityScore);
 });
 
+test("known-origin non-US supplier remains eligible for US market", () => {
+  const signal = computeSupplierIntelligenceSignal({
+    supplierKey: "alibaba",
+    destinationCountry: "US",
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.93,
+    shippingEstimates: [
+      { label: "Air Express", cost: "6.30", etaMinDays: 6, etaMaxDays: 9, ship_from_country: "CN" },
+    ],
+    rawPayload: {
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "CN",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "CN",
+      snapshotQuality: "HIGH",
+    },
+    shippingConfidence: 0.91,
+    refreshSuccessRate: 0.86,
+    historicalSuccessRate: 0.82,
+    rateLimitEvents: 1,
+    refreshAttempts: 20,
+  });
+
+  assert.equal(signal.hasStrongOriginEvidence, true);
+  assert.equal(signal.hardBlock, false);
+  assert.ok(signal.usMarketPriority > 0);
+});
+
 test("early reject gate blocks unresolved-origin and weak-reliability suppliers before pipeline", () => {
   const rejected = shouldRejectSupplierEarly({
     supplierKey: "aliexpress",
@@ -98,4 +127,28 @@ test("early reject gate blocks unresolved-origin and weak-reliability suppliers 
 
   assert.equal(rejected.reject, true);
   assert.equal(rejected.reason, "us_origin_unresolved");
+});
+
+test("early reject gate blocks low-stock suppliers even when origin is resolved", () => {
+  const rejected = shouldRejectSupplierEarly({
+    supplierKey: "cjdropshipping",
+    destinationCountry: "US",
+    availabilitySignal: "LOW_STOCK",
+    availabilityConfidence: 0.9,
+    shippingEstimates: [{ label: "CJ Packet", cost: "5.00", etaMinDays: 4, etaMaxDays: 7, ship_from_country: "US" }],
+    rawPayload: {
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
+      snapshotQuality: "HIGH",
+    },
+    shippingConfidence: 0.92,
+    refreshSuccessRate: 0.94,
+    historicalSuccessRate: 0.9,
+  });
+
+  assert.equal(rejected.reject, true);
+  assert.equal(rejected.reason, "low_stock_or_unconfirmed_availability");
 });
