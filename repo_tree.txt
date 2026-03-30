@@ -285,6 +285,7 @@
 │   ├── debug_marketplace_scan.ts
 │   ├── debug_profit_join.mjs
 │   ├── detect_repricing_candidates.ts
+│   ├── diagnose_supplier_discovery_wave.ts
 │   ├── diagnose_supplier_linkage_safety.ts
 │   ├── enqueue_inventory_risk_scan.ts
 │   ├── enqueue_listing_optimize.ts
@@ -715,6 +716,7 @@
 │   │   │   └── shippingInference.ts
 │   │   ├── products
 │   │   │   ├── __tests__
+│   │   │   │   ├── pipelinePolicy.test.ts
 │   │   │   │   ├── shipFromOrigin.test.ts
 │   │   │   │   ├── supplierEnrichment.test.ts
 │   │   │   │   └── supplierEvidenceClassification.test.ts
@@ -740,7 +742,8 @@
 │   │   │       └── types.ts
 │   │   ├── profit
 │   │   │   ├── __tests__
-│   │   │   │   └── opportunitySignals.test.ts
+│   │   │   │   ├── opportunitySignals.test.ts
+│   │   │   │   └── supplierPriority.test.ts
 │   │   │   ├── activeSupplierReevaluation.ts
 │   │   │   ├── aiOpportunityValidation.ts
 │   │   │   ├── hardProfitGate.ts
@@ -750,7 +753,8 @@
 │   │   │   ├── profitAssumptions.ts
 │   │   │   ├── profitEngine.ts
 │   │   │   ├── realProfitCalculator.ts
-│   │   │   └── shippingRepricing.ts
+│   │   │   ├── shippingRepricing.ts
+│   │   │   └── supplierPriority.ts
 │   │   ├── queryBudget
 │   │   │   └── allocator.ts
 │   │   ├── queue
@@ -772,10 +776,14 @@
 │   │   ├── server
 │   │   ├── suppliers
 │   │   │   ├── __tests__
-│   │   │   │   └── intelligence.test.ts
+│   │   │   │   ├── discoveryWave.test.ts
+│   │   │   │   ├── intelligence.test.ts
+│   │   │   │   └── policySurface.test.ts
 │   │   │   ├── cjApi.ts
 │   │   │   ├── cjTracking.ts
+│   │   │   ├── discoveryWave.ts
 │   │   │   ├── intelligence.ts
+│   │   │   ├── policySurface.ts
 │   │   │   └── telemetry.ts
 │   │   ├── time
 │   │   │   └── jordan.ts
@@ -798,4 +806,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-126 directories, 673 files
+126 directories, 681 files
