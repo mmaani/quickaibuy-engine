@@ -13,12 +13,16 @@ import { supplierProductToRawInsert } from "@/lib/products/supplierSnapshots";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
 import {
   canonicalSupplierKey,
-  compareSupplierIntelligence,
   computeSupplierIntelligenceForDiscover,
-  getDefaultSupplierWaveBudgets,
   getSupplierWaveBudget,
   shouldRejectSupplierEarly,
 } from "@/lib/suppliers/intelligence";
+import {
+  buildDiscoveryWaveSourcePlan,
+  computeDiscoveryPersistPriority,
+  computeSourcePersistCap,
+  getDiscoveryOpportunityTier,
+} from "@/lib/suppliers/discoveryWave";
 import {
   getSupplierLearningAdjustments,
   recordSupplierDiscoveryLearning,
@@ -33,7 +37,14 @@ export type SupplierDiscoverResult = {
   keywords: string[];
   sources: string[];
   sourceBreakdown: SupplierSourceBreakdown[];
-  sourcePlan: Array<{ source: string; searchLimit: number }>;
+  sourcePlan: Array<{
+    source: string;
+    searchLimit: number;
+    maximumPersistShare: number;
+    targetPersistFloorShare: number;
+    minimumReliabilityScore: number;
+    requireKnownOriginForUs: boolean;
+  }>;
 };
 
 export type SupplierSourceBreakdown = {
@@ -260,47 +271,11 @@ function shouldDeprioritizeSupplier(item: SupplierProduct): boolean {
   return computeSupplierIntelligenceForDiscover(item).shouldDeprioritize;
 }
 
-function getWaveSearchPlan(
-  limitPerKeyword: number,
-  learningAdjustments?: Map<
-    string,
-    {
-      supplierReliability: number;
-      shippingReliability: number;
-      stockReliability: number;
-      parserYield: number;
-      publishability: number;
-      failurePressure: number;
-    }
-  >,
-  comboBoosts?: Record<string, number>
-) {
-  return getDefaultSupplierWaveBudgets().map((budget) => ({
-    source: budget.supplierKey,
-    searchLimit: Math.max(
-      budget.minimumSearchLimit,
-      Math.round(
-        Math.max(1, limitPerKeyword) *
-          budget.searchMultiplier *
-          Math.max(
-            0.5,
-            1 +
-              (((learningAdjustments?.get(budget.supplierKey)?.supplierReliability ?? 0.5) - 0.5) * 0.8) +
-              (((learningAdjustments?.get(budget.supplierKey)?.publishability ?? 0.5) - 0.5) * 0.4) -
-              ((learningAdjustments?.get(budget.supplierKey)?.failurePressure ?? 0) * 0.6) +
-              (((comboBoosts?.[`${budget.supplierKey}:ebay`] ?? 0.5) - 0.5) * 0.8)
-          )
-      )
-    ),
-  }));
-}
-
 function getSearchVariantsForSource(source: string, keyword: string): string[] {
   const variants = buildSupplierSearchKeywordVariants(keyword);
-  if (source === "cjdropshipping" || source === "temu") {
-    return variants;
-  }
-  return variants.slice(0, 3);
+  if (source === "cjdropshipping" || source === "temu") return variants.slice(0, 5);
+  if (source === "alibaba") return variants.slice(0, 4);
+  return variants.slice(0, 2);
 }
 
 async function fetchRowsForSource(source: string, keyword: string, searchLimit: number): Promise<SupplierProduct[]> {
@@ -332,7 +307,6 @@ async function fetchRowsForSource(source: string, keyword: string, searchLimit: 
     }
 
     if (deduped.size >= searchLimit) break;
-    if ((source === "cjdropshipping" || source === "temu") && deduped.size > 0) break;
   }
 
   return Array.from(deduped.values()).slice(0, searchLimit);
@@ -355,7 +329,11 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
     .filter((row, index, all) => !row.adjustment.shouldFilterEarly || all.length <= 3 || index < 2)
     .sort((left, right) => right.adjustment.score - left.adjustment.score || left.keyword.localeCompare(right.keyword))
     .map((row) => row.keyword);
-  const sourcePlan = getWaveSearchPlan(limitPerKeyword, supplierLearning, intelligence.discoveryHints.supplierBoostByMarketplace);
+  const sourcePlan = buildDiscoveryWaveSourcePlan({
+    limitPerKeyword,
+    learningAdjustments: supplierLearning,
+    comboBoosts: intelligence.discoveryHints.supplierBoostByMarketplace,
+  });
 
   let insertedCount = 0;
   let scannedProducts = 0;
@@ -377,14 +355,9 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
       fetchedBySource.push(...rows);
     }
 
-    const allProducts = fetchedBySource.sort((left, right) => {
-      const priorityDelta = compareSupplierIntelligence(
-        computeSupplierIntelligenceForDiscover(left),
-        computeSupplierIntelligenceForDiscover(right)
-      );
-      if (priorityDelta !== 0) return priorityDelta;
-      return canonicalSupplierSource(left.platform).localeCompare(canonicalSupplierSource(right.platform));
-    });
+    const allProducts = fetchedBySource.sort((left, right) =>
+      canonicalSupplierSource(left.platform).localeCompare(canonicalSupplierSource(right.platform))
+    );
     scannedProducts += allProducts.length;
 
     for (const item of allProducts) {
@@ -396,7 +369,12 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
 
     if (!allProducts.length) continue;
 
-    const productsToPersist: SupplierProduct[] = [];
+    const persistCandidates: Array<{
+      item: SupplierProduct;
+      sourceKey: string;
+      persistPriority: number;
+      opportunityTier: ReturnType<typeof getDiscoveryOpportunityTier>;
+    }> = [];
     const persistedCountsBySource = new Map<string, number>();
     for (const item of allProducts) {
       const sourceCounter = getSourceBreakdown(sourceBreakdown, item.platform);
@@ -471,24 +449,33 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
         historicalSuccessRate: supplierLearning.get(sourceKey)?.publishability ?? null,
         minimumReliabilityScore: waveBudget.minimumReliabilityScore,
       });
-      const persistedForSource = persistedCountsBySource.get(sourceKey) ?? 0;
-      const persistedCapForSource = Math.max(
-        1,
-        Math.floor(Math.max(1, allProducts.length) * waveBudget.maximumPersistShare)
-      );
       const keywordScore = keywordAdjustment.score;
+      const parserYieldScore = learned?.parserYield ?? 0.5;
+      const shippingReliabilityScore = learned?.shippingReliability ?? intelligence.shippingTransparencyRate;
       const passesWavePolicy =
         learnedReliability >= waveBudget.minimumReliabilityScore &&
         keywordScore >= 0.4 &&
+        parserYieldScore >= (sourceKey === "aliexpress" ? 0.45 : 0.2) &&
+        shippingReliabilityScore >= (sourceKey === "aliexpress" ? 0.55 : 0.4) &&
         (!waveBudget.requireStrongStockEvidence || intelligence.stockEvidenceStrength >= 0.72) &&
         (!waveBudget.requireStrongShippingEvidence || intelligence.shippingEvidenceStrength >= 0.72) &&
-        persistedForSource < persistedCapForSource;
+        (!waveBudget.requireKnownOriginForUs || intelligence.hasStrongOriginEvidence);
       if (quality.eligible) {
         scoredProducts++;
         sourceCounter.eligible_count += 1;
         if (passesWavePolicy && !earlySupplierGate.reject) {
-          productsToPersist.push(item);
-          persistedCountsBySource.set(sourceKey, persistedForSource + 1);
+          persistCandidates.push({
+            item,
+            sourceKey,
+            persistPriority: computeDiscoveryPersistPriority({
+              signal: intelligence,
+              budget: waveBudget,
+              learnedReliability,
+              learning: learned ?? null,
+              keywordScore,
+            }),
+            opportunityTier: getDiscoveryOpportunityTier(intelligence),
+          });
         } else {
           sourceCounter.rejected_availability_count += 1;
           bumpRejectionReason(
@@ -505,8 +492,18 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
           targetedFriendly &&
           shouldPersistParsedSnapshot({ item, normalizedRow, policy: quality });
         if (shouldPersist) {
-          productsToPersist.push(item);
-          persistedCountsBySource.set(sourceKey, persistedForSource + 1);
+          persistCandidates.push({
+            item,
+            sourceKey,
+            persistPriority: computeDiscoveryPersistPriority({
+              signal: intelligence,
+              budget: waveBudget,
+              learnedReliability,
+              learning: learned ?? null,
+              keywordScore,
+            }),
+            opportunityTier: getDiscoveryOpportunityTier(intelligence),
+          });
         }
         const dropOff = classifyDropOff({ item, normalizedRow, policy: quality });
         if (dropOff) {
@@ -535,6 +532,72 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
           bumpRejectionReason(sourceCounter, "supplier_wave_policy_rejected");
         }
       }
+    }
+
+    const sourcePlanMap = new Map(sourcePlan.map((plan) => [plan.source, plan]));
+    const strongAlternativeSourceCount = new Set(
+      persistCandidates
+        .filter((candidate) => candidate.sourceKey !== "aliexpress" && candidate.opportunityTier !== "ORIGIN_UNRESOLVED")
+        .map((candidate) => candidate.sourceKey)
+    ).size;
+    const persistCapsBySource = new Map(
+      Array.from(
+        new Set(persistCandidates.map((candidate) => candidate.sourceKey))
+      ).map((sourceKey) => [
+        sourceKey,
+        computeSourcePersistCap({
+          budget: getSupplierWaveBudget(sourceKey),
+          sourceKey,
+          totalPersistable: persistCandidates.length,
+          strongAlternativeSourceCount,
+        }),
+      ])
+    );
+    const productsToPersist: SupplierProduct[] = [];
+    const selectedKeys = new Set<string>();
+    const groupedCandidates = new Map<string, typeof persistCandidates>();
+    for (const candidate of persistCandidates) {
+      const bucket = groupedCandidates.get(candidate.sourceKey) ?? [];
+      bucket.push(candidate);
+      groupedCandidates.set(candidate.sourceKey, bucket);
+    }
+    for (const bucket of groupedCandidates.values()) {
+      bucket.sort((left, right) => right.persistPriority - left.persistPriority);
+    }
+
+    for (const [sourceKey, bucket] of groupedCandidates.entries()) {
+      const targetPersistFloorShare = sourcePlanMap.get(sourceKey)?.targetPersistFloorShare ?? 0;
+      const floorCount = Math.min(
+        bucket.length,
+        persistCapsBySource.get(sourceKey) ?? 0,
+        Math.floor(Math.max(1, persistCandidates.length) * targetPersistFloorShare)
+      );
+      for (let index = 0; index < floorCount; index += 1) {
+        const candidate = bucket[index];
+        const dedupeKey = `${candidate.sourceKey}:${String(candidate.item.supplierProductId ?? "").trim()}`;
+        if (selectedKeys.has(dedupeKey)) continue;
+        selectedKeys.add(dedupeKey);
+        productsToPersist.push(candidate.item);
+        persistedCountsBySource.set(sourceKey, (persistedCountsBySource.get(sourceKey) ?? 0) + 1);
+      }
+    }
+
+    for (const candidate of [...persistCandidates].sort((left, right) => right.persistPriority - left.persistPriority)) {
+      const sourceKey = candidate.sourceKey;
+      const dedupeKey = `${candidate.sourceKey}:${String(candidate.item.supplierProductId ?? "").trim()}`;
+      if (selectedKeys.has(dedupeKey)) continue;
+      if ((persistedCountsBySource.get(sourceKey) ?? 0) >= (persistCapsBySource.get(sourceKey) ?? 0)) continue;
+      selectedKeys.add(dedupeKey);
+      productsToPersist.push(candidate.item);
+      persistedCountsBySource.set(sourceKey, (persistedCountsBySource.get(sourceKey) ?? 0) + 1);
+    }
+
+    for (const candidate of persistCandidates) {
+      const dedupeKey = `${candidate.sourceKey}:${String(candidate.item.supplierProductId ?? "").trim()}`;
+      if (selectedKeys.has(dedupeKey)) continue;
+      const sourceCounter = getSourceBreakdown(sourceBreakdown, candidate.item.platform);
+      sourceCounter.rejected_availability_count += 1;
+      bumpRejectionReason(sourceCounter, "supplier_mix_cap_applied");
     }
 
     if (!productsToPersist.length) continue;

@@ -71,8 +71,10 @@ export type SupplierWaveBudget = {
   minimumSearchLimit: number;
   minimumReliabilityScore: number;
   maximumPersistShare: number;
+  targetPersistFloorShare: number;
   requireStrongStockEvidence: boolean;
   requireStrongShippingEvidence: boolean;
+  requireKnownOriginForUs: boolean;
 };
 
 function clamp01(value: number): number {
@@ -131,38 +133,46 @@ export function getDefaultSupplierWaveBudgets(): SupplierWaveBudget[] {
     {
       supplierKey: "cjdropshipping",
       searchMultiplier: 2.8,
-      minimumSearchLimit: 12,
+      minimumSearchLimit: 14,
       minimumReliabilityScore: 0.55,
-      maximumPersistShare: 0.8,
+      maximumPersistShare: 0.72,
+      targetPersistFloorShare: 0.4,
       requireStrongStockEvidence: false,
       requireStrongShippingEvidence: false,
+      requireKnownOriginForUs: true,
     },
     {
       supplierKey: "temu",
-      searchMultiplier: 2,
-      minimumSearchLimit: 8,
+      searchMultiplier: 2.3,
+      minimumSearchLimit: 10,
       minimumReliabilityScore: 0.6,
-      maximumPersistShare: 0.55,
+      maximumPersistShare: 0.45,
+      targetPersistFloorShare: 0.22,
       requireStrongStockEvidence: false,
       requireStrongShippingEvidence: false,
+      requireKnownOriginForUs: true,
     },
     {
       supplierKey: "alibaba",
-      searchMultiplier: 1.2,
-      minimumSearchLimit: 6,
+      searchMultiplier: 1.45,
+      minimumSearchLimit: 7,
       minimumReliabilityScore: 0.62,
-      maximumPersistShare: 0.4,
+      maximumPersistShare: 0.24,
+      targetPersistFloorShare: 0.14,
       requireStrongStockEvidence: false,
       requireStrongShippingEvidence: true,
+      requireKnownOriginForUs: true,
     },
     {
       supplierKey: "aliexpress",
-      searchMultiplier: 0.2,
-      minimumSearchLimit: 2,
-      minimumReliabilityScore: 0.82,
-      maximumPersistShare: 0.08,
+      searchMultiplier: 0.08,
+      minimumSearchLimit: 1,
+      minimumReliabilityScore: 0.86,
+      maximumPersistShare: 0.03,
+      targetPersistFloorShare: 0,
       requireStrongStockEvidence: true,
       requireStrongShippingEvidence: true,
+      requireKnownOriginForUs: true,
     },
   ];
 }
@@ -176,8 +186,10 @@ export function getSupplierWaveBudget(supplierKey: string): SupplierWaveBudget {
       minimumSearchLimit: 4,
       minimumReliabilityScore: 0.62,
       maximumPersistShare: 0.25,
+      targetPersistFloorShare: 0,
       requireStrongStockEvidence: false,
       requireStrongShippingEvidence: false,
+      requireKnownOriginForUs: true,
     }
   );
 }
