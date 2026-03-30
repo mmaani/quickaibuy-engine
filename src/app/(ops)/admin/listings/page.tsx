@@ -421,6 +421,25 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                       value={detail.item.shippingQuoteAgeHours == null ? "-" : `${detail.item.shippingQuoteAgeHours}h`}
                     />
                     <KeyValue label="Shipping mode" value={detail.item.shippingResolutionMode ?? "-"} />
+                    <KeyValue label="Stock class" value={detail.item.stockClass ?? "-"} />
+                    <KeyValue
+                      label="Stock confidence"
+                      value={detail.item.stockConfidence == null ? "-" : `${(detail.item.stockConfidence * 100).toFixed(0)}%`}
+                    />
+                    <KeyValue
+                      label="Low-stock policy"
+                      value={
+                        detail.item.stockClass !== "LOW"
+                          ? "Not low stock"
+                          : detail.item.lowStockControlledRiskEligible
+                            ? "LOW_STOCK_WARNING"
+                            : "LOW_STOCK_BLOCKED"
+                      }
+                    />
+                    <KeyValue label="Stock monitoring" value={detail.item.stockMonitoringPriority ?? "-"} />
+                    <KeyValue label="US priority status" value={detail.item.usPriorityStatus ?? "-"} />
+                    <KeyValue label="Supplier policy reason" value={detail.item.supplierPolicyReason ?? "-"} />
+                    <KeyValue label="Supplier policy message" value={detail.item.supplierPolicyMessage ?? "-"} />
                     <KeyValue label="Margin / ROI" value={`${formatPercent(detail.item.marginPct)} / ${formatPercent(detail.item.roiPct)}`} />
                     <KeyValue label="Approved at" value={formatDateTime(detail.item.approvedTs)} />
                     <KeyValue label="Approved by" value={detail.item.approvedBy ?? "-"} />

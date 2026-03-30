@@ -4,14 +4,16 @@ import { sql } from "drizzle-orm";
 import { getPriceGuardThresholds, type PriceGuardThresholds } from "./priceGuardConfig";
 import { getProfitAssumptions, type ProfitAssumptions } from "./profitAssumptions";
 import { evaluateProfitHardGate } from "./hardProfitGate";
+import { resolvePricingDestinationForMarketplace } from "@/lib/pricing/destinationResolver";
 import {
   extractAvailabilityFromRawPayload,
   normalizeAvailabilitySignal,
   type AvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
+import { shouldRejectSupplierEarly, type SupplierMonitoringPriority, type SupplierStockClass } from "@/lib/suppliers/intelligence";
 
 export type PriceGuardDecision = "ALLOW" | "BLOCK";
-export type PriceGuardReasonSeverity = "BLOCK";
+export type PriceGuardReasonSeverity = "BLOCK" | "WARN";
 
 export type PriceGuardReasonCode =
   | "MISSING_SUPPLIER_PRICE"
@@ -26,6 +28,7 @@ export type PriceGuardReasonCode =
   | "SUPPLIER_DRIFT_DATA_UNAVAILABLE"
   | "SUPPLIER_OUT_OF_STOCK"
   | "SUPPLIER_LOW_STOCK"
+  | "SUPPLIER_LOW_STOCK_WARNING"
   | "SUPPLIER_AVAILABILITY_UNKNOWN"
   | "SUPPLIER_AVAILABILITY_LOW_CONFIDENCE"
   | "INCOMPLETE_ECONOMICS"
@@ -54,6 +57,9 @@ export type PriceGuardMetrics = {
   supplier_snapshot_age_hours: number | null;
   availability_signal: AvailabilitySignal;
   availability_confidence: number | null;
+  stock_class: SupplierStockClass;
+  low_stock_controlled_risk_eligible: boolean;
+  stock_monitoring_priority: SupplierMonitoringPriority;
   availability_snapshot_age_hours: number | null;
   marketplace_snapshot_age_hours: number | null;
   drift_hook: {
@@ -200,7 +206,7 @@ function computePctChange(original: number | null, latest: number | null): numbe
 }
 
 function decideFromReasons(reasonDetails: PriceGuardReason[]): PriceGuardDecision {
-  return reasonDetails.length > 0 ? "BLOCK" : "ALLOW";
+  return reasonDetails.some((reason) => reason.severity === "BLOCK") ? "BLOCK" : "ALLOW";
 }
 
 function addReason(
@@ -350,6 +356,7 @@ export async function validateProfitSafety(input: {
   });
   const availabilitySignal = normalizeAvailabilitySignal(inferredAvailability.signal);
   const availabilityConfidence = inferredAvailability.confidence;
+  const destinationCountry = resolvePricingDestinationForMarketplace(row.marketplaceKey);
   const marketplaceSnapshotAgeHours = hoursBetween(now, toDate(row.latestMarketSnapshotTs));
   const supplierPriceDriftPct = computePctChange(originalSupplierPrice, latestSupplierPrice);
 
@@ -448,6 +455,20 @@ export async function validateProfitSafety(input: {
   }
 
   // Supplier availability is a v1 conservative safety hook: unsafe blocks, uncertain requires manual review.
+  const supplierPolicy = shouldRejectSupplierEarly({
+    supplierKey: row.supplierKey,
+    destinationCountry,
+    availabilitySignal,
+    availabilityConfidence,
+    rawPayload: row.latestSupplierRawPayload,
+    minimumReliabilityScore: 0.58,
+    estimatedProfitUsd: recomputedProfit,
+    marginPct: recomputedMarginPct,
+    roiPct: recomputedRoiPct,
+    minimumMarginPct: thresholds.minMarginPct,
+    minimumRoiPct: thresholds.minRoiPct,
+  });
+
   if (availabilitySignal === "OUT_OF_STOCK") {
     addReason(reasonDetails, {
       code: "SUPPLIER_OUT_OF_STOCK",
@@ -455,12 +476,19 @@ export async function validateProfitSafety(input: {
       message: "Supplier indicates out of stock.",
       meta: { availabilitySignal, availabilityConfidence },
     });
-  } else if (availabilitySignal === "LOW_STOCK") {
+  } else if (availabilitySignal === "LOW_STOCK" && supplierPolicy.reject) {
     addReason(reasonDetails, {
       code: "SUPPLIER_LOW_STOCK",
       severity: "BLOCK",
-      message: "Supplier stock appears limited and requires manual review.",
-      meta: { availabilitySignal, availabilityConfidence },
+      message: supplierPolicy.operatorMessage,
+      meta: { availabilitySignal, availabilityConfidence, stockClass: supplierPolicy.stockClass },
+    });
+  } else if (availabilitySignal === "LOW_STOCK" && supplierPolicy.warning) {
+    addReason(reasonDetails, {
+      code: "SUPPLIER_LOW_STOCK_WARNING",
+      severity: "WARN",
+      message: supplierPolicy.operatorMessage,
+      meta: { availabilitySignal, availabilityConfidence, monitoringPriority: supplierPolicy.monitoringPriority },
     });
   } else if (availabilitySignal === "UNKNOWN") {
     addReason(reasonDetails, {
@@ -553,6 +581,9 @@ export async function validateProfitSafety(input: {
       supplier_snapshot_age_hours: supplierSnapshotAgeHours,
       availability_signal: availabilitySignal,
       availability_confidence: availabilityConfidence,
+      stock_class: supplierPolicy.stockClass,
+      low_stock_controlled_risk_eligible: supplierPolicy.lowStockControlledRiskEligible,
+      stock_monitoring_priority: supplierPolicy.monitoringPriority,
       availability_snapshot_age_hours: supplierSnapshotAgeHours,
       marketplace_snapshot_age_hours: marketplaceSnapshotAgeHours,
       drift_hook: {

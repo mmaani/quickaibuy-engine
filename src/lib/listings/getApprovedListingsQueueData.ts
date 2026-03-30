@@ -6,6 +6,7 @@ import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
 } from "@/lib/listings/duplicateProtection";
+import { readSupplierPolicySurface } from "@/lib/suppliers/policySurface";
 
 export const LISTINGS_ROUTE = "/admin/listings";
 export const LISTINGS_RISK_FILTERS = {
@@ -32,6 +33,7 @@ type ListingQueueRow = {
   decision_status: string;
   listing_eligible: boolean;
   listing_block_reason: string | null;
+  estimated_fees: unknown;
   approved_ts: string | Date | null;
   approved_by: string | null;
   listing_id: string | null;
@@ -130,6 +132,13 @@ export type QueueListItem = {
   selectionSummary: string | null;
   consideredSources: string[];
   shippingCostComponent: number | null;
+  stockClass: string | null;
+  stockConfidence: number | null;
+  lowStockControlledRiskEligible: boolean;
+  stockMonitoringPriority: string | null;
+  supplierPolicyReason: string | null;
+  supplierPolicyMessage: string | null;
+  usPriorityStatus: string | null;
   shippingOriginCountry: string | null;
   shippingOriginSource: string | null;
   shippingOriginConfidence: number | null;
@@ -344,6 +353,7 @@ function evaluatePreviewReadiness(row: ListingQueueRow): {
 }
 
 function mapQueueRow(row: ListingQueueRow): QueueListItem {
+  const policySurface = readSupplierPolicySurface(row.estimated_fees);
   const readiness = evaluatePreviewReadiness(row);
   const recovery = computeRecoveryState({
     decisionStatus: row.decision_status,
@@ -400,6 +410,13 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     selectionSummary: row.selection_summary ?? null,
     consideredSources: row.considered_sources ?? [],
     shippingCostComponent: toNumber(row.shipping_cost_component),
+    stockClass: policySurface.stockClass,
+    stockConfidence: policySurface.stockConfidence,
+    lowStockControlledRiskEligible: policySurface.lowStockControlledRiskEligible,
+    stockMonitoringPriority: policySurface.monitoringPriority,
+    supplierPolicyReason: policySurface.policyReason,
+    supplierPolicyMessage: policySurface.operatorMessage,
+    usPriorityStatus: policySurface.usPriorityStatus,
     shippingOriginCountry: row.shipping_origin_country ?? null,
     shippingOriginSource: row.shipping_origin_source ?? null,
     shippingOriginConfidence: toNumber(row.shipping_origin_confidence),
@@ -673,6 +690,7 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       pc.decision_status,
       pc.listing_eligible,
       pc.listing_block_reason,
+      pc.estimated_fees,
       pc.estimated_fees ->> 'selectionMode' AS selection_mode,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'selectionSummary' AS selection_summary,
       ARRAY(

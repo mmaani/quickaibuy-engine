@@ -14,6 +14,7 @@ import {
   type SupplierSnapshotQuality,
   type SupplierTelemetrySignal,
 } from "@/lib/products/supplierQuality";
+import { readSupplierPolicySurface } from "@/lib/suppliers/policySurface";
 
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "MANUAL_REVIEW", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
@@ -38,6 +39,9 @@ export const BLOCKING_RISK_FLAGS = new Set([
   "SUPPLIER_DRIFT_DATA_UNAVAILABLE",
   "SUPPLIER_OUT_OF_STOCK",
   "SUPPLIER_LOW_STOCK",
+  "LOW_STOCK_BLOCKED",
+  "CRITICAL_STOCK_BLOCKED",
+  "UNKNOWN_STOCK_BLOCKED",
   "SUPPLIER_AVAILABILITY_UNKNOWN",
   "AVAILABILITY_NOT_CONFIRMED",
   "SOURCE_CHALLENGE_PAGE",
@@ -110,6 +114,16 @@ export type ReviewListItem = {
   consideredSources: string[];
   marketOpportunityType: string | null;
   shippingConfidence: number | null;
+  stockClass: string | null;
+  stockConfidence: number | null;
+  lowStockControlledRiskEligible: boolean;
+  stockMonitoringPriority: string | null;
+  supplierPolicyReason: string | null;
+  supplierPolicyMessage: string | null;
+  usPriorityStatus: string | null;
+  shippingOriginCountry: string | null;
+  shippingOriginConfidence: number | null;
+  shippingOriginValidity: string | null;
   nominalProfit: number | null;
   reliabilityAdjustedProfit: number | null;
   aiValidationUsed: boolean;
@@ -559,6 +573,7 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     telemetrySignals: supplierTelemetry.signals,
   });
   const canonicalEvidence = canonicalEvidenceFromFees(row.estimated_fees);
+  const policySurface = readSupplierPolicySurface(row.estimated_fees);
   const joinedTitle = `${row.supplier_title ?? ""} ${row.marketplace_title ?? ""}`.trim();
 
   if (confidence != null && confidence < LOW_MATCH_CONFIDENCE_THRESHOLD) {
@@ -612,6 +627,12 @@ function deriveRiskFlags(row: CandidateRow): string[] {
 
   for (const code of supplierEvidence.codes) {
     flags.add(code);
+  }
+
+  if (policySurface.lowStockControlledRiskEligible) {
+    flags.add("LOW_STOCK_WARNING");
+    flags.delete("SUPPLIER_LOW_STOCK");
+    flags.delete("LOW_STOCK_BLOCKED");
   }
 
   if (canonicalEvidence.shipping.hasCanonicalShipping) {
@@ -704,7 +725,7 @@ function computeListingEligibility(input: {
 
   if (input.availabilitySignal === "OUT_OF_STOCK") {
     reasons.push("supplier availability indicates out of stock");
-  } else if (input.availabilitySignal === "LOW_STOCK") {
+  } else if (input.availabilitySignal === "LOW_STOCK" && !input.riskFlags.includes("LOW_STOCK_WARNING")) {
     reasons.push("supplier availability is low stock and requires manual review");
   }
 
@@ -761,6 +782,7 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
   const availabilitySignal = normalizeAvailabilitySignal(availability.signal);
   const availabilityConfidence = availability.confidence;
   const riskFlags = deriveRiskFlags(row);
+  const policySurface = readSupplierPolicySurface(row.estimated_fees);
   const eligibility = computeListingEligibility({
     decisionStatus: row.decision_status,
     estimatedProfit,
@@ -818,6 +840,16 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     consideredSources: row.considered_sources ?? [],
     marketOpportunityType: row.market_opportunity_type ?? null,
     shippingConfidence: toNumber(row.shipping_confidence),
+    stockClass: policySurface.stockClass,
+    stockConfidence: policySurface.stockConfidence,
+    lowStockControlledRiskEligible: policySurface.lowStockControlledRiskEligible,
+    stockMonitoringPriority: policySurface.monitoringPriority,
+    supplierPolicyReason: policySurface.policyReason,
+    supplierPolicyMessage: policySurface.operatorMessage,
+    usPriorityStatus: policySurface.usPriorityStatus,
+    shippingOriginCountry: policySurface.shippingOriginCountry,
+    shippingOriginConfidence: policySurface.shippingOriginConfidence,
+    shippingOriginValidity: policySurface.shippingOriginValidity,
     nominalProfit: toNumber(row.nominal_profit),
     reliabilityAdjustedProfit: toNumber(row.reliability_adjusted_profit),
     aiValidationUsed: Boolean(row.ai_validation_used),

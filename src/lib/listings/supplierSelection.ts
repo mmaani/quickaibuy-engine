@@ -41,6 +41,7 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   const marginPct = toNum(row.marginPct) ?? 0;
   const mediaQuality = toNum(payload?.mediaQualityScore) ?? 0.5;
   const availabilityConfidence = toNum(payload?.availabilityConfidence) ?? 0.5;
+  const estimatedProfit = toNum(row.estimatedProfit) ?? 0;
   const destinationCountry = "US";
   const shippingMin =
     toPositiveNumber(payload?.deliveryEstimateMinDays) ??
@@ -76,6 +77,10 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
     shippingConfidence: payload?.shippingConfidence ?? payload?.shipping_confidence,
     snapshotQuality: payload?.snapshotQuality ?? payload?.snapshot_quality,
     minimumReliabilityScore: 0.58,
+    estimatedProfitUsd: estimatedProfit,
+    marginPct,
+    minimumMarginPct: 18,
+    economicsAcceptable: estimatedProfit > 0 && marginPct >= 18,
   });
   if (earlyReject.reject) {
     return Number((-1 - intelligence.reliabilityScore).toFixed(6));
@@ -86,6 +91,7 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   const usPriorityComponent = intelligence.usMarketPriority * 0.16;
   const rateLimitPenalty = intelligence.rateLimitPressure * 0.14;
   const aliExpressPenalty = intelligence.shouldDeprioritize ? 0.22 : 0;
+  const lowStockPenalty = earlyReject.warning ? 0.18 : 0;
 
   return Number(
     (
@@ -98,6 +104,7 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
       originComponent +
       shippingComponent +
       usPriorityComponent -
+      lowStockPenalty -
       shippingPenalty -
       aliExpressPenalty
     ).toFixed(6)

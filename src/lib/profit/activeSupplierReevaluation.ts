@@ -19,7 +19,7 @@ import {
 } from "@/lib/products/pipelinePolicy";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { calculateRealProfit } from "@/lib/profit/realProfitCalculator";
-import { computeSupplierIntelligenceSignal, compareSupplierIntelligence } from "@/lib/suppliers/intelligence";
+import { computeSupplierIntelligenceSignal, compareSupplierIntelligence, shouldRejectSupplierEarly, type SupplierStockClass } from "@/lib/suppliers/intelligence";
 import { getSupplierRefreshTelemetryMap } from "@/lib/suppliers/telemetry";
 import { sql } from "drizzle-orm";
 
@@ -67,6 +67,9 @@ export type ActiveSupplierOption = {
   originAvailabilityRate: number;
   shippingTransparencyRate: number;
   hasUsWarehouse: boolean;
+  stockClass: SupplierStockClass;
+  stockConfidence: number | null;
+  lowStockControlledRiskEligible: boolean;
   availabilitySignal: string;
   availabilityConfidence: number | null;
   supplierSnapshotAgeHours: number | null;
@@ -140,7 +143,13 @@ function chooseBestOption(options: ActiveSupplierOption[]): ActiveSupplierOption
         originAvailabilityRate: left.originAvailabilityRate,
         shippingTransparencyRate: left.shippingTransparencyRate,
         stockReliabilityRate:
-          left.availabilitySignal === "IN_STOCK" ? 1 : left.availabilitySignal === "LOW_STOCK" ? 0.2 : 0,
+          left.availabilitySignal === "IN_STOCK"
+            ? 1
+            : left.availabilitySignal === "LOW_STOCK"
+              ? left.lowStockControlledRiskEligible
+                ? 0.28
+                : 0
+              : 0,
         stockEvidenceStrength: 0,
         shippingEvidenceStrength: 0,
         apiStabilityScore: 0,
@@ -150,8 +159,17 @@ function chooseBestOption(options: ActiveSupplierOption[]): ActiveSupplierOption
         usMarketPriority: left.hasUsWarehouse ? 1 : left.originAvailabilityRate,
         hasStrongOriginEvidence: left.originAvailabilityRate >= 0.75,
         hasUsWarehouse: left.hasUsWarehouse,
-        lowStockOrWorse: left.availabilitySignal !== "IN_STOCK",
-        hardBlock: Boolean(left.shippingErrorReason) || left.availabilitySignal !== "IN_STOCK",
+        stockClass: left.stockClass,
+        stockConfidence: left.stockConfidence,
+        lowStockOrWorse: left.stockClass !== "SAFE",
+        deliveryEstimateMinDays: null,
+        deliveryEstimateMaxDays: null,
+        deliveryAcceptableForDestination: true,
+        hardBlock:
+          Boolean(left.shippingErrorReason) ||
+          left.stockClass === "CRITICAL" ||
+          left.stockClass === "UNKNOWN" ||
+          (left.stockClass === "LOW" && !left.lowStockControlledRiskEligible),
         reliabilityScore: left.supplierReliabilityScore,
         shouldDeprioritize: false,
       },
@@ -162,7 +180,13 @@ function chooseBestOption(options: ActiveSupplierOption[]): ActiveSupplierOption
         originAvailabilityRate: right.originAvailabilityRate,
         shippingTransparencyRate: right.shippingTransparencyRate,
         stockReliabilityRate:
-          right.availabilitySignal === "IN_STOCK" ? 1 : right.availabilitySignal === "LOW_STOCK" ? 0.2 : 0,
+          right.availabilitySignal === "IN_STOCK"
+            ? 1
+            : right.availabilitySignal === "LOW_STOCK"
+              ? right.lowStockControlledRiskEligible
+                ? 0.28
+                : 0
+              : 0,
         stockEvidenceStrength: 0,
         shippingEvidenceStrength: 0,
         apiStabilityScore: 0,
@@ -172,8 +196,17 @@ function chooseBestOption(options: ActiveSupplierOption[]): ActiveSupplierOption
         usMarketPriority: right.hasUsWarehouse ? 1 : right.originAvailabilityRate,
         hasStrongOriginEvidence: right.originAvailabilityRate >= 0.75,
         hasUsWarehouse: right.hasUsWarehouse,
-        lowStockOrWorse: right.availabilitySignal !== "IN_STOCK",
-        hardBlock: Boolean(right.shippingErrorReason) || right.availabilitySignal !== "IN_STOCK",
+        stockClass: right.stockClass,
+        stockConfidence: right.stockConfidence,
+        lowStockOrWorse: right.stockClass !== "SAFE",
+        deliveryEstimateMinDays: null,
+        deliveryEstimateMaxDays: null,
+        deliveryAcceptableForDestination: true,
+        hardBlock:
+          Boolean(right.shippingErrorReason) ||
+          right.stockClass === "CRITICAL" ||
+          right.stockClass === "UNKNOWN" ||
+          (right.stockClass === "LOW" && !right.lowStockControlledRiskEligible),
         reliabilityScore: right.supplierReliabilityScore,
         shouldDeprioritize: false,
       }
@@ -455,6 +488,25 @@ export async function reevaluateActiveListingSuppliers(input: {
       rateLimitEvents: telemetry?.rateLimitEvents ?? null,
       refreshAttempts: telemetry?.attempts ?? null,
     });
+    const supplierPolicy = shouldRejectSupplierEarly({
+      supplierKey,
+      destinationCountry,
+      availabilitySignal,
+      availabilityConfidence: availability.confidence ?? null,
+      shippingEstimates: row.supplierShippingEstimates,
+      rawPayload: supplierRawPayload,
+      shippingConfidence:
+        supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
+          ? supplierRawPayload.shippingConfidence
+          : null,
+      snapshotQuality: rawSupplierQuality,
+      minimumReliabilityScore: 0.58,
+      estimatedProfitUsd,
+      marginPct,
+      roiPct,
+      minimumMarginPct: minMarginPct,
+      minimumRoiPct: minRoiPct,
+    });
     const matchRoutingStatus = getMatchRoutingStatus(matchConfidence);
     const shippingUnsafe = Boolean(shippingResolution.errorReason);
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
@@ -467,7 +519,8 @@ export async function reevaluateActiveListingSuppliers(input: {
       !supplierEvidence.manualReview &&
       !shippingUnsafe &&
       !marginOrRoiFailed &&
-      !pipelineHardBlocked;
+      !pipelineHardBlocked &&
+      !supplierPolicy.reject;
     const decisionStatus =
       matchRoutingStatus === "REJECTED"
         ? "REJECTED"
@@ -475,6 +528,7 @@ export async function reevaluateActiveListingSuppliers(input: {
             staleMarketplaceSnapshot ||
             supplierEvidence.manualReview ||
             shippingUnsafe ||
+            supplierPolicy.reject ||
             marginOrRoiFailed ||
             pipelineHardBlocked
           ? "MANUAL_REVIEW"
@@ -507,12 +561,19 @@ export async function reevaluateActiveListingSuppliers(input: {
       originAvailabilityRate: supplierIntelligence.originAvailabilityRate,
       shippingTransparencyRate: supplierIntelligence.shippingTransparencyRate,
       hasUsWarehouse: supplierIntelligence.hasUsWarehouse,
+      stockClass: supplierPolicy.stockClass,
+      stockConfidence: supplierPolicy.stockConfidence,
+      lowStockControlledRiskEligible: supplierPolicy.lowStockControlledRiskEligible,
       availabilitySignal,
       availabilityConfidence: availability.confidence ?? null,
       supplierSnapshotAgeHours,
       marketplaceSnapshotAgeHours,
       reason: shippingResolution.errorReason
         ? `shipping intelligence unresolved: ${shippingResolution.errorReason}`
+        : supplierPolicy.reject
+          ? `supplier policy blocked: ${supplierPolicy.reason}`
+          : supplierPolicy.warning
+            ? `low stock controlled-risk eligible: ${supplierPolicy.operatorMessage}`
         : automationSafe
           ? "viable supplier"
           : "supplier requires manual review",

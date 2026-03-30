@@ -13,6 +13,7 @@ import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
 import { fetchCjDirectProduct } from "@/lib/products/suppliers/cjdropshipping";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
 import { recordSupplierRefreshLearning } from "@/lib/learningHub/pipelineWriters";
+import { shouldRejectSupplierEarly } from "@/lib/suppliers/intelligence";
 
 type LatestSupplierSnapshot = Awaited<ReturnType<typeof getLatestProductRawBySupplierProduct>>;
 
@@ -60,20 +61,42 @@ function deriveKeyword(row: NonNullable<LatestSupplierSnapshot>): string | null 
   return title || null;
 }
 
-function shouldProceedWithReevaluation(snapshotQuality: string, availabilityStatus: string): {
+function shouldProceedWithReevaluation(input: {
+  supplierKey: string;
+  snapshotQuality: string;
+  availabilityStatus: string;
+  availabilityConfidence?: number | null;
+  shippingEstimates?: unknown;
+  rawPayload?: unknown;
+}): {
   ready: boolean;
   blockerReason: string | null;
 } {
-  const quality = String(snapshotQuality).toUpperCase();
-  const availability = normalizeAvailabilitySignal(availabilityStatus);
+  const quality = String(input.snapshotQuality).toUpperCase();
+  const availability = normalizeAvailabilitySignal(input.availabilityStatus);
 
   if (availability === "OUT_OF_STOCK") {
     return { ready: false, blockerReason: "supplier availability indicates out of stock" };
   }
-  if (availability === "UNKNOWN" || availability === "LOW_STOCK") {
+  const supplierPolicy = shouldRejectSupplierEarly({
+    supplierKey: input.supplierKey,
+    destinationCountry: "US",
+    availabilitySignal: availability,
+    availabilityConfidence: input.availabilityConfidence ?? null,
+    shippingEstimates: input.shippingEstimates,
+    rawPayload: input.rawPayload,
+    shippingConfidence:
+      input.rawPayload && typeof input.rawPayload === "object" && !Array.isArray(input.rawPayload)
+        ? (input.rawPayload as Record<string, unknown>).shippingConfidence
+        : null,
+    snapshotQuality: quality,
+    minimumReliabilityScore: 0.58,
+    economicsAcceptable: true,
+  });
+  if (supplierPolicy.reject) {
     return {
       ready: false,
-      blockerReason: `supplier availability requires manual review (${availability})`,
+      blockerReason: `supplier policy blocked refresh reevaluation (${supplierPolicy.reason ?? availability})`,
     };
   }
   if (quality === "STUB" || quality === "LOW") {
@@ -474,7 +497,14 @@ export async function refreshSingleSupplierProduct(input: {
     images: refreshedProduct.images,
     shippingEstimates: refreshedProduct.shippingEstimates,
   });
-  const proceed = shouldProceedWithReevaluation(snapshotQuality, availabilityStatus);
+  const proceed = shouldProceedWithReevaluation({
+    supplierKey,
+    snapshotQuality,
+    availabilityStatus,
+    availabilityConfidence: refreshedProduct.availabilityConfidence ?? null,
+    shippingEstimates: refreshedProduct.shippingEstimates,
+    rawPayload: refreshedProduct.raw,
+  });
 
   await writeAuditLog({
     actorType: "WORKER",

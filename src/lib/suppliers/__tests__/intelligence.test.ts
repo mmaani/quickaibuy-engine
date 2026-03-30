@@ -7,11 +7,11 @@ import {
   shouldRejectSupplierEarly,
 } from "@/lib/suppliers/intelligence";
 
-test("US market intelligence hard-blocks unresolved origin and low stock", () => {
+test("US market intelligence hard-blocks unresolved origin", () => {
   const signal = computeSupplierIntelligenceSignal({
     supplierKey: "aliexpress",
     destinationCountry: "US",
-    availabilitySignal: "LOW_STOCK",
+    availabilitySignal: "IN_STOCK",
     availabilityConfidence: 0.82,
     shippingEstimates: [{ label: "AliExpress Standard Shipping", cost: "4.12" }],
     rawPayload: {
@@ -27,7 +27,6 @@ test("US market intelligence hard-blocks unresolved origin and low stock", () =>
   });
 
   assert.equal(signal.hasStrongOriginEvidence, false);
-  assert.equal(signal.lowStockOrWorse, true);
   assert.equal(signal.hardBlock, true);
 });
 
@@ -106,31 +105,73 @@ test("known-origin non-US supplier remains eligible for US market", () => {
   assert.ok(signal.usMarketPriority > 0);
 });
 
-test("early reject gate blocks unresolved-origin and weak-reliability suppliers before pipeline", () => {
+test("weak transparency supplier is blocked", () => {
   const rejected = shouldRejectSupplierEarly({
-    supplierKey: "aliexpress",
+    supplierKey: "alibaba",
     destinationCountry: "US",
     availabilitySignal: "IN_STOCK",
-    availabilityConfidence: 0.7,
-    shippingEstimates: [{ label: "AliExpress Standard Shipping", cost: "4.12" }],
+    availabilityConfidence: 0.9,
+    shippingEstimates: [],
     rawPayload: {
-      shippingSignal: "PARTIAL",
-      shippingTransparencyState: "PRESENT",
-      snapshotQuality: "LOW",
+      shippingSignal: "MISSING",
+      shippingTransparencyState: "MISSING",
+      shippingOriginCountry: "CN",
+      shippingOriginValidity: "EXPLICIT",
+      snapshotQuality: "HIGH",
     },
-    shippingConfidence: 0.68,
-    refreshSuccessRate: 0.5,
-    historicalSuccessRate: 0.35,
-    rateLimitEvents: 10,
-    refreshAttempts: 20,
+    shippingConfidence: 0.2,
+    estimatedProfitUsd: 18,
+    marginPct: 35,
+    roiPct: 50,
+    minimumMarginPct: 15,
+    minimumRoiPct: 20,
   });
 
   assert.equal(rejected.reject, true);
-  assert.equal(rejected.reason, "us_origin_unresolved");
+  assert.equal(rejected.reason, "shipping_transparency_too_weak");
 });
 
-test("early reject gate blocks low-stock suppliers even when origin is resolved", () => {
+test("zero stock is blocked", () => {
   const rejected = shouldRejectSupplierEarly({
+    supplierKey: "cjdropshipping",
+    destinationCountry: "US",
+    availabilitySignal: "OUT_OF_STOCK",
+    availabilityConfidence: 0.95,
+    rawPayload: {
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
+      snapshotQuality: "HIGH",
+    },
+  });
+
+  assert.equal(rejected.reject, true);
+  assert.equal(rejected.reason, "critical_stock_blocked");
+});
+
+test("unknown stock is blocked", () => {
+  const rejected = shouldRejectSupplierEarly({
+    supplierKey: "alibaba",
+    destinationCountry: "US",
+    availabilitySignal: "UNKNOWN",
+    availabilityConfidence: 0.3,
+    rawPayload: {
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "CN",
+      shippingOriginValidity: "EXPLICIT",
+      snapshotQuality: "HIGH",
+    },
+  });
+
+  assert.equal(rejected.reject, true);
+  assert.equal(rejected.reason, "unknown_stock_blocked");
+});
+
+test("LOW_STOCK strong supplier with known origin and valid shipping remains eligible with warning", () => {
+  const decision = shouldRejectSupplierEarly({
     supplierKey: "cjdropshipping",
     destinationCountry: "US",
     availabilitySignal: "LOW_STOCK",
@@ -147,8 +188,44 @@ test("early reject gate blocks low-stock suppliers even when origin is resolved"
     shippingConfidence: 0.92,
     refreshSuccessRate: 0.94,
     historicalSuccessRate: 0.9,
+    estimatedProfitUsd: 18,
+    marginPct: 32,
+    roiPct: 48,
+    minimumMarginPct: 15,
+    minimumRoiPct: 20,
+  });
+
+  assert.equal(decision.reject, false);
+  assert.equal(decision.warning, true);
+  assert.equal(decision.stockClass, "LOW");
+  assert.equal(decision.lowStockControlledRiskEligible, true);
+  assert.equal(decision.monitoringPriority, "PRIORITY_RECHECK");
+});
+
+test("LOW_STOCK weak supplier or unresolved origin remains blocked", () => {
+  const rejected = shouldRejectSupplierEarly({
+    supplierKey: "aliexpress",
+    destinationCountry: "US",
+    availabilitySignal: "LOW_STOCK",
+    availabilityConfidence: 0.72,
+    shippingEstimates: [{ label: "AliExpress Standard Shipping", cost: "4.12", etaMinDays: 13, etaMaxDays: 18 }],
+    rawPayload: {
+      shippingSignal: "PARTIAL",
+      shippingTransparencyState: "PRESENT",
+      snapshotQuality: "LOW",
+    },
+    shippingConfidence: 0.68,
+    refreshSuccessRate: 0.5,
+    historicalSuccessRate: 0.35,
+    rateLimitEvents: 10,
+    refreshAttempts: 20,
+    estimatedProfitUsd: 12,
+    marginPct: 24,
+    roiPct: 28,
+    minimumMarginPct: 15,
+    minimumRoiPct: 20,
   });
 
   assert.equal(rejected.reject, true);
-  assert.equal(rejected.reason, "low_stock_or_unconfirmed_availability");
+  assert.equal(rejected.reason, "us_origin_unresolved");
 });

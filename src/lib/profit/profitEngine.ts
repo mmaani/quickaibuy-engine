@@ -28,6 +28,12 @@ import { validateAmbiguousTopCandidates } from "./aiOpportunityValidation";
 import { buildMarketDepthSignal, computeReliabilityAdjustedProfit } from "./opportunitySignals";
 import { chooseBestSupplierOption } from "./supplierPriority";
 import type { OriginValidity } from "@/lib/products/shipFromOrigin";
+import {
+  getSupplierUsPriorityStatus,
+  shouldRejectSupplierEarly,
+  type SupplierMonitoringPriority,
+  type SupplierStockClass,
+} from "@/lib/suppliers/intelligence";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -120,6 +126,10 @@ type CandidateOption = {
   supplierDriftExceeded: boolean;
   availabilityUnsafe: boolean;
   availabilityManualReview: boolean;
+  stockClass: SupplierStockClass;
+  stockConfidence: number | null;
+  lowStockControlledRiskEligible: boolean;
+  stockMonitoringPriority: SupplierMonitoringPriority;
   marginOrRoiFailed: boolean;
   automationSafe: boolean;
   decisionStatus: string;
@@ -652,6 +662,25 @@ export async function runProfitEngine(input?: {
       0,
       Math.min(1, sourceReliabilityComponent * 0.4 + availabilityComponent * 0.45 + (pipeline.score / 100) * 0.15 - rateLimitPressurePenalty)
     );
+    const supplierPolicy = shouldRejectSupplierEarly({
+      supplierKey: normalizedSupplierKey,
+      destinationCountry,
+      availabilitySignal,
+      availabilityConfidence: availability.confidence ?? null,
+      shippingEstimates: row.supplierShippingEstimates,
+      rawPayload: supplierRawPayload,
+      shippingConfidence:
+        supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
+          ? supplierRawPayload.shippingConfidence
+          : null,
+      snapshotQuality: rawSupplierQuality,
+      minimumReliabilityScore: 0.58,
+      estimatedProfitUsd: estimatedProfit,
+      marginPct,
+      roiPct,
+      minimumMarginPct: minMarginPct,
+      minimumRoiPct: minRoiPct,
+    });
     const reliabilityAdjustedProfit = computeReliabilityAdjustedProfit({
       nominalProfitUsd: estimatedProfit,
       supplierCostUsd: supplierCost,
@@ -674,13 +703,14 @@ export async function runProfitEngine(input?: {
       !shippingUnsafe &&
       !marginOrRoiFailed &&
       hardGate.allow &&
-      !pipelineHardBlocked;
+      !pipelineHardBlocked &&
+      !supplierPolicy.reject;
     const decisionStatus =
       matchRoutingStatus === "REJECTED"
         ? "REJECTED"
         : matchRoutingStatus === "MANUAL_REVIEW"
           ? "MANUAL_REVIEW"
-        : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview || shippingUnsafe
+        : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview || shippingUnsafe || supplierPolicy.reject
         ? "MANUAL_REVIEW"
         : marginOrRoiFailed || pipelineHardBlocked || !hardGate.allow
           ? "MANUAL_REVIEW"
@@ -698,6 +728,8 @@ export async function runProfitEngine(input?: {
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
       : shippingResolution.errorReason
       ? `shipping intelligence unresolved: ${shippingResolution.errorReason}`
+      : supplierPolicy.reject
+      ? `supplier policy block: ${supplierPolicy.reason}`
       : !hardGate.allow
       ? `economics hard block: ${hardGate.blockReason ?? "UNKNOWN"}`
       : supplierEvidence.manualReview && supplierEvidenceCodes.length
@@ -776,6 +808,7 @@ export async function runProfitEngine(input?: {
                 : !hardGate.allow
                   ? [...hardGate.reasonCodes]
                   : pipeline.flags;
+    const mergedRiskFlags = Array.from(new Set([...riskFlags, ...supplierPolicy.riskFlags]));
     const estimatedFeesJson = {
       feePct: economics.assumptions.ebayFeeRatePct,
       feeUsd: estimatedFees,
@@ -808,6 +841,26 @@ export async function runProfitEngine(input?: {
         shippingErrorReason: shippingResolution.errorReason,
         shippingDriftDetected,
       },
+      supplierPolicy: {
+        stockClass: supplierPolicy.stockClass,
+        stockConfidence: supplierPolicy.stockConfidence,
+        lowStockControlledRiskEligible: supplierPolicy.lowStockControlledRiskEligible,
+        monitoringPriority: supplierPolicy.monitoringPriority,
+        warning: supplierPolicy.warning,
+        reject: supplierPolicy.reject,
+        policyReason: supplierPolicy.reason,
+        operatorMessage: supplierPolicy.operatorMessage,
+        originAvailabilityRate: supplierPolicy.signal.originAvailabilityRate,
+        shippingTransparencyRate: supplierPolicy.signal.shippingTransparencyRate,
+        deliveryEstimateMinDays: supplierPolicy.signal.deliveryEstimateMinDays,
+        deliveryEstimateMaxDays: supplierPolicy.signal.deliveryEstimateMaxDays,
+        deliveryAcceptableForDestination: supplierPolicy.signal.deliveryAcceptableForDestination,
+        usPriorityStatus: getSupplierUsPriorityStatus({
+          destinationCountry,
+          hasUsWarehouse: supplierPolicy.signal.hasUsWarehouse,
+          hasStrongOriginEvidence: supplierPolicy.signal.hasStrongOriginEvidence,
+        }),
+      },
       matchConfidence,
       matchType: row.matchType,
       selectionMode: "latest_best_active_match_per_supplier_product",
@@ -829,8 +882,12 @@ export async function runProfitEngine(input?: {
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
       : shippingResolution.errorReason
       ? `shipping intelligence failed | reason ${shippingResolution.errorReason} | mode ${shippingResolution.resolutionMode} | quote_age_hours ${shippingResolution.quoteAgeHours ?? "n/a"} | destination ${destinationCountry}`
+      : supplierPolicy.reject
+      ? `supplier policy blocked | reason ${supplierPolicy.reason} | stock_class ${supplierPolicy.stockClass} | monitoring ${supplierPolicy.monitoringPriority}`
       : !hardGate.allow
       ? `economics hard gate blocked | reasons ${hardGate.blockReason ?? "UNKNOWN"}`
+      : supplierPolicy.warning
+        ? `low stock controlled-risk eligible | ${supplierPolicy.operatorMessage} | stock_class ${supplierPolicy.stockClass} | monitoring ${supplierPolicy.monitoringPriority}`
       : supplierEvidence.manualReview && supplierEvidenceCodes.length
         ? `supplier evidence review required | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
       : marginOrRoiFailed
@@ -891,14 +948,22 @@ export async function runProfitEngine(input?: {
       staleMarketplaceSnapshot,
       shippingUnsafe,
       supplierDriftExceeded,
-      availabilityUnsafe: supplierEvidenceCodes.includes("SUPPLIER_OUT_OF_STOCK"),
-      availabilityManualReview: supplierEvidence.manualReview,
+      availabilityUnsafe:
+        supplierEvidenceCodes.includes("SUPPLIER_OUT_OF_STOCK") ||
+        supplierPolicy.stockClass === "CRITICAL" ||
+        supplierPolicy.stockClass === "UNKNOWN" ||
+        supplierPolicy.reject,
+      availabilityManualReview: supplierEvidence.manualReview || supplierPolicy.reject,
+      stockClass: supplierPolicy.stockClass,
+      stockConfidence: supplierPolicy.stockConfidence,
+      lowStockControlledRiskEligible: supplierPolicy.lowStockControlledRiskEligible,
+      stockMonitoringPriority: supplierPolicy.monitoringPriority,
       marginOrRoiFailed,
       automationSafe,
       decisionStatus,
       listingEligible,
       listingBlockReason,
-      riskFlags,
+      riskFlags: mergedRiskFlags,
       reason,
       marketDepth,
       reliabilityAdjustedProfit,

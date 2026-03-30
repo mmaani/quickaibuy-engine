@@ -26,6 +26,8 @@ export type CandidateSelectionFields = {
   shippingUnsafe: boolean;
   availabilityUnsafe: boolean;
   availabilityManualReview: boolean;
+  stockClass: "SAFE" | "LOW" | "CRITICAL" | "UNKNOWN";
+  lowStockControlledRiskEligible: boolean;
   decisionStatus: string;
   listingEligible: boolean;
   pipeline: {
@@ -79,6 +81,13 @@ function areEconomicsCompetitive(left: CandidateSelectionFields, right: Candidat
   return adjustedProfitGap <= 3 && reliabilityGap <= 0.08 && deliveryGap <= 4;
 }
 
+function stockPriority(option: CandidateSelectionFields): number {
+  if (option.stockClass === "SAFE") return 3;
+  if (option.stockClass === "LOW" && option.lowStockControlledRiskEligible) return 2;
+  if (option.stockClass === "LOW") return 1;
+  return 0;
+}
+
 function compareUsMarketOriginPreference(left: CandidateSelectionFields, right: CandidateSelectionFields): number {
   const leftUsOrigin = Number(isUsOrigin(left));
   const rightUsOrigin = Number(isUsOrigin(right));
@@ -108,6 +117,7 @@ export function chooseBestSupplierOption<T extends CandidateSelectionFields>(opt
       Number(left.availabilitySignal === "IN_STOCK") - Number(right.availabilitySignal === "IN_STOCK"),
       Number(left.shippingTransparencyState === "PRESENT") - Number(right.shippingTransparencyState === "PRESENT"),
       Number(isKnownOrigin(left)) - Number(isKnownOrigin(right)),
+      stockPriority(left) - stockPriority(right),
       compareNullableNumbersDesc(left.availabilityConfidence, right.availabilityConfidence),
       compareNullableNumbersDesc(left.supplierReliabilityScore, right.supplierReliabilityScore),
       compareNullableNumbersDesc(

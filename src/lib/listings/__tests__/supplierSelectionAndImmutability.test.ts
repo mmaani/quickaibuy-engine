@@ -221,6 +221,62 @@ test("US market selection allows strong known-origin international supplier to b
   assert.equal(selected[0]?.candidateId, "c-cn-strong");
 });
 
+test("controlled-risk low stock stays eligible but is penalized against safe stock", () => {
+  const safeUs = buildRow({
+    candidateId: "c-safe-us",
+    supplierPrice: 8,
+    marginPct: 42,
+    estimatedProfit: 16,
+  });
+  const lowStockUs = buildRow({
+    candidateId: "c-low-stock-us",
+    supplierPrice: 7.5,
+    marginPct: 40,
+    estimatedProfit: 17,
+    supplierRawPayload: {
+      mediaQualityScore: 0.9,
+      availabilityConfidence: 0.92,
+      availabilitySignal: "LOW_STOCK",
+      shippingConfidence: 0.92,
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
+      snapshotQuality: "HIGH",
+      deliveryEstimateMinDays: 4,
+      deliveryEstimateMaxDays: 7,
+    },
+  });
+
+  assert.ok(computeSupplierSelectionScore(safeUs) > computeSupplierSelectionScore(lowStockUs));
+  const selected = selectBestSupplierRowsBeforeListing([safeUs, lowStockUs]);
+  assert.equal(selected[0]?.candidateId, "c-safe-us");
+});
+
+test("low stock with unresolved origin remains blocked before listing", () => {
+  const blocked = buildRow({
+    candidateId: "c-low-blocked",
+    supplierKey: "aliexpress",
+    supplierPrice: 6,
+    marginPct: 35,
+    estimatedProfit: 14,
+    supplierRawPayload: {
+      mediaQualityScore: 0.9,
+      availabilityConfidence: 0.85,
+      availabilitySignal: "LOW_STOCK",
+      shippingConfidence: 0.8,
+      shippingSignal: "PARTIAL",
+      shippingTransparencyState: "PRESENT",
+      snapshotQuality: "HIGH",
+      deliveryEstimateMinDays: 8,
+      deliveryEstimateMaxDays: 10,
+    },
+  });
+
+  assert.ok(computeSupplierSelectionScore(blocked) < 0);
+});
+
 test("no post-approval supplier rebinding for READY/ACTIVE statuses", () => {
   assert.equal(canRewritePinnedSupplierLinkageForListingStatus("PREVIEW"), true);
   assert.equal(isSupplierLinkageImmutableForListingStatus("PREVIEW"), false);

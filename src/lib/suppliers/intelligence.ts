@@ -1,5 +1,12 @@
 import type { SupplierProduct, SupplierSnapshotQuality } from "@/lib/products/suppliers/types";
 
+export type SupplierStockClass = "SAFE" | "LOW" | "CRITICAL" | "UNKNOWN";
+export type SupplierMonitoringPriority = "NORMAL" | "PRIORITY_RECHECK" | "URGENT_RECHECK";
+export type SupplierUsPriorityStatus =
+  | "US_ORIGIN_PREFERRED"
+  | "KNOWN_NON_US_ORIGIN_ALLOWED"
+  | "ORIGIN_UNRESOLVED_BLOCKED";
+
 export type SupplierIntelligenceSignal = {
   supplierKey: string;
   basePriority: number;
@@ -16,11 +23,47 @@ export type SupplierIntelligenceSignal = {
   usMarketPriority: number;
   hasStrongOriginEvidence: boolean;
   hasUsWarehouse: boolean;
+  stockClass: SupplierStockClass;
+  stockConfidence: number | null;
   lowStockOrWorse: boolean;
+  deliveryEstimateMinDays: number | null;
+  deliveryEstimateMaxDays: number | null;
+  deliveryAcceptableForDestination: boolean;
   hardBlock: boolean;
   reliabilityScore: number;
   shouldDeprioritize: boolean;
 };
+
+export type SupplierRiskPolicyDecision = {
+  reject: boolean;
+  reason: string | null;
+  signal: SupplierIntelligenceSignal;
+  warning: boolean;
+  stockClass: SupplierStockClass;
+  stockConfidence: number | null;
+  lowStockControlledRiskEligible: boolean;
+  monitoringPriority: SupplierMonitoringPriority;
+  riskFlags: string[];
+  operatorMessage: string;
+};
+
+export function getSupplierUsPriorityStatus(input: {
+  destinationCountry?: string | null;
+  hasUsWarehouse: boolean;
+  hasStrongOriginEvidence: boolean;
+}): SupplierUsPriorityStatus {
+  const destinationCountry = normalizeCountry(input.destinationCountry) ?? null;
+  if (destinationCountry !== "US") {
+    return input.hasUsWarehouse
+      ? "US_ORIGIN_PREFERRED"
+      : input.hasStrongOriginEvidence
+        ? "KNOWN_NON_US_ORIGIN_ALLOWED"
+        : "ORIGIN_UNRESOLVED_BLOCKED";
+  }
+  if (input.hasUsWarehouse) return "US_ORIGIN_PREFERRED";
+  if (input.hasStrongOriginEvidence) return "KNOWN_NON_US_ORIGIN_ALLOWED";
+  return "ORIGIN_UNRESOLVED_BLOCKED";
+}
 
 export type SupplierWaveBudget = {
   supplierKey: string;
@@ -41,6 +84,11 @@ function toNum(value: unknown): number | null {
   if (value == null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toPositiveNumber(value: unknown): number | null {
+  const parsed = toNum(value);
+  return parsed != null && parsed > 0 ? parsed : null;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -316,7 +364,7 @@ function computeStockReliabilityRate(input: {
   availabilitySignal?: unknown;
   availabilityConfidence?: unknown;
   rawPayload?: unknown;
-}): { rate: number; lowStockOrWorse: boolean } {
+}): { rate: number; lowStockOrWorse: boolean; stockClass: SupplierStockClass; stockConfidence: number | null } {
   const raw = asObject(input.rawPayload) ?? {};
   const signal = String(
     input.availabilitySignal ?? raw.availabilitySignal ?? raw.availability_status ?? raw.availabilityStatus ?? ""
@@ -326,11 +374,55 @@ function computeStockReliabilityRate(input: {
   const confidence = toNum(
     input.availabilityConfidence ?? raw.availabilityConfidence ?? raw.availability_confidence
   );
-  const lowStockOrWorse = signal === "LOW_STOCK" || signal === "OUT_OF_STOCK" || signal === "UNKNOWN";
+  const stockClass =
+    signal === "IN_STOCK"
+      ? "SAFE"
+      : signal === "LOW_STOCK"
+        ? "LOW"
+        : signal === "OUT_OF_STOCK"
+          ? "CRITICAL"
+          : "UNKNOWN";
+  const lowStockOrWorse = stockClass === "LOW" || stockClass === "CRITICAL" || stockClass === "UNKNOWN";
 
   let rate = signal === "IN_STOCK" ? 0.84 : signal === "LOW_STOCK" ? 0.28 : signal === "OUT_OF_STOCK" ? 0.05 : 0.12;
   if (confidence != null) rate = rate * 0.72 + clamp01(confidence) * 0.28;
-  return { rate: clamp01(rate), lowStockOrWorse };
+  return { rate: clamp01(rate), lowStockOrWorse, stockClass, stockConfidence: confidence };
+}
+
+function computeDeliveryWindow(input: {
+  shippingEstimates?: unknown;
+  rawPayload?: unknown;
+  destinationCountry?: string | null;
+}): {
+  minDays: number | null;
+  maxDays: number | null;
+  acceptableForDestination: boolean;
+} {
+  const raw = asObject(input.rawPayload) ?? {};
+  const estimates = Array.isArray(input.shippingEstimates)
+    ? (input.shippingEstimates as Array<Record<string, unknown>>)
+    : [];
+  const estimateMinDays = estimates
+    .map((estimate) => toPositiveNumber(estimate?.etaMinDays))
+    .filter((value): value is number => value != null);
+  const estimateMaxDays = estimates
+    .map((estimate) => toPositiveNumber(estimate?.etaMaxDays))
+    .filter((value): value is number => value != null);
+  const minDays =
+    estimateMinDays.length > 0
+      ? Math.min(...estimateMinDays)
+      : toPositiveNumber(raw.deliveryEstimateMinDays ?? raw.delivery_estimate_min_days);
+  const maxDays =
+    estimateMaxDays.length > 0
+      ? Math.max(...estimateMaxDays)
+      : toPositiveNumber(raw.deliveryEstimateMaxDays ?? raw.delivery_estimate_max_days) ?? minDays;
+  const destinationCountry = normalizeCountry(input.destinationCountry) ?? null;
+  const acceptableMaxDays = destinationCountry === "US" ? 12 : 18;
+  return {
+    minDays,
+    maxDays,
+    acceptableForDestination: maxDays != null && maxDays <= acceptableMaxDays,
+  };
 }
 
 export function computeSupplierApiStabilityScore(input: {
@@ -384,11 +476,22 @@ export function computeSupplierIntelligenceSignal(input: {
     shippingEstimates: input.shippingEstimates,
     rawPayload: input.rawPayload,
   });
-  const { rate: stockReliabilityRate, lowStockOrWorse } = computeStockReliabilityRate({
+  const {
+    rate: stockReliabilityRate,
+    lowStockOrWorse,
+    stockClass,
+    stockConfidence,
+  } = computeStockReliabilityRate({
     availabilitySignal: input.availabilitySignal,
     availabilityConfidence: input.availabilityConfidence,
     rawPayload: input.rawPayload,
   });
+  const { minDays: deliveryEstimateMinDays, maxDays: deliveryEstimateMaxDays, acceptableForDestination: deliveryAcceptableForDestination } =
+    computeDeliveryWindow({
+      shippingEstimates: input.shippingEstimates,
+      rawPayload: input.rawPayload,
+      destinationCountry,
+    });
   const stockEvidenceStrength = computeStockEvidenceStrength({
     availabilitySignal: input.availabilitySignal,
     availabilityConfidence: input.availabilityConfidence,
@@ -441,12 +544,14 @@ export function computeSupplierIntelligenceSignal(input: {
   reliabilityScore -= rateLimitPressure * 0.12;
 
   const hardBlock =
-    lowStockOrWorse ||
+    stockClass === "CRITICAL" ||
+    stockClass === "UNKNOWN" ||
     (destinationCountry === "US" && !hasStrongOriginEvidence) ||
     shippingTransparencyRate < 0.45;
 
   const shouldDeprioritize =
     hardBlock ||
+    stockClass === "LOW" ||
     (supplierKey === "aliexpress" &&
       (originAvailabilityRate < 0.82 ||
         shippingTransparencyRate < 0.78 ||
@@ -475,7 +580,12 @@ export function computeSupplierIntelligenceSignal(input: {
     usMarketPriority,
     hasStrongOriginEvidence,
     hasUsWarehouse,
+    stockClass,
+    stockConfidence,
     lowStockOrWorse,
+    deliveryEstimateMinDays,
+    deliveryEstimateMaxDays,
+    deliveryAcceptableForDestination,
     hardBlock,
     reliabilityScore: clamp01(reliabilityScore),
     shouldDeprioritize,
@@ -488,6 +598,10 @@ export function compareSupplierIntelligence(
 ): number {
   if (left.hardBlock !== right.hardBlock) {
     return Number(left.hardBlock) - Number(right.hardBlock);
+  }
+  if (left.stockClass !== right.stockClass) {
+    const score = (value: SupplierStockClass) => (value === "SAFE" ? 3 : value === "LOW" ? 2 : value === "UNKNOWN" ? 1 : 0);
+    return score(right.stockClass) - score(left.stockClass);
   }
   if (left.reliabilityScore !== right.reliabilityScore) {
     return right.reliabilityScore - left.reliabilityScore;
@@ -543,20 +657,150 @@ export function shouldRejectSupplierEarly(input: {
   rateLimitEvents?: number | null;
   refreshAttempts?: number | null;
   minimumReliabilityScore?: number;
-}): { reject: boolean; reason: string | null; signal: SupplierIntelligenceSignal } {
+  estimatedProfitUsd?: number | null;
+  marginPct?: number | null;
+  roiPct?: number | null;
+  minimumMarginPct?: number | null;
+  minimumRoiPct?: number | null;
+  economicsAcceptable?: boolean | null;
+}): SupplierRiskPolicyDecision {
   const signal = computeSupplierIntelligenceSignal(input);
   const minimumReliabilityScore = clamp01(input.minimumReliabilityScore ?? 0.58);
-  if (signal.lowStockOrWorse) {
-    return { reject: true, reason: "low_stock_or_unconfirmed_availability", signal };
+  const lowStockReliabilityThreshold = Math.max(0.5, minimumReliabilityScore - 0.08);
+  const economicsAcceptable =
+    input.economicsAcceptable != null
+      ? input.economicsAcceptable
+      : (input.estimatedProfitUsd ?? 0) > 0 &&
+        (input.marginPct == null || input.minimumMarginPct == null || input.marginPct >= input.minimumMarginPct) &&
+        (input.roiPct == null || input.minimumRoiPct == null || input.roiPct >= input.minimumRoiPct);
+
+  if (signal.stockClass === "CRITICAL") {
+    return {
+      reject: true,
+      reason: "critical_stock_blocked",
+      signal,
+      warning: false,
+      stockClass: signal.stockClass,
+      stockConfidence: signal.stockConfidence,
+      lowStockControlledRiskEligible: false,
+      monitoringPriority: "URGENT_RECHECK",
+      riskFlags: ["CRITICAL_STOCK_BLOCKED"],
+      operatorMessage: "Supplier stock is critically low or zero and is blocked.",
+    };
+  }
+  if (signal.stockClass === "UNKNOWN") {
+    return {
+      reject: true,
+      reason: "unknown_stock_blocked",
+      signal,
+      warning: false,
+      stockClass: signal.stockClass,
+      stockConfidence: signal.stockConfidence,
+      lowStockControlledRiskEligible: false,
+      monitoringPriority: "URGENT_RECHECK",
+      riskFlags: ["UNKNOWN_STOCK_BLOCKED"],
+      operatorMessage: "Supplier stock is unknown and is blocked.",
+    };
   }
   if (signal.destinationCountry === "US" && !signal.hasStrongOriginEvidence) {
-    return { reject: true, reason: "us_origin_unresolved", signal };
+    return {
+      reject: true,
+      reason: "us_origin_unresolved",
+      signal,
+      warning: false,
+      stockClass: signal.stockClass,
+      stockConfidence: signal.stockConfidence,
+      lowStockControlledRiskEligible: false,
+      monitoringPriority: "NORMAL",
+      riskFlags: ["ORIGIN_UNRESOLVED_BLOCKED"],
+      operatorMessage: "Origin is unresolved for the US market and is blocked.",
+    };
   }
   if (signal.shippingTransparencyRate < 0.45) {
-    return { reject: true, reason: "shipping_transparency_too_weak", signal };
+    return {
+      reject: true,
+      reason: "shipping_transparency_too_weak",
+      signal,
+      warning: false,
+      stockClass: signal.stockClass,
+      stockConfidence: signal.stockConfidence,
+      lowStockControlledRiskEligible: false,
+      monitoringPriority: "NORMAL",
+      riskFlags: ["SHIPPING_TRANSPARENCY_BLOCKED"],
+      operatorMessage: "Shipping transparency is too weak and is blocked.",
+    };
+  }
+  const lowStockHasKnownOrigin = signal.hasStrongOriginEvidence;
+  const lowStockHasTransparency = signal.shippingTransparencyRate >= 0.6;
+  const lowStockHasReliability =
+    signal.reliabilityScore >= lowStockReliabilityThreshold ||
+    signal.reliabilityScore + 0.08 >= minimumReliabilityScore;
+  if (signal.stockClass === "LOW") {
+    const lowStockRejectReason =
+      !lowStockHasKnownOrigin
+        ? "us_origin_unresolved"
+        : !lowStockHasTransparency
+          ? "shipping_transparency_too_weak"
+          : !signal.deliveryAcceptableForDestination
+            ? "low_stock_delivery_not_acceptable"
+            : !economicsAcceptable
+              ? "low_stock_economics_not_competitive"
+              : !lowStockHasReliability
+                ? "low_stock_supplier_reliability_too_low"
+                : signal.hardBlock
+                  ? "low_stock_controlled_risk_failed"
+                  : null;
+    if (lowStockRejectReason) {
+      return {
+        reject: true,
+        reason: lowStockRejectReason,
+        signal,
+        warning: false,
+        stockClass: signal.stockClass,
+        stockConfidence: signal.stockConfidence,
+        lowStockControlledRiskEligible: false,
+        monitoringPriority: "URGENT_RECHECK",
+        riskFlags: ["LOW_STOCK_BLOCKED"],
+        operatorMessage: "LOW_STOCK failed controlled-risk conditions and is blocked.",
+      };
+    }
+    return {
+      reject: false,
+      reason: null,
+      signal,
+      warning: true,
+      stockClass: signal.stockClass,
+      stockConfidence: signal.stockConfidence,
+      lowStockControlledRiskEligible: true,
+      monitoringPriority: "PRIORITY_RECHECK",
+      riskFlags: ["LOW_STOCK_WARNING", "LOW_STOCK_PRIORITY_RECHECK"],
+      operatorMessage: "LOW_STOCK is allowed under controlled-risk conditions with recheck priority.",
+    };
   }
   if (signal.reliabilityScore < minimumReliabilityScore || signal.hardBlock) {
-    return { reject: true, reason: "supplier_reliability_too_low", signal };
+    return {
+      reject: true,
+      reason: "supplier_reliability_too_low",
+      signal,
+      warning: false,
+      stockClass: signal.stockClass,
+      stockConfidence: signal.stockConfidence,
+      lowStockControlledRiskEligible: false,
+      monitoringPriority: "NORMAL",
+      riskFlags: ["SUPPLIER_RELIABILITY_BLOCKED"],
+      operatorMessage: "Supplier reliability is below threshold and is blocked.",
+    };
   }
-  return { reject: false, reason: null, signal };
+  return {
+    reject: false,
+    reason: null,
+    signal,
+    warning: false,
+    stockClass: signal.stockClass,
+    stockConfidence: signal.stockConfidence,
+    lowStockControlledRiskEligible: false,
+    monitoringPriority: "NORMAL",
+    riskFlags: [],
+    operatorMessage: "Supplier passes origin, transparency, stock, and reliability policy.",
+  };
 }

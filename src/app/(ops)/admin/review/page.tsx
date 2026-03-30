@@ -922,6 +922,45 @@ export default async function ReviewPage({
                       <KeyValue label="Margin / ROI" value={`${formatPercent(detail.candidate.marginPct)} / ${formatPercent(detail.candidate.roiPct)}`} />
                       <KeyValue label="Market Opportunity Type" value={detail.candidate.marketOpportunityType ?? "-"} />
                       <KeyValue label="Shipping Confidence" value={detail.candidate.shippingConfidence == null ? "-" : `${(detail.candidate.shippingConfidence * 100).toFixed(0)}%`} />
+                      <KeyValue label="Stock Class" value={detail.candidate.stockClass ?? "-"} />
+                      <KeyValue
+                        label="Stock Confidence"
+                        value={
+                          detail.candidate.stockConfidence == null
+                            ? "-"
+                            : `${(detail.candidate.stockConfidence * 100).toFixed(0)}%`
+                        }
+                      />
+                      <KeyValue
+                        label="Low-Stock Policy"
+                        value={
+                          detail.candidate.stockClass !== "LOW"
+                            ? "Not low stock"
+                            : detail.candidate.lowStockControlledRiskEligible
+                              ? "LOW_STOCK_WARNING"
+                              : "LOW_STOCK_BLOCKED"
+                        }
+                      />
+                      <KeyValue label="Monitoring Priority" value={detail.candidate.stockMonitoringPriority ?? "-"} />
+                      <KeyValue label="US Priority Status" value={detail.candidate.usPriorityStatus ?? "-"} />
+                      <KeyValue
+                        label="Origin"
+                        value={
+                          detail.candidate.shippingOriginCountry
+                            ? `${detail.candidate.shippingOriginCountry} (${detail.candidate.shippingOriginValidity ?? "unknown"})`
+                            : "-"
+                        }
+                      />
+                      <KeyValue
+                        label="Origin Confidence"
+                        value={
+                          detail.candidate.shippingOriginConfidence == null
+                            ? "-"
+                            : `${(detail.candidate.shippingOriginConfidence * 100).toFixed(0)}%`
+                        }
+                      />
+                      <KeyValue label="Supplier Policy Reason" value={detail.candidate.supplierPolicyReason ?? "-"} />
+                      <KeyValue label="Supplier Policy Message" value={detail.candidate.supplierPolicyMessage ?? "-"} />
                       <KeyValue label="AI Validation" value={detail.candidate.aiValidationUsed ? `used (${detail.candidate.aiValidationStatus ?? "unknown"})` : "not used"} />
                       <KeyValue label="Match Confidence" value={detail.match?.confidence?.toFixed(4) ?? "-"} />
                       <KeyValue label="Calculated" value={formatDateTime(detail.candidate.calcTs)} />

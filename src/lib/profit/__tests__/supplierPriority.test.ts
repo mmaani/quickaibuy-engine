@@ -103,8 +103,8 @@ function buildOption(overrides: Partial<TestOption>): TestOption {
     shippingTransparencyState: "PRESENT",
     shippingValidity: "PASS",
     shippingErrorReason: null,
-    deliveryEstimateMinDays: 4,
-    deliveryEstimateMaxDays: 6,
+    deliveryEstimateMinDays: 5,
+    deliveryEstimateMaxDays: 8,
     landedSupplierCost: 15,
     shippingDriftDetected: false,
     supplierSnapshotAgeHours: 2,
@@ -140,6 +140,8 @@ function buildOption(overrides: Partial<TestOption>): TestOption {
     supplierDriftExceeded: false,
     availabilityUnsafe: false,
     availabilityManualReview: false,
+    stockClass: "SAFE",
+    lowStockControlledRiskEligible: false,
     marginOrRoiFailed: false,
     automationSafe: true,
     decisionStatus: "APPROVED",
@@ -232,4 +234,29 @@ test("known-origin international supplier can beat weak expensive US supplier", 
   });
 
   assert.equal(chooseBestSupplierOption([weakUs, strongChina]).supplierProductId, "supplier-cn-strong");
+});
+
+test("safe stock outranks controlled-risk low stock when economics are close", () => {
+  const safeUs = buildOption({
+    supplierProductId: "supplier-safe-us",
+    stockClass: "SAFE",
+    lowStockControlledRiskEligible: false,
+  });
+  const lowStockIntl = buildOption({
+    normalizedSupplierKey: "alibaba",
+    supplierProductId: "supplier-low-intl",
+    shippingOriginCountry: "CN",
+    shippingOriginValidity: "EXPLICIT",
+    supplierWarehouseCountry: "CN",
+    stockClass: "LOW",
+    lowStockControlledRiskEligible: true,
+    reliabilityAdjustedProfit: {
+      adjustedProfitUsd: 16.5,
+      penaltyUsd: 2,
+      reliabilityScore: 0.88,
+    },
+    supplierReliabilityScore: 0.88,
+  });
+
+  assert.equal(chooseBestSupplierOption([safeUs, lowStockIntl]).supplierProductId, "supplier-safe-us");
 });

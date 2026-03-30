@@ -385,7 +385,7 @@ export function evaluateProductPipelinePolicy(
 
   const shippingEstimateCount = toShippingEstimateCount(input.shippingEstimates);
   const availabilityConfirmed =
-    input.availabilitySignal === "IN_STOCK" &&
+    (input.availabilitySignal === "IN_STOCK" || input.availabilitySignal === "LOW_STOCK") &&
     (input.availabilityConfidence == null || input.availabilityConfidence >= 0.6);
   const shippingSignalPresent = shippingEstimateCount > 0 || shippingConfidence >= 0.75;
   const shippingSignalWeak = !shippingSignalPresent || shippingConfidence < 0.75;
@@ -398,8 +398,8 @@ export function evaluateProductPipelinePolicy(
     penalties.push("supplier out of stock");
     flags.add("SUPPLIER_OUT_OF_STOCK");
   } else if (input.availabilitySignal === "LOW_STOCK") {
-    penalties.push("supplier low stock");
-    flags.add("SUPPLIER_LOW_STOCK");
+    penalties.push("supplier low stock warning");
+    flags.add("LOW_STOCK_WARNING");
   } else if (!availabilityConfirmed) {
     penalties.push("availability not confirmed");
     flags.add("AVAILABILITY_NOT_CONFIRMED");
