@@ -17,6 +17,7 @@ import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
 import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import { OptimizationDiagnostics } from "@/components/admin/OptimizationDiagnostics";
 import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
+import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,7 +44,7 @@ function formatDateTime(value: string | null | undefined): string {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
+  return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: JORDAN_TIME_ZONE });
 }
 
 function OverviewCard({ label, value }: { label: string; value: React.ReactNode }) {

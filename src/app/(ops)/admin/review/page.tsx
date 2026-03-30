@@ -19,6 +19,7 @@ import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverv
 import { AiListingDiagnostics } from "@/components/admin/AiListingDiagnostics";
 import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import { OptimizationDiagnostics } from "@/components/admin/OptimizationDiagnostics";
+import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,7 +68,7 @@ function formatDateTime(value: string | null | undefined): string {
   return date.toLocaleString("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: "UTC",
+    timeZone: JORDAN_TIME_ZONE,
   });
 }
 

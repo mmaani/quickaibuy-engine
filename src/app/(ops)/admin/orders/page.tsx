@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import RefreshButton from "@/app/_components/RefreshButton";
+import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
 import {
   approveOrderForPurchase,
   buildCompactOrderTimeline,
@@ -106,7 +107,7 @@ function formatDateTime(value: string | null | undefined): string {
   return d.toLocaleString("en-US", {
     dateStyle: "short",
     timeStyle: "short",
-    timeZone: "UTC",
+    timeZone: JORDAN_TIME_ZONE,
   });
 }
 

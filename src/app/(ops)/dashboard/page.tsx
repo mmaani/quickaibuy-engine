@@ -2,6 +2,7 @@ import RefreshButton from "@/app/_components/RefreshButton";
 import { getDashboardData, type StageStatus } from "@/lib/dashboard/getDashboardData";
 import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
 import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
+import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -77,7 +78,7 @@ function formatDateTime(value: string | null): string {
   return date.toLocaleString("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: "UTC",
+    timeZone: JORDAN_TIME_ZONE,
   });
 }
 
@@ -95,7 +96,7 @@ function formatCompactDateTime(value: string | null): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    timeZone: "UTC",
+    timeZone: JORDAN_TIME_ZONE,
   });
 }
 

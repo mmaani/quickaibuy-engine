@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
+import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
 
 type Variant = "compact" | "expanded";
 
@@ -23,7 +24,7 @@ function formatDateTime(value: string | null | undefined) {
   return date.toLocaleString("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: "UTC",
+    timeZone: JORDAN_TIME_ZONE,
   });
 }
 

@@ -7,6 +7,7 @@ import { getControlPanelData } from "@/lib/control/getControlPanelData";
 import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
 import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import { CONTROL_QUICK_ACTIONS, getControlQuickActionBlockedReason } from "@/lib/control/controlQuickActions";
+import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
 import { LISTINGS_RISK_FILTERS, LISTINGS_ROUTE } from "@/lib/listings/getApprovedListingsQueueData";
 import { getManualOverrideSnapshot, setManualOverride, type ManualOverrideKey } from "@/lib/control/manualOverrides";
 import {
@@ -134,7 +135,7 @@ function formatDateTime(value: string | null): string {
   return date.toLocaleString("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: "UTC",
+    timeZone: JORDAN_TIME_ZONE,
   });
 }
 
