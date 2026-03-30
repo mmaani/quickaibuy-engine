@@ -1,8 +1,7 @@
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { enqueueInventoryRiskScan } from "@/lib/jobs/enqueueInventoryRiskScan";
-import { runContinuousLearningRefresh } from "@/lib/learningHub/continuousLearning";
-import { syncEbayOrders } from "@/lib/orders/syncEbayOrders";
 import { enqueueAutonomousOpsBackbone } from "@/lib/jobs/enqueueAutonomousOpsBackbone";
+import { enqueueLearningRefreshFromControlPlane, enqueueOrderSyncFromControlPlane } from "@/lib/jobs/enqueueControlJobs";
 
 export async function runControlQuickAction(action: string, actorId: string): Promise<string> {
   let message = "Action completed.";
@@ -29,21 +28,11 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
     });
     message = `Canonical full cycle enqueued (${String(job.id)}).`;
   } else if (action === "learning-refresh") {
-    const result = await runContinuousLearningRefresh({
-      trigger: `admin_control:${actorId}`,
-      forceFull: true,
-    });
-    const totalDomains = result.freshness.domains.length;
-    const freshDomains =
-      totalDomains - result.freshness.staleDomainCount - result.freshness.warningDomainCount;
-    message = `Learning refresh completed via pnpm ops:learning-refresh. ok=${result.ok}. freshness=${freshDomains}/${totalDomains} fresh.`;
+    const job = await enqueueLearningRefreshFromControlPlane(actorId);
+    message = `Learning refresh enqueued (${String(job.id)}).`;
   } else if (action === "order-sync") {
-    const result = await syncEbayOrders({
-      limit: Number(process.env.ORDER_SYNC_FETCH_LIMIT ?? 50),
-      lookbackHours: Number(process.env.ORDER_SYNC_LOOKBACK_HOURS ?? 168),
-      actorId: `admin-control:${actorId}`,
-    });
-    message = `Order sync fetched ${result.fetched}, created ${result.created}, updated ${result.updated}, unchanged ${result.unchanged}, failed ${result.failed}.`;
+    const job = await enqueueOrderSyncFromControlPlane(actorId);
+    message = `Order sync enqueued (${String(job.id)}).`;
   } else if (action === "inventory-risk-scan") {
     const job = await enqueueInventoryRiskScan({
       marketplaceKey: "ebay",

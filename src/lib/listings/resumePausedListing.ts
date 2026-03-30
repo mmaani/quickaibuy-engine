@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
+import { assertControlledMutationContext } from "@/lib/enforcement/runtimeSovereignty";
 import {
   LISTING_PAUSED_STATUS,
   LISTING_PREVIEW_STATUS,
@@ -33,6 +34,15 @@ export async function resumePausedListing(
 ): Promise<ResumePausedListingResult> {
   const actorId = input.actorId ?? "resumePausedListing";
   const actorType = normalizeActorType(input.actorType);
+
+  await assertControlledMutationContext({
+    blockedAction: "listing_resume_to_preview",
+    path: "resumePausedListing",
+    actorId,
+    actorType,
+    viaWorkerJob: actorType === "WORKER",
+    controlledRepairPath: String(process.env.CONTROLLED_REPAIR_PATH ?? "false").trim().toLowerCase() === "true",
+  });
 
   const current = await db.execute(sql`
     SELECT id, candidate_id AS "candidateId", marketplace_key AS "marketplaceKey", status

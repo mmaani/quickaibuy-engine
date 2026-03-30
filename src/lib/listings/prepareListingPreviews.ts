@@ -30,6 +30,9 @@ type PrepareListingPreviewsInput = {
 type PrepareListingPreviewForCandidateOptions = {
   marketplace?: ListingPreviewMarketplace;
   forceRefresh?: boolean;
+  actorType?: "WORKER" | "ADMIN";
+  actorId?: string;
+  source?: "listing-readiness" | "review-console";
 };
 
 type PrepareListingPreviewCounters = {
@@ -927,9 +930,9 @@ export async function prepareListingPreviewForCandidate(
   const processed = await processCandidatePreviewRows(rankedRows, {
     marketplace,
     forceRefresh,
-    actorType: "ADMIN",
-    actorId: "REVIEW_PREPARE_PREVIEW",
-    source: "review-console",
+    actorType: options?.actorType ?? "ADMIN",
+    actorId: options?.actorId ?? "REVIEW_PREPARE_PREVIEW",
+    source: options?.source ?? "review-console",
   });
 
   return {
