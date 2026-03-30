@@ -135,10 +135,27 @@ function passesPriceSanity(product: ProductRawLite, match: MarketplaceCandidate)
 }
 
 function compareCandidates(a: MarketplaceCandidate, b: MarketplaceCandidate): number {
+  const aTruth = a.productTruthScore || 0;
+  const bTruth = b.productTruthScore || 0;
+  if (aTruth !== bTruth) return aTruth - bTruth;
+
   const aScore = a.finalMatchScore || 0;
   const bScore = b.finalMatchScore || 0;
 
   if (aScore !== bScore) return aScore - bScore;
+
+  const aListingQuality =
+    (a.sellerId ? 0.3 : 0) +
+    (a.availabilityStatus ? 0.25 : 0) +
+    (a.productPageUrl ? 0.25 : 0) +
+    (a.imageUrl ? 0.2 : 0);
+  const bListingQuality =
+    (b.sellerId ? 0.3 : 0) +
+    (b.availabilityStatus ? 0.25 : 0) +
+    (b.productPageUrl ? 0.25 : 0) +
+    (b.imageUrl ? 0.2 : 0);
+
+  if (aListingQuality !== bListingQuality) return aListingQuality - bListingQuality;
 
   const aPricePref = computePricePreferenceScore(a.price);
   const bPricePref = computePricePreferenceScore(b.price);
@@ -279,7 +296,7 @@ export async function scanOneProductTrendMode(
       });
 
       for (const raw of candidates) {
-        const scored = scoreCandidate({ title, mainKeywords }, raw);
+        const scored = scoreCandidate({ title, mainKeywords, rawPayload: product.rawPayload }, raw);
 
         console.log("[marketplace-scan] scored-candidate", {
           productRawId: product.id,
@@ -288,6 +305,9 @@ export async function scanOneProductTrendMode(
           listingId: scored.marketplaceListingId,
           matchedTitle: scored.matchedTitle,
           finalMatchScore: scored.finalMatchScore,
+          semanticSimilarityScore: scored.semanticSimilarityScore,
+          productTruthScore: scored.productTruthScore,
+          priceSanityScore: scored.priceSanityScore,
           price: scored.price,
           currency: scored.currency,
         });
@@ -432,7 +452,19 @@ export async function runTrendMarketplaceScanner(input?: {
         titleSimilarityScore: match.titleSimilarityScore ?? null,
         keywordScore: match.keywordScore ?? null,
         finalMatchScore: match.finalMatchScore ?? null,
-        rawPayload: match.rawPayload,
+        rawPayload: {
+          sourceListingPayload: match.rawPayload,
+          scanEvidence: match.matchEvidence ?? null,
+          scoringVersion: "marketplace_semantic_truth_v2",
+          scoringSnapshot: {
+            titleSimilarityScore: match.titleSimilarityScore ?? null,
+            keywordScore: match.keywordScore ?? null,
+            semanticSimilarityScore: match.semanticSimilarityScore ?? null,
+            productTruthScore: match.productTruthScore ?? null,
+            priceSanityScore: match.priceSanityScore ?? null,
+            finalMatchScore: match.finalMatchScore ?? null,
+          },
+        },
       });
 
       upserted++;
