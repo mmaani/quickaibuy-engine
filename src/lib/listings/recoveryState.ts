@@ -43,6 +43,7 @@ function findPrimaryRecoveryCode(codes: string[]): string | null {
   if (codes.includes("SHIPPING_SIGNAL_MISSING")) return "SHIPPING_SIGNAL_MISSING";
   if (codes.includes("SHIPPING_TRANSPARENCY_INCOMPLETE")) return "SHIPPING_TRANSPARENCY_INCOMPLETE";
   if (codes.includes("SHIP_FROM_MISSING")) return "SHIP_FROM_MISSING";
+  if (codes.includes("MISSING_SHIP_FROM_COUNTRY")) return "MISSING_SHIP_FROM_COUNTRY";
   if (codes.includes("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT")) return "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT";
   if (codes.includes("SHIPPING_SIGNAL_WEAK")) return "SHIPPING_SIGNAL_WEAK";
   if (codes.includes("MEDIA_MISSING")) return "MEDIA_MISSING";
@@ -104,6 +105,7 @@ export function computeRecoveryState(input: {
     reasonCodes.includes("SHIPPING_SIGNAL_MISSING") ||
     reasonCodes.includes("SHIPPING_TRANSPARENCY_INCOMPLETE") ||
     reasonCodes.includes("SHIP_FROM_MISSING") ||
+    reasonCodes.includes("MISSING_SHIP_FROM_COUNTRY") ||
     reasonCodes.includes("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT") ||
     reasonCodes.includes("SHIPPING_SIGNAL_WEAK") ||
     reasonCodes.includes("MEDIA_MISSING") ||

@@ -230,6 +230,7 @@ function hasShippingException(candidate: ReviewListItem): boolean {
       "SHIPPING_SIGNAL_WEAK",
       "SHIPPING_TRANSPARENCY_INCOMPLETE",
       "SHIP_FROM_MISSING",
+      "MISSING_SHIP_FROM_COUNTRY",
       "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT",
     ].includes(flag)
   );
@@ -275,6 +276,7 @@ function RiskBadge({ flag }: { flag: string }) {
     flag === "SHIPPING_SIGNAL_MISSING" ||
     flag === "SHIPPING_TRANSPARENCY_INCOMPLETE" ||
     flag === "SHIP_FROM_MISSING" ||
+    flag === "MISSING_SHIP_FROM_COUNTRY" ||
     flag === "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT" ||
     flag === "SHIPPING_SIGNAL_WEAK" ||
     flag === "BRAND_OR_RESTRICTED_TITLE" ||
