@@ -439,7 +439,7 @@ export async function automateShippingIntelligence(input?: {
         candidateId: row.candidateId,
         supplierKey: row.supplierKey,
         supplierProductId: row.supplierProductId,
-        reason: "MISSING_EXPLICIT_SHIP_FROM_EVIDENCE",
+        reason: "INSUFFICIENT_SHIP_FROM_EVIDENCE",
         detail: inferred.originCountry
           ? `origin evidence insufficient (resolved=${resolvedOrigin.originCountry ?? "NONE"} confidence=${resolvedOrigin.originConfidence})`
           : `inference failed to resolve supplier ship-from country (${resolvedOrigin.unresolvedReason ?? "no_reason"})`,
@@ -453,7 +453,7 @@ export async function automateShippingIntelligence(input?: {
         details: {
           supplierKey: row.supplierKey,
           supplierProductId: row.supplierProductId,
-          reason: "MISSING_EXPLICIT_SHIP_FROM_EVIDENCE",
+          reason: "INSUFFICIENT_SHIP_FROM_EVIDENCE",
           inferredMode: inferred.mode,
           inferredConfidence: inferred.confidence,
           inferredOriginCountry: inferred.originCountry,

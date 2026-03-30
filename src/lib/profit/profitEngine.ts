@@ -26,6 +26,7 @@ import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscov
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 import { validateAmbiguousTopCandidates } from "./aiOpportunityValidation";
 import { buildMarketDepthSignal, computeReliabilityAdjustedProfit } from "./opportunitySignals";
+import type { OriginValidity } from "@/lib/products/shipFromOrigin";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -83,8 +84,11 @@ type CandidateOption = {
   shippingConfidence: number | null;
   shippingOriginCountry: string | null;
   shippingOriginSource: "explicit" | "inferred" | "weak";
+  shippingOriginValidity: OriginValidity;
   shippingOriginConfidence: number;
   shippingOriginUnresolvedReason: string | null;
+  supplierWarehouseCountry: string | null;
+  logisticsOriginHint: string | null;
   shippingSourceType: string | null;
   shippingMethod: string | null;
   shippingTransparencyState: "PRESENT" | "MISSING";
@@ -777,8 +781,12 @@ export async function runProfitEngine(input?: {
         destinationCountry,
         originCountry: shippingResolution.resolvedOriginCountry,
         originSource: shippingResolution.resolvedOriginSource,
+        originValidity: shippingResolution.resolvedOriginValidity,
         originConfidence: shippingResolution.resolvedOriginConfidence,
         originUnresolvedReason: shippingResolution.resolvedOriginUnresolvedReason,
+        supplierWarehouseCountry: shippingResolution.resolvedSupplierWarehouseCountry,
+        logisticsOriginHint: shippingResolution.resolvedLogisticsOriginHint,
+        destinationContextUsed: shippingResolution.destinationCountry,
         shippingMethod: shippingResolution.shippingMethod,
         baseShippingCostUsd: shippingResolution.shippingCostUsd,
         shippingReserveUsd: shippingResolution.shippingReserveUsd,
@@ -841,8 +849,11 @@ export async function runProfitEngine(input?: {
       shippingConfidence: shippingResolution.sourceConfidence,
       shippingOriginCountry: shippingResolution.resolvedOriginCountry,
       shippingOriginSource: shippingResolution.resolvedOriginSource,
+      shippingOriginValidity: shippingResolution.resolvedOriginValidity,
       shippingOriginConfidence: shippingResolution.resolvedOriginConfidence,
       shippingOriginUnresolvedReason: shippingResolution.resolvedOriginUnresolvedReason,
+      supplierWarehouseCountry: shippingResolution.resolvedSupplierWarehouseCountry,
+      logisticsOriginHint: shippingResolution.resolvedLogisticsOriginHint,
       shippingSourceType: shippingResolution.sourceType,
       shippingMethod: shippingResolution.shippingMethod,
       shippingTransparencyState: shippingResolution.shippingTransparencyState,
@@ -1065,8 +1076,11 @@ export async function runProfitEngine(input?: {
         selectedShippingCostUsd: round2(option.shipping),
         shippingOriginCountry: option.shippingOriginCountry,
         shippingOriginSource: option.shippingOriginSource,
+        shippingOriginValidity: option.shippingOriginValidity,
         shippingOriginConfidence: option.shippingOriginConfidence,
         shippingOriginUnresolvedReason: option.shippingOriginUnresolvedReason,
+        supplierWarehouseCountry: option.supplierWarehouseCountry,
+        logisticsOriginHint: option.logisticsOriginHint,
         shippingDestinationCountry: option.destinationCountry,
         shippingMethod: option.shippingMethod,
         shippingResolutionMode: option.shippingResolutionMode,

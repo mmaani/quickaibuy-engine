@@ -369,6 +369,13 @@ function canonicalEvidenceFromFees(
   const sourceConfidence =
     asFiniteNumber(shippingBreakdown?.sourceConfidence) ??
     asFiniteNumber(selectedSupplierOption?.shippingSourceConfidence);
+  const originConfidence =
+    asFiniteNumber(shippingBreakdown?.originConfidence) ??
+    asFiniteNumber(selectedSupplierOption?.shippingOriginConfidence);
+  const originValidity =
+    asString(shippingBreakdown?.originValidity)?.toUpperCase() ??
+    asString(selectedSupplierOption?.shippingOriginValidity)?.toUpperCase() ??
+    null;
   const totalShippingUsd = asFiniteNumber(shippingBreakdown?.totalShippingUsd);
   const baseShippingCostUsd =
     asFiniteNumber(shippingBreakdown?.baseShippingCostUsd) ??
@@ -395,13 +402,15 @@ function canonicalEvidenceFromFees(
     shippingErrorReason === "MISSING_SHIPPING_TRANSPARENCY";
   const shipFromUnresolved =
     shippingErrorReason === "MISSING_SHIP_FROM_COUNTRY" ||
+    originValidity === "WEAK_OR_UNRESOLVED" ||
     (hasShippingSignal &&
       destinationCountry != null &&
       !asString(shippingBreakdown?.originCountry) &&
       !asString(selectedSupplierOption?.shippingOriginCountry));
   const weakSignal =
     resolutionMode === "INFERRED_WEAK" ||
-    (sourceConfidence != null && sourceConfidence < 0.75);
+    (sourceConfidence != null && sourceConfidence < 0.75) ||
+    (originConfidence != null && originConfidence < 0.75);
 
   const mediaFromRawPayload = asObject(asObject(rowPayloadFromFees(fees))?.media);
   const imageGalleryCount =

@@ -51,6 +51,12 @@ type ListingQueueRow = {
   considered_sources: string[] | null;
   shipping_cost_component: string | number | null;
   shipping_origin_country: string | null;
+  shipping_origin_source: string | null;
+  shipping_origin_confidence: string | number | null;
+  shipping_origin_validity: string | null;
+  shipping_origin_unresolved_reason: string | null;
+  supplier_warehouse_country: string | null;
+  logistics_origin_hint: string | null;
   shipping_destination_country: string | null;
   shipping_quote_age_hours: string | number | null;
   shipping_resolution_mode: string | null;
@@ -125,6 +131,12 @@ export type QueueListItem = {
   consideredSources: string[];
   shippingCostComponent: number | null;
   shippingOriginCountry: string | null;
+  shippingOriginSource: string | null;
+  shippingOriginConfidence: number | null;
+  shippingOriginValidity: string | null;
+  shippingOriginUnresolvedReason: string | null;
+  supplierWarehouseCountry: string | null;
+  logisticsOriginHint: string | null;
   shippingDestinationCountry: string | null;
   shippingQuoteAgeHours: number | null;
   shippingResolutionMode: string | null;
@@ -389,6 +401,12 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     consideredSources: row.considered_sources ?? [],
     shippingCostComponent: toNumber(row.shipping_cost_component),
     shippingOriginCountry: row.shipping_origin_country ?? null,
+    shippingOriginSource: row.shipping_origin_source ?? null,
+    shippingOriginConfidence: toNumber(row.shipping_origin_confidence),
+    shippingOriginValidity: row.shipping_origin_validity ?? null,
+    shippingOriginUnresolvedReason: row.shipping_origin_unresolved_reason ?? null,
+    supplierWarehouseCountry: row.supplier_warehouse_country ?? null,
+    logisticsOriginHint: row.logistics_origin_hint ?? null,
     shippingDestinationCountry: row.shipping_destination_country ?? null,
     shippingQuoteAgeHours: toNumber(row.shipping_quote_age_hours),
     shippingResolutionMode: row.shipping_resolution_mode ?? null,
@@ -664,6 +682,12 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       ) AS considered_sources,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'selectedShippingCostUsd' AS shipping_cost_component,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingOriginCountry' AS shipping_origin_country,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingOriginSource' AS shipping_origin_source,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingOriginConfidence' AS shipping_origin_confidence,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingOriginValidity' AS shipping_origin_validity,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingOriginUnresolvedReason' AS shipping_origin_unresolved_reason,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'supplierWarehouseCountry' AS supplier_warehouse_country,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'logisticsOriginHint' AS logistics_origin_hint,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingDestinationCountry' AS shipping_destination_country,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingQuoteAgeHours' AS shipping_quote_age_hours,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingResolutionMode' AS shipping_resolution_mode,
