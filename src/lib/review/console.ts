@@ -100,6 +100,12 @@ export type ReviewListItem = {
   selectionMode: string | null;
   selectionSummary: string | null;
   consideredSources: string[];
+  marketOpportunityType: string | null;
+  shippingConfidence: number | null;
+  nominalProfit: number | null;
+  reliabilityAdjustedProfit: number | null;
+  aiValidationUsed: boolean;
+  aiValidationStatus: string | null;
 };
 
 type CandidateRow = {
@@ -146,6 +152,12 @@ type CandidateRow = {
   selection_mode?: string | null;
   selection_summary?: string | null;
   considered_sources?: string[] | null;
+  market_opportunity_type?: string | null;
+  shipping_confidence?: string | number | null;
+  nominal_profit?: string | number | null;
+  reliability_adjusted_profit?: string | number | null;
+  ai_validation_used?: boolean | null;
+  ai_validation_status?: string | null;
 };
 
 type SupplierSnapshot = {
@@ -579,6 +591,12 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     selectionMode: row.selection_mode ?? null,
     selectionSummary: row.selection_summary ?? null,
     consideredSources: row.considered_sources ?? [],
+    marketOpportunityType: row.market_opportunity_type ?? null,
+    shippingConfidence: toNumber(row.shipping_confidence),
+    nominalProfit: toNumber(row.nominal_profit),
+    reliabilityAdjustedProfit: toNumber(row.reliability_adjusted_profit),
+    aiValidationUsed: Boolean(row.ai_validation_used),
+    aiValidationStatus: row.ai_validation_status ?? null,
   };
 }
 
@@ -803,6 +821,12 @@ export async function getReviewCandidates(filters: ReviewFilters): Promise<Revie
             COALESCE(pc.estimated_fees -> 'selectedSupplierOption' -> 'consideredSources', '[]'::jsonb)
           )
         ) AS considered_sources,
+        pc.estimated_fees -> 'opportunitySignalV2' ->> 'opportunityType' AS market_opportunity_type,
+        pc.estimated_fees -> 'shippingBreakdown' ->> 'sourceConfidence' AS shipping_confidence,
+        pc.estimated_fees -> 'opportunitySignalV2' ->> 'nominalProfitUsd' AS nominal_profit,
+        pc.estimated_fees -> 'opportunitySignalV2' ->> 'reliabilityAdjustedProfitUsd' AS reliability_adjusted_profit,
+        (pc.estimated_fees -> 'aiValidationV1' ->> 'used')::boolean AS ai_validation_used,
+        pc.estimated_fees -> 'aiValidationV1' ->> 'source' AS ai_validation_status,
         pc.estimated_cogs,
         pc.risk_flags,
         pc.listing_block_reason,
@@ -1074,6 +1098,12 @@ export async function getCandidateDetail(candidateId: string): Promise<Candidate
             COALESCE(pc.estimated_fees -> 'selectedSupplierOption' -> 'consideredSources', '[]'::jsonb)
           )
         ) AS considered_sources,
+        pc.estimated_fees -> 'opportunitySignalV2' ->> 'opportunityType' AS market_opportunity_type,
+        pc.estimated_fees -> 'shippingBreakdown' ->> 'sourceConfidence' AS shipping_confidence,
+        pc.estimated_fees -> 'opportunitySignalV2' ->> 'nominalProfitUsd' AS nominal_profit,
+        pc.estimated_fees -> 'opportunitySignalV2' ->> 'reliabilityAdjustedProfitUsd' AS reliability_adjusted_profit,
+        (pc.estimated_fees -> 'aiValidationV1' ->> 'used')::boolean AS ai_validation_used,
+        pc.estimated_fees -> 'aiValidationV1' ->> 'source' AS ai_validation_status,
         pc.estimated_cogs,
         pc.risk_flags,
         pc.listing_block_reason,
