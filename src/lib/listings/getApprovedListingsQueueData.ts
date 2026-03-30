@@ -68,6 +68,10 @@ type ListingQueueRow = {
   shipping_error_reason: string | null;
   delivery_estimate_min_days: string | number | null;
   delivery_estimate_max_days: string | number | null;
+  supplier_trust_score: string | number | null;
+  supplier_trust_band: string | null;
+  supplier_trust_evaluated_at: string | null;
+  supplier_trust_reason_codes: string[] | null;
   reprice_action: string | null;
   reprice_last_reason: string | null;
   reprice_last_evaluated_ts: string | null;
@@ -165,6 +169,10 @@ export type QueueListItem = {
   supplierReevaluationCurrentLandedCostUsd: number | null;
   supplierReevaluationBestLandedCostUsd: number | null;
   supplierReevaluationEvaluatedTs: string | null;
+  supplierTrustScore: number | null;
+  supplierTrustBand: string | null;
+  supplierTrustEvaluatedAt: string | null;
+  supplierTrustReasonCodes: string[];
   recoveryState: RecoveryState;
   recoveryNextAction: string;
   recoveryBlockReasonCode: string | null;
@@ -377,6 +385,9 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
         .filter(Boolean)
         .join(", ") || null
     : null;
+  const supplierTrustRaw = toNumber(row.supplier_trust_score);
+  const supplierTrustScore =
+    supplierTrustRaw == null ? null : Math.round((supplierTrustRaw <= 1 ? supplierTrustRaw * 100 : supplierTrustRaw));
 
   return {
     id: row.id,
@@ -433,6 +444,10 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     shippingErrorReason: row.shipping_error_reason ?? null,
     deliveryEstimateMinDays: toNumber(row.delivery_estimate_min_days),
     deliveryEstimateMaxDays: toNumber(row.delivery_estimate_max_days),
+    supplierTrustScore,
+    supplierTrustBand: row.supplier_trust_band ?? null,
+    supplierTrustEvaluatedAt: row.supplier_trust_evaluated_at ?? null,
+    supplierTrustReasonCodes: row.supplier_trust_reason_codes ?? [],
     repriceAction: row.reprice_action ?? null,
     repriceLastReason: row.reprice_last_reason ?? null,
     repriceLastEvaluatedTs: row.reprice_last_evaluated_ts ?? null,
@@ -715,6 +730,10 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingErrorReason' AS shipping_error_reason,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'deliveryEstimateMinDays' AS delivery_estimate_min_days,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'deliveryEstimateMaxDays' AS delivery_estimate_max_days,
+      pc.supplier_trust_score AS supplier_trust_score,
+      pc.supplier_trust_band AS supplier_trust_band,
+      pc.supplier_trust_evaluated_at AS supplier_trust_evaluated_at,
+      pc.supplier_trust_reason_codes AS supplier_trust_reason_codes,
       pc.approved_ts,
       pc.approved_by,
       l.id AS listing_id,

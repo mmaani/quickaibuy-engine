@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { getProductsRawLatestOrderBySql, getProductsRawTimestampExprSql } from "@/lib/db/productsRaw";
 import { normalizeMarketplaceKey } from "@/lib/marketplaces/normalizeMarketplaceKey";
 import { extractAvailabilityFromRawPayload, normalizeAvailabilitySignal } from "@/lib/products/supplierAvailability";
+import { computeSupplierTrustScore, type SupplierTrustBand } from "@/lib/products/supplierQuality";
 import {
   classifySupplierEvidence,
   formatSupplierEvidenceBlockReason,
@@ -140,6 +141,14 @@ type CandidateOption = {
   marketDepth: ReturnType<typeof buildMarketDepthSignal>;
   reliabilityAdjustedProfit: ReturnType<typeof computeReliabilityAdjustedProfit>;
   supplierReliabilityScore: number;
+  supplierTrustScore: number;
+  supplierTrustBand: SupplierTrustBand;
+  supplierDeliveryScore: number;
+  supplierStockScore: number;
+  supplierPriceStabilityScore: number;
+  supplierIssuePenalty: number;
+  supplierTrustEvaluatedAt: string;
+  supplierTrustReasonCodes: string[];
   aiValidation: Awaited<ReturnType<typeof validateAmbiguousTopCandidates>>[string];
 };
 
@@ -894,9 +903,31 @@ export async function runProfitEngine(input?: {
         ? `margin ${marginPct}% / roi ${roiPct}% below required margin ${minMarginPct}% roi ${minRoiPct}%`
         : pipelineHardBlocked
           ? `pipeline manual review | score ${pipeline.score} | penalties ${pipeline.penalties.join(", ") || "none"}`
-          : supplierEvidenceCodes.length
-            ? `automated with supplier evidence warnings | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
-          : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | pipeline_score ${pipeline.score} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
+      : supplierEvidenceCodes.length
+        ? `automated with supplier evidence warnings | codes ${supplierEvidenceCodes.join(", ")} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`
+      : `roi ${roiPct}% >= minimum ${minRoiPct}% | match ${matchConfidence} | pipeline_score ${pipeline.score} | supplier_price_drift_pct ${supplierPriceDriftPct ?? "n/a"} | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"} | marketplace_snapshot_age_hours ${marketplaceSnapshotAgeHours ?? "n/a"} | availability_signal ${availabilitySignal} | availability_confidence ${availability.confidence ?? "n/a"}`;
+    const trustScorecard = computeSupplierTrustScore({
+      availabilitySignal,
+      availabilityConfidence: availability.confidence ?? null,
+      snapshotAgeHours: supplierSnapshotAgeHours,
+      snapshotQuality: rawSupplierQuality,
+      shippingConfidence: shippingResolution.sourceConfidence,
+      shippingTransparencyState: shippingResolution.shippingTransparencyState,
+      shippingOriginValidity: shippingResolution.resolvedOriginValidity,
+      priceSeries: marketPriceSeries,
+      issueRate: telemetrySignals.some((signal) => {
+        const normalized = signal.toLowerCase();
+        return normalized === "challenge" || normalized === "fallback" || normalized === "rate_limit";
+      })
+        ? 0.2
+        : 0,
+      issueCount: telemetrySignals.filter((signal) => {
+        const normalized = signal.toLowerCase();
+        return normalized === "challenge" || normalized === "fallback" || normalized === "rate_limit";
+      }).length,
+      telemetrySignals,
+      evaluatedAt: now,
+    });
 
     candidateOptions.push({
       row,
@@ -968,6 +999,14 @@ export async function runProfitEngine(input?: {
       marketDepth,
       reliabilityAdjustedProfit,
       supplierReliabilityScore,
+      supplierTrustScore: trustScorecard.supplier_trust_score,
+      supplierTrustBand: trustScorecard.supplier_trust_band,
+      supplierDeliveryScore: trustScorecard.supplier_delivery_score,
+      supplierStockScore: trustScorecard.supplier_stock_score,
+      supplierPriceStabilityScore: trustScorecard.supplier_price_stability_score,
+      supplierIssuePenalty: trustScorecard.supplier_issue_penalty,
+      supplierTrustEvaluatedAt: trustScorecard.supplier_trust_evaluated_at,
+      supplierTrustReasonCodes: trustScorecard.supplier_trust_reason_codes,
       aiValidation: {
         used: false,
         sameProduct: null,
@@ -1182,6 +1221,16 @@ export async function runProfitEngine(input?: {
         consideredSources: peerOptions
           .map((candidate) => candidate.normalizedSupplierKey)
           .sort((left, right) => left.localeCompare(right)),
+        supplierTrust: {
+          score: option.supplierTrustScore,
+          band: option.supplierTrustBand,
+          deliveryScore: option.supplierDeliveryScore,
+          stockScore: option.supplierStockScore,
+          priceStabilityScore: option.supplierPriceStabilityScore,
+          issuePenalty: option.supplierIssuePenalty,
+          evaluatedAt: option.supplierTrustEvaluatedAt,
+          reasonCodes: option.supplierTrustReasonCodes,
+        },
       },
     };
 
@@ -1204,7 +1253,15 @@ export async function runProfitEngine(input?: {
         decision_status,
         reason,
         listing_eligible,
-        listing_block_reason
+        listing_block_reason,
+        supplier_trust_score,
+        supplier_trust_band,
+        supplier_delivery_score,
+        supplier_stock_score,
+        supplier_price_stability_score,
+        supplier_issue_penalty,
+        supplier_trust_evaluated_at,
+        supplier_trust_reason_codes
       ) VALUES (
         ${option.normalizedSupplierKey},
         ${option.supplierProductId},
@@ -1225,7 +1282,17 @@ export async function runProfitEngine(input?: {
         ${option.decisionStatus},
         ${option.reason},
         ${option.listingEligible},
-        ${option.listingBlockReason}
+        ${option.listingBlockReason},
+        ${String(option.supplierTrustScore / 100)},
+        ${option.supplierTrustBand},
+        ${String(option.supplierDeliveryScore)},
+        ${String(option.supplierStockScore)},
+        ${String(option.supplierPriceStabilityScore)},
+        ${String(option.supplierIssuePenalty)},
+        ${option.supplierTrustEvaluatedAt},
+        ${option.supplierTrustReasonCodes.length
+          ? sql`ARRAY[${sql.join(option.supplierTrustReasonCodes.map((code) => sql`${code}`), sql`, `)}]::text[]`
+          : sql`ARRAY[]::text[]`}
       )
       ON CONFLICT (supplier_key, supplier_product_id, marketplace_key, marketplace_listing_id)
       DO UPDATE SET
@@ -1242,7 +1309,15 @@ export async function runProfitEngine(input?: {
         decision_status = EXCLUDED.decision_status,
         reason = EXCLUDED.reason,
         listing_eligible = EXCLUDED.listing_eligible,
-        listing_block_reason = EXCLUDED.listing_block_reason
+        listing_block_reason = EXCLUDED.listing_block_reason,
+        supplier_trust_score = EXCLUDED.supplier_trust_score,
+        supplier_trust_band = EXCLUDED.supplier_trust_band,
+        supplier_delivery_score = EXCLUDED.supplier_delivery_score,
+        supplier_stock_score = EXCLUDED.supplier_stock_score,
+        supplier_price_stability_score = EXCLUDED.supplier_price_stability_score,
+        supplier_issue_penalty = EXCLUDED.supplier_issue_penalty,
+        supplier_trust_evaluated_at = EXCLUDED.supplier_trust_evaluated_at,
+        supplier_trust_reason_codes = EXCLUDED.supplier_trust_reason_codes
     `);
 
     insertedOrUpdated++;

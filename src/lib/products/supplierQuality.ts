@@ -10,6 +10,30 @@ export type SupplierQualityResolution = {
   changed: boolean;
 };
 
+export type SupplierTrustBand = "BLOCK" | "REVIEW" | "SAFE";
+export type SupplierTrustReasonCode =
+  | "DELIVERY_CONFIDENCE_LOW"
+  | "STOCK_CONFIDENCE_LOW"
+  | "PRICE_STABILITY_WEAK"
+  | "ORIGIN_CLARITY_WEAK"
+  | "ISSUE_TELEMETRY_PENALTY"
+  | "SNAPSHOT_STALE"
+  | "WEAK_EVIDENCE_FAIL_CLOSED"
+  | "SNAPSHOT_LOW_QUALITY"
+  | "FALLBACK_TELEMETRY"
+  | "CHALLENGE_TELEMETRY";
+
+export type SupplierTrustScorecard = {
+  supplier_trust_score: number;
+  supplier_trust_band: SupplierTrustBand;
+  supplier_delivery_score: number;
+  supplier_stock_score: number;
+  supplier_price_stability_score: number;
+  supplier_issue_penalty: number;
+  supplier_trust_evaluated_at: string;
+  supplier_trust_reason_codes: SupplierTrustReasonCode[];
+};
+
 function asObject(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -221,6 +245,117 @@ function qualityRank(value: SupplierSnapshotQuality | null): number {
   if (value === "LOW") return 2;
   if (value === "STUB") return 1;
   return 0;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function toNum(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function computeSupplierTrustScore(input: {
+  availabilitySignal?: unknown;
+  availabilityConfidence?: unknown;
+  snapshotAgeHours?: unknown;
+  snapshotQuality?: unknown;
+  shippingConfidence?: unknown;
+  shippingTransparencyState?: unknown;
+  shippingOriginValidity?: unknown;
+  priceSeries?: unknown;
+  issueRate?: unknown;
+  issueCount?: unknown;
+  telemetrySignals?: unknown;
+  evaluatedAt?: Date;
+}): SupplierTrustScorecard {
+  const reasonCodes = new Set<SupplierTrustReasonCode>();
+  const availabilitySignal = String(input.availabilitySignal ?? "").trim().toUpperCase();
+  const availabilityConfidence = clamp01(toNum(input.availabilityConfidence) ?? 0.35);
+  const shippingConfidence = clamp01(toNum(input.shippingConfidence) ?? 0.35);
+  const snapshotAgeHours = toNum(input.snapshotAgeHours);
+  const snapshotQuality = normalizeSupplierSnapshotQuality(input.snapshotQuality);
+  const shippingTransparencyState = String(input.shippingTransparencyState ?? "")
+    .trim()
+    .toUpperCase();
+  const originValidity = String(input.shippingOriginValidity ?? "").trim().toUpperCase();
+  const issueRate = clamp01(toNum(input.issueRate) ?? 0);
+  const issueCount = Math.max(0, Math.round(toNum(input.issueCount) ?? 0));
+  const telemetry = Array.isArray(input.telemetrySignals)
+    ? input.telemetrySignals.map((value) => String(value ?? "").trim().toLowerCase())
+    : [];
+
+  const deliveryBase = shippingConfidence;
+  const deliveryTransparencyBoost = shippingTransparencyState === "PRESENT" ? 0.08 : -0.12;
+  const deliverySnapshotAdjustment =
+    snapshotQuality === "HIGH" ? 0.08 : snapshotQuality === "MEDIUM" ? 0.02 : -0.14;
+  const supplier_delivery_score = clamp01(deliveryBase + deliveryTransparencyBoost + deliverySnapshotAdjustment);
+
+  let supplier_stock_score = availabilityConfidence;
+  if (availabilitySignal === "IN_STOCK") supplier_stock_score = clamp01(supplier_stock_score + 0.15);
+  else if (availabilitySignal === "LOW_STOCK") supplier_stock_score = clamp01(supplier_stock_score - 0.1);
+  else if (availabilitySignal === "OUT_OF_STOCK") supplier_stock_score = clamp01(supplier_stock_score - 0.35);
+  else supplier_stock_score = clamp01(supplier_stock_score - 0.18);
+
+  const prices = Array.isArray(input.priceSeries)
+    ? input.priceSeries.map((value) => toNum(value)).filter((value): value is number => value != null && value > 0)
+    : [];
+  let supplier_price_stability_score = 0.45;
+  if (prices.length >= 2) {
+    const mean = prices.reduce((acc, value) => acc + value, 0) / prices.length;
+    const variance = prices.reduce((acc, value) => acc + (value - mean) ** 2, 0) / prices.length;
+    const coefficient = mean > 0 ? Math.sqrt(variance) / mean : 1;
+    supplier_price_stability_score = clamp01(1 - coefficient * 2.6);
+    if (supplier_price_stability_score < 0.45) reasonCodes.add("PRICE_STABILITY_WEAK");
+  } else {
+    supplier_price_stability_score = 0.35;
+    reasonCodes.add("WEAK_EVIDENCE_FAIL_CLOSED");
+    reasonCodes.add("PRICE_STABILITY_WEAK");
+  }
+
+  const hasStrongOrigin = originValidity === "EXPLICIT" || originValidity === "STRONG_INFERRED";
+  const originConfidenceScore = hasStrongOrigin ? 1 : originValidity === "WEAK_INFERRED" ? 0.45 : 0.25;
+  if (!hasStrongOrigin) reasonCodes.add("ORIGIN_CLARITY_WEAK");
+
+  const stalePenalty = snapshotAgeHours == null ? 0.14 : snapshotAgeHours > 48 ? 0.2 : snapshotAgeHours > 24 ? 0.1 : 0;
+  if (stalePenalty > 0) reasonCodes.add("SNAPSHOT_STALE");
+
+  if (snapshotQuality === "LOW" || snapshotQuality === "STUB") reasonCodes.add("SNAPSHOT_LOW_QUALITY");
+  if (telemetry.includes("fallback")) reasonCodes.add("FALLBACK_TELEMETRY");
+  if (telemetry.includes("challenge")) reasonCodes.add("CHALLENGE_TELEMETRY");
+
+  if (supplier_delivery_score < 0.45) reasonCodes.add("DELIVERY_CONFIDENCE_LOW");
+  if (supplier_stock_score < 0.45) reasonCodes.add("STOCK_CONFIDENCE_LOW");
+  if (snapshotQuality == null || availabilitySignal === "UNKNOWN") reasonCodes.add("WEAK_EVIDENCE_FAIL_CLOSED");
+
+  const issueImpact = clamp01(issueRate * 0.8 + Math.min(0.35, issueCount / 30));
+  const supplier_issue_penalty = clamp01(issueImpact);
+  if (supplier_issue_penalty >= 0.12) reasonCodes.add("ISSUE_TELEMETRY_PENALTY");
+
+  const weighted =
+    supplier_delivery_score * 0.26 +
+    supplier_stock_score * 0.24 +
+    supplier_price_stability_score * 0.2 +
+    originConfidenceScore * 0.18 +
+    (snapshotQuality === "HIGH" ? 0.12 : snapshotQuality === "MEDIUM" ? 0.08 : 0.04);
+  const score01 = clamp01(weighted - supplier_issue_penalty - stalePenalty);
+  const supplier_trust_score = Math.round(score01 * 100);
+  const supplier_trust_band: SupplierTrustBand =
+    supplier_trust_score >= 80 ? "SAFE" : supplier_trust_score >= 60 ? "REVIEW" : "BLOCK";
+
+  return {
+    supplier_trust_score,
+    supplier_trust_band,
+    supplier_delivery_score: Number(supplier_delivery_score.toFixed(6)),
+    supplier_stock_score: Number(supplier_stock_score.toFixed(6)),
+    supplier_price_stability_score: Number(supplier_price_stability_score.toFixed(6)),
+    supplier_issue_penalty: Number(supplier_issue_penalty.toFixed(6)),
+    supplier_trust_evaluated_at: (input.evaluatedAt ?? new Date()).toISOString(),
+    supplier_trust_reason_codes: Array.from(reasonCodes.values()),
+  };
 }
 
 function buildTelemetryFlags(signals: SupplierTelemetrySignal[]): SupplierTelemetryFlags {

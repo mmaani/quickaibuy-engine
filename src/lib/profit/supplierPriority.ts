@@ -19,6 +19,8 @@ export type CandidateSelectionFields = {
   sourceQualityRank: number;
   matchConfidence: number;
   supplierReliabilityScore: number;
+  supplierTrustScore?: number | null;
+  supplierTrustBand?: string | null;
   estimatedProfit: number;
   marginPct: number;
   roiPct: number;
@@ -119,6 +121,8 @@ export function chooseBestSupplierOption<T extends CandidateSelectionFields>(opt
       Number(isKnownOrigin(left)) - Number(isKnownOrigin(right)),
       stockPriority(left) - stockPriority(right),
       compareNullableNumbersDesc(left.availabilityConfidence, right.availabilityConfidence),
+      compareNullableNumbersDesc(left.supplierTrustScore ?? null, right.supplierTrustScore ?? null),
+      Number(left.supplierTrustBand === "SAFE") - Number(right.supplierTrustBand === "SAFE"),
       compareNullableNumbersDesc(left.supplierReliabilityScore, right.supplierReliabilityScore),
       compareNullableNumbersDesc(
         left.reliabilityAdjustedProfit.adjustedProfitUsd,

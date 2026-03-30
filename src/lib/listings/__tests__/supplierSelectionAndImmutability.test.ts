@@ -254,6 +254,47 @@ test("controlled-risk low stock stays eligible but is penalized against safe sto
   assert.equal(selected[0]?.candidateId, "c-safe-us");
 });
 
+test("supplier trust reduces pre-listing selection priority safely", () => {
+  const highTrust = buildRow({
+    candidateId: "c-high-trust",
+    supplierRawPayload: {
+      mediaQualityScore: 0.9,
+      availabilityConfidence: 0.9,
+      availabilitySignal: "IN_STOCK",
+      shippingConfidence: 0.9,
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      snapshotQuality: "HIGH",
+      supplierTrustScore: 92,
+      supplierTrustBand: "SAFE",
+      deliveryEstimateMinDays: 4,
+      deliveryEstimateMaxDays: 7,
+    },
+  });
+  const lowTrust = buildRow({
+    candidateId: "c-low-trust",
+    supplierRawPayload: {
+      mediaQualityScore: 0.9,
+      availabilityConfidence: 0.9,
+      availabilitySignal: "IN_STOCK",
+      shippingConfidence: 0.9,
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      snapshotQuality: "HIGH",
+      supplierTrustScore: 53,
+      supplierTrustBand: "BLOCK",
+      deliveryEstimateMinDays: 4,
+      deliveryEstimateMaxDays: 7,
+    },
+  });
+
+  assert.ok(computeSupplierSelectionScore(highTrust) > computeSupplierSelectionScore(lowTrust));
+});
+
 test("low stock with unresolved origin remains blocked before listing", () => {
   const blocked = buildRow({
     candidateId: "c-low-blocked",

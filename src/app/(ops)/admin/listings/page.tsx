@@ -440,6 +440,16 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="US priority status" value={detail.item.usPriorityStatus ?? "-"} />
                     <KeyValue label="Supplier policy reason" value={detail.item.supplierPolicyReason ?? "-"} />
                     <KeyValue label="Supplier policy message" value={detail.item.supplierPolicyMessage ?? "-"} />
+                    <KeyValue label="Supplier trust score" value={detail.item.supplierTrustScore == null ? "-" : `${detail.item.supplierTrustScore}/100`} />
+                    <KeyValue label="Supplier trust band" value={detail.item.supplierTrustBand ?? "-"} />
+                    <KeyValue
+                      label="Supplier trust evaluated"
+                      value={formatDateTime(detail.item.supplierTrustEvaluatedAt)}
+                    />
+                    <KeyValue
+                      label="Supplier trust reasons"
+                      value={detail.item.supplierTrustReasonCodes.length ? detail.item.supplierTrustReasonCodes.join(", ") : "-"}
+                    />
                     <KeyValue label="Margin / ROI" value={`${formatPercent(detail.item.marginPct)} / ${formatPercent(detail.item.roiPct)}`} />
                     <KeyValue label="Approved at" value={formatDateTime(detail.item.approvedTs)} />
                     <KeyValue label="Approved by" value={detail.item.approvedBy ?? "-"} />
