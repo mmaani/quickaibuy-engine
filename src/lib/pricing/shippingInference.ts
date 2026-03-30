@@ -1,5 +1,5 @@
 import type { ShippingEstimate } from "@/lib/products/suppliers/types";
-import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
+import { resolveShipFromOrigin, type OriginSource } from "@/lib/products/shipFromOrigin";
 
 export type ShippingInferenceMode =
   | "EXACT_QUOTE"
@@ -28,6 +28,9 @@ export type ShippingInferenceResult = {
   estimatedMinDays: number | null;
   estimatedMaxDays: number | null;
   originCountry: string | null;
+  originSource: OriginSource;
+  originConfidence: number;
+  originUnresolvedReason: string | null;
   confidence: number | null;
   sourceType: string;
   shippingMethod: string | null;
@@ -269,7 +272,7 @@ function inferFromTemplate(input: {
     shippingCostUsd,
     estimatedMinDays: input.estimatedMinDays ?? template?.minDays ?? profile?.averageMinDays ?? null,
     estimatedMaxDays: input.estimatedMaxDays ?? template?.maxDays ?? profile?.averageMaxDays ?? null,
-    originCountry: input.originCountry ?? profile?.dominantOriginCountry ?? null,
+    originCountry: input.originCountry,
     baseConfidence: template?.confidence ?? (profile?.historicalConfidence != null ? clamp01(profile.historicalConfidence) : null),
   };
 }
@@ -303,16 +306,11 @@ export function inferShippingFromEvidence(input: {
     ...shippingEstimates.map((estimate) => toNum(estimate.etaMaxDays)),
   ]);
   const originCountry =
-    normalizeShipFromCountry(rawPayload.shipFromCountry) ??
-    normalizeShipFromCountry(rawPayload.ship_from_country) ??
-    normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
-    normalizeShipFromCountry(rawPayload.supplier_warehouse_country) ??
-    normalizeShipFromCountry(rawPayload.shipFromLocation) ??
-    normalizeShipFromCountry(rawPayload.ship_from_location) ??
-    shippingEstimates
-      .map((estimate) => normalizeShipFromCountry(estimate.ship_from_country ?? estimate.ship_from_location))
-      .find(Boolean) ??
-    null;
+    resolveShipFromOrigin({
+      rawPayload,
+      shippingEstimates,
+      destinationCountry: input.destinationCountry,
+    });
   const methodKey = detectMethod(signalText || null);
   const template = findTemplate(methodKey);
   const derived = inferFromTemplate({
@@ -321,7 +319,7 @@ export function inferShippingFromEvidence(input: {
     explicitCostUsd,
     estimatedMinDays: explicitMinDays,
     estimatedMaxDays: explicitMaxDays,
-    originCountry,
+    originCountry: originCountry.originCountry,
   });
   const completenessScore = deriveCompletenessScore({
     shippingCostUsd: derived.shippingCostUsd,
@@ -361,6 +359,8 @@ export function inferShippingFromEvidence(input: {
   const explanation = [
     methodKey ? `method=${methodKey}` : null,
     derived.originCountry ? `origin=${derived.originCountry}` : null,
+    `origin_source=${originCountry.originSource}`,
+    `origin_confidence=${originCountry.originConfidence}`,
     derived.shippingCostUsd != null ? `cost=${round2(derived.shippingCostUsd)}` : null,
     derived.estimatedMaxDays != null ? `delivery_max=${derived.estimatedMaxDays}` : null,
     input.profile?.sampleCount ? `profile_samples=${input.profile.sampleCount}` : null,
@@ -374,6 +374,9 @@ export function inferShippingFromEvidence(input: {
       estimatedMinDays: derived.estimatedMinDays,
       estimatedMaxDays: derived.estimatedMaxDays,
       originCountry: derived.originCountry,
+      originSource: originCountry.originSource,
+      originConfidence: originCountry.originConfidence,
+      originUnresolvedReason: originCountry.unresolvedReason,
       confidence: null,
       sourceType: "shipping_unresolved",
       shippingMethod: methodKey,
@@ -389,6 +392,9 @@ export function inferShippingFromEvidence(input: {
       estimatedMinDays: derived.estimatedMinDays,
       estimatedMaxDays: derived.estimatedMaxDays,
       originCountry: derived.originCountry,
+      originSource: originCountry.originSource,
+      originConfidence: originCountry.originConfidence,
+      originUnresolvedReason: originCountry.unresolvedReason,
       confidence: totalConfidence,
       sourceType: "shipping_inferred_strong",
       shippingMethod: methodKey,
@@ -404,6 +410,9 @@ export function inferShippingFromEvidence(input: {
       estimatedMinDays: derived.estimatedMinDays,
       estimatedMaxDays: derived.estimatedMaxDays,
       originCountry: derived.originCountry,
+      originSource: originCountry.originSource,
+      originConfidence: originCountry.originConfidence,
+      originUnresolvedReason: originCountry.unresolvedReason,
       confidence: totalConfidence,
       sourceType: "shipping_inferred_strong",
       shippingMethod: methodKey,
@@ -419,6 +428,9 @@ export function inferShippingFromEvidence(input: {
       estimatedMinDays: derived.estimatedMinDays,
       estimatedMaxDays: derived.estimatedMaxDays,
       originCountry: derived.originCountry,
+      originSource: originCountry.originSource,
+      originConfidence: originCountry.originConfidence,
+      originUnresolvedReason: originCountry.unresolvedReason,
       confidence: Math.min(totalConfidence, 0.57),
       sourceType: "shipping_inferred_weak",
       shippingMethod: methodKey,
@@ -434,6 +446,9 @@ export function inferShippingFromEvidence(input: {
       estimatedMinDays: derived.estimatedMinDays,
       estimatedMaxDays: derived.estimatedMaxDays,
       originCountry: derived.originCountry,
+      originSource: originCountry.originSource,
+      originConfidence: originCountry.originConfidence,
+      originUnresolvedReason: originCountry.unresolvedReason,
       confidence: 0.2,
       sourceType: "shipping_fallback_default",
       shippingMethod: methodKey,
@@ -448,6 +463,9 @@ export function inferShippingFromEvidence(input: {
     estimatedMinDays: derived.estimatedMinDays,
     estimatedMaxDays: derived.estimatedMaxDays,
     originCountry: derived.originCountry,
+    originSource: originCountry.originSource,
+    originConfidence: originCountry.originConfidence,
+    originUnresolvedReason: originCountry.unresolvedReason,
     confidence: totalConfidence,
     sourceType: "shipping_unresolved",
     shippingMethod: methodKey,
