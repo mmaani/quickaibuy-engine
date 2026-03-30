@@ -40,6 +40,11 @@ Classification uses:
 - `DATABASE_URL` host
 - `DATABASE_URL_DIRECT` host
 
+For compatibility in some CI/Codespaces setups, schema-check scripts also accept:
+
+- `QAB_DATABASE_URL`
+- `QAB_DATABASE_URL_DIRECT`
+
 If `DOTENV_CONFIG_PATH=.env` is set explicitly, classification still resolves through `.env.active.json` so an active `.env` generated from `.env.dev` or `.env.prod` does not degrade to `UNKNOWN`.
 
 Patterns are defined in [config/db-targets.mjs](/workspaces/quickaibuy-engine/config/db-targets.mjs).

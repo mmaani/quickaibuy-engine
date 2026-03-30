@@ -32,6 +32,24 @@ const TABLE_SPECS: Record<string, TableSpec> = {
       { name: "price", type: "numeric", nullable: false },
       { name: "quantity", type: "int4", nullable: false },
       { name: "payload", type: "jsonb", nullable: false },
+      { name: "performance_impressions", type: "int8", nullable: true },
+      { name: "performance_clicks", type: "int8", nullable: true },
+      { name: "performance_orders", type: "int8", nullable: true },
+      { name: "performance_ctr", type: "numeric", nullable: true },
+      { name: "performance_conversion_rate", type: "numeric", nullable: true },
+      { name: "performance_last_signal_at", type: "timestamp", nullable: true },
+      { name: "kill_score", type: "numeric", nullable: true },
+      { name: "kill_decision", type: "text", nullable: true },
+      { name: "kill_reason_codes", type: "_text", nullable: true },
+      { name: "kill_evaluated_at", type: "timestamp", nullable: true },
+      { name: "auto_killed_at", type: "timestamp", nullable: true },
+      { name: "evolution_attempt_count", type: "int4", nullable: false },
+      { name: "last_evolution_at", type: "timestamp", nullable: true },
+      { name: "listing_evolution_status", type: "text", nullable: true },
+      { name: "listing_evolution_reason", type: "text", nullable: true },
+      { name: "listing_evolution_candidate_payload", type: "jsonb", nullable: true },
+      { name: "listing_evolution_applied_at", type: "timestamp", nullable: true },
+      { name: "listing_evolution_result", type: "text", nullable: true },
       { name: "idempotency_key", type: "text", nullable: false },
       { name: "created_at", type: "timestamp", nullable: false },
       { name: "updated_at", type: "timestamp", nullable: false },
@@ -39,6 +57,8 @@ const TABLE_SPECS: Record<string, TableSpec> = {
     indexes: [
       { table: "listings", columns: ["candidate_id"] },
       { table: "listings", columns: ["marketplace_key", "status"] },
+      { table: "listings", columns: ["kill_decision", "kill_evaluated_at"] },
+      { table: "listings", columns: ["listing_evolution_status", "last_evolution_at"] },
       { table: "listings", columns: ["idempotency_key"], unique: true },
     ],
   },
@@ -51,6 +71,14 @@ const TABLE_SPECS: Record<string, TableSpec> = {
       { name: "marketplace_listing_id", type: "text", nullable: false },
       { name: "decision_status", type: "text", nullable: false },
       { name: "listing_eligible", type: "bool", nullable: false },
+      { name: "supplier_trust_score", type: "numeric", nullable: true },
+      { name: "supplier_trust_band", type: "text", nullable: true },
+      { name: "supplier_delivery_score", type: "numeric", nullable: true },
+      { name: "supplier_stock_score", type: "numeric", nullable: true },
+      { name: "supplier_price_stability_score", type: "numeric", nullable: true },
+      { name: "supplier_issue_penalty", type: "numeric", nullable: true },
+      { name: "supplier_trust_evaluated_at", type: "timestamp", nullable: true },
+      { name: "supplier_trust_reason_codes", type: "_text", nullable: true },
     ],
     indexes: [
       {
@@ -58,6 +86,8 @@ const TABLE_SPECS: Record<string, TableSpec> = {
         columns: ["supplier_key", "supplier_product_id", "marketplace_key", "marketplace_listing_id"],
         unique: true,
       },
+      { table: "profitable_candidates", columns: ["supplier_trust_band", "supplier_trust_score"] },
+      { table: "profitable_candidates", columns: ["supplier_trust_evaluated_at"] },
     ],
   },
   marketplace_prices: {
@@ -142,7 +172,11 @@ function columnsMatch(indexCols: string[], requiredCols: string[]): boolean {
 }
 
 async function main() {
-  const connectionString = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
+  const connectionString =
+    process.env.DATABASE_URL_DIRECT ||
+    process.env.QAB_DATABASE_URL_DIRECT ||
+    process.env.DATABASE_URL ||
+    process.env.QAB_DATABASE_URL;
   if (!connectionString) throw new Error("Missing DATABASE_URL_DIRECT or DATABASE_URL");
 
   const pool = new Pool({
