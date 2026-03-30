@@ -32,10 +32,12 @@
 │   ├── code-review-2026-03-13.md
 │   ├── codespaces-secrets-policy.md
 │   ├── control-plane-architecture.md
+│   ├── data-quality-supplier-intelligence-learning-signal-audit-2026-03-30.md
 │   ├── database-migrations.md
 │   ├── ebay-image-policy.md
 │   ├── ebay-live-publish.md
 │   ├── env-db-targeting.md
+│   ├── match-quality-supplier-signal-recovery-critical-2026-03-30.md
 │   ├── operator-runbook.md
 │   ├── ops-ebay-image-hosting.md
 │   ├── order-automation-rollout.md
@@ -51,6 +53,8 @@
 │   │   │   └── system-overview.md
 │   │   ├── automation
 │   │   │   ├── autonomous-backbone.md
+│   │   │   ├── canonical-execution-enforcement.md
+│   │   │   ├── operational-surface.md
 │   │   │   └── scheduled-learning-orchestration.md
 │   │   ├── control-plane
 │   │   │   ├── control-plane-model.md
@@ -90,7 +94,9 @@
 │   │       ├── common-blockers.md
 │   │       └── recovery-playbooks.md
 │   ├── system-architecture.md
-│   └── system-command-center-update.md
+│   ├── system-command-center-update.md
+│   ├── verified-match-quality-publish-payload-root-cause-2026-03-30.md
+│   └── whole-system-canonical-audit-2026-03-30.md
 ├── drizzle
 │   ├── 0000_even_iron_man.sql
 │   ├── 0001_concerned_skin.sql
@@ -233,7 +239,6 @@
 │   ├── check_marketplace_prices.mjs
 │   ├── check_match_duplicates.mjs
 │   ├── check_matches.mjs
-│   ├── check_matches_latest.mjs
 │   ├── check_migration_baseline.ts
 │   ├── check_migration_ledger.ts
 │   ├── check_missing_cmds.sh
@@ -284,7 +289,6 @@
 │   ├── enqueue_inventory_risk_scan.ts
 │   ├── enqueue_listing_optimize.ts
 │   ├── enqueue_listing_prepare.ts
-│   ├── enqueue_listing_prepare_approved.ts
 │   ├── enqueue_marketplace_scan.ts
 │   ├── enqueue_product_match.ts
 │   ├── enqueue_profit_eval.ts
@@ -307,6 +311,7 @@
 │   │   ├── dbTarget.mjs
 │   │   ├── envState.mjs
 │   │   ├── mutationGuard.mjs
+│   │   ├── nonCanonicalSurfaceGuard.ts
 │   │   ├── orderAutomationSchemaCheck.ts
 │   │   ├── pgRetry.mjs
 │   │   ├── preflightMutation.sh
@@ -334,9 +339,7 @@
 │   ├── prepare_controlled_cj_candidate_ready.ts
 │   ├── prepare_one_ready_to_publish.ts
 │   ├── probe_runtime.ts
-│   ├── promote_listing_previews_ready.ts
 │   ├── promote_single_listing_ready.ts
-│   ├── publish_one_ready_listing.ts
 │   ├── pull_vercel_env.sh
 │   ├── queue_namespace_diagnostics.ts
 │   ├── recheck_single_candidate.ts
@@ -351,19 +354,7 @@
 │   ├── report_autonomous_pipeline_state.ts
 │   ├── review_matches.mjs
 │   ├── run_autonomous_operations.ts
-│   ├── run_check_audit_log.sh
-│   ├── run_check_marketplace_price_urls.sh
-│   ├── run_check_marketplace_prices.sh
-│   ├── run_check_match_duplicates.sh
-│   ├── run_check_matches.sh
-│   ├── run_check_profit_duplicates.sh
-│   ├── run_check_profitable_candidates.sh
-│   ├── run_check_trend_candidates.sh
-│   ├── run_check_trend_candidates_for_signal.sh
-│   ├── run_check_trend_signals.sh
 │   ├── run_controlled_listing_gate_migration.sh
-│   ├── run_controlled_listing_gate_migration_v2.sh
-│   ├── run_controlled_listing_gate_migration_v3.sh
 │   ├── run_enqueue_listing_prepare.sh
 │   ├── run_enqueue_marketplace_scan.sh
 │   ├── run_enqueue_product_match.sh
@@ -379,7 +370,6 @@
 │   ├── run_marketplace_prices_maintenance.ts
 │   ├── run_marketplace_scan_direct.ts
 │   ├── run_marketplace_scan_monitoring.ts
-│   ├── run_marketplace_scan_monitoring_latest.ts
 │   ├── run_matches_migration.sh
 │   ├── run_migration.sh
 │   ├── run_pipeline_dashboard.sh
@@ -428,11 +418,14 @@
 │   ├── test_supplier_discover.ts
 │   ├── test_supplier_linkage_closure.ts
 │   ├── test_trend_expand.mjs
+│   ├── trace_aliexpress_origin_media_evidence.ts
 │   ├── update_repo_tree.mjs
 │   ├── validate_inventory_risk_scenarios.ts
 │   ├── validate_listing_schema_alignment.mjs
 │   ├── validate_live_media_api_cutover.ts
 │   ├── validate_railway_worker_env.ts
+│   ├── validate_us_supplier_priority.ts
+│   ├── verify_blocked_candidate_recovery.ts
 │   ├── verify_profit_pipeline.ts
 │   ├── watch_repo_tree.mjs
 │   └── workers
@@ -442,12 +435,10 @@
 │       ├── check_listing_preview_candidate_links.mjs
 │       ├── check_listing_preview_duplicates.mjs
 │       ├── check_listing_preview_payloads.mjs
-│       ├── check_listing_previews_latest.mjs
 │       ├── check_listings_status_constraint.mjs
 │       ├── check_listings_table_columns.mjs
 │       ├── check_pipeline_survivors.mjs
 │       ├── check_products_raw_columns.mjs
-│       ├── check_profitable_candidates_latest.mjs
 │       ├── check_profitable_candidates_summary.mjs
 │       ├── check_stale_profitable_candidates_reconciliation.ts
 │       ├── delete_orphan_listing_previews.mjs
@@ -592,10 +583,16 @@
 │   │   │   ├── schema.ts
 │   │   │   └── trendCandidates.ts
 │   │   ├── db.ts
+│   │   ├── enforcement
+│   │   │   ├── nonCanonicalRoute.ts
+│   │   │   └── runtimeSovereignty.ts
 │   │   ├── jobNames.ts
 │   │   ├── jobs
+│   │   │   ├── enqueueAdminMutations.ts
+│   │   │   ├── enqueueAutonomousOpsBackbone.ts
 │   │   │   ├── enqueueAutonomousOpsSchedules.ts
 │   │   │   ├── enqueueContinuousLearningSchedules.ts
+│   │   │   ├── enqueueControlJobs.ts
 │   │   │   ├── enqueueInventoryRiskScan.ts
 │   │   │   ├── enqueueMarketplacePriceScan.ts
 │   │   │   ├── enqueueOrderOpsSchedules.ts
@@ -630,6 +627,7 @@
 │   │   ├── listings
 │   │   │   ├── __tests__
 │   │   │   │   ├── optimizeListingTitle.test.ts
+│   │   │   │   ├── recoveryState.test.ts
 │   │   │   │   └── supplierSelectionAndImmutability.test.ts
 │   │   │   ├── auditLiveEbayListing.ts
 │   │   │   ├── build_amazon_preview.ts
@@ -666,6 +664,8 @@
 │   │   │   └── validate_listing_preview.ts
 │   │   ├── logger.ts
 │   │   ├── marketplaces
+│   │   │   ├── __tests__
+│   │   │   │   └── match.test.ts
 │   │   │   ├── amazon.ts
 │   │   │   ├── ebay
 │   │   │   │   └── normalizeWarehouseCountry.ts
@@ -714,12 +714,17 @@
 │   │   │   ├── shippingConfig.ts
 │   │   │   └── shippingInference.ts
 │   │   ├── products
+│   │   │   ├── __tests__
+│   │   │   │   ├── shipFromOrigin.test.ts
+│   │   │   │   ├── supplierEnrichment.test.ts
+│   │   │   │   └── supplierEvidenceClassification.test.ts
 │   │   │   ├── discoverProducts.ts
 │   │   │   ├── pipelinePolicy.ts
 │   │   │   ├── refreshMatchedSupplierRows.ts
 │   │   │   ├── refreshSingleSupplierProduct.ts
 │   │   │   ├── sellabilityScore.ts
 │   │   │   ├── shipFromCountry.ts
+│   │   │   ├── shipFromOrigin.ts
 │   │   │   ├── supplierAvailability.ts
 │   │   │   ├── supplierEnrichment.ts
 │   │   │   ├── supplierEvidenceClassification.ts
@@ -734,8 +739,12 @@
 │   │   │       ├── temu.ts
 │   │   │       └── types.ts
 │   │   ├── profit
+│   │   │   ├── __tests__
+│   │   │   │   └── opportunitySignals.test.ts
 │   │   │   ├── activeSupplierReevaluation.ts
+│   │   │   ├── aiOpportunityValidation.ts
 │   │   │   ├── hardProfitGate.ts
+│   │   │   ├── opportunitySignals.ts
 │   │   │   ├── priceGuard.ts
 │   │   │   ├── priceGuardConfig.ts
 │   │   │   ├── profitAssumptions.ts
@@ -750,6 +759,7 @@
 │   │   ├── queueNamespace.ts
 │   │   ├── redis.ts
 │   │   ├── review
+│   │   │   ├── applyCandidateDecision.ts
 │   │   │   ├── auth.ts
 │   │   │   └── console.ts
 │   │   ├── risk
@@ -761,10 +771,14 @@
 │   │   │   └── supplierLinkage.ts
 │   │   ├── server
 │   │   ├── suppliers
+│   │   │   ├── __tests__
+│   │   │   │   └── intelligence.test.ts
 │   │   │   ├── cjApi.ts
 │   │   │   ├── cjTracking.ts
 │   │   │   ├── intelligence.ts
 │   │   │   └── telemetry.ts
+│   │   ├── time
+│   │   │   └── jordan.ts
 │   │   └── trends
 │   │       ├── expandTrendSignal.ts
 │   │       └── pullTrendSignals.ts
@@ -784,4 +798,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-120 directories, 665 files
+126 directories, 673 files

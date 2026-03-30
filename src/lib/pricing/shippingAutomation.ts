@@ -304,12 +304,14 @@ async function getAlternateSupplierTargets(
     compareSupplierIntelligence(
       computeSupplierIntelligenceSignal({
         supplierKey: left.supplierKey,
+        destinationCountry: "US",
         shippingEstimates: left.shippingEstimates,
         rawPayload: left.rawPayload,
         refreshSuccessRate: refreshSuccessRates.get(left.supplierKey) ?? null,
       }),
       computeSupplierIntelligenceSignal({
         supplierKey: right.supplierKey,
+        destinationCountry: "US",
         shippingEstimates: right.shippingEstimates,
         rawPayload: right.rawPayload,
         refreshSuccessRate: refreshSuccessRates.get(right.supplierKey) ?? null,
@@ -427,6 +429,7 @@ export async function automateShippingIntelligence(input?: {
       if (canTryAlternateSupplier) {
         const currentSignal = computeSupplierIntelligenceSignal({
           supplierKey: row.supplierKey,
+          destinationCountry: "US",
           shippingEstimates,
           rawPayload,
           refreshSuccessRate: refreshSuccessRates.get(row.supplierKey) ?? null,
@@ -435,6 +438,7 @@ export async function automateShippingIntelligence(input?: {
         const strongerAlternates = alternates.filter((alternate) => {
           const signal = computeSupplierIntelligenceSignal({
             supplierKey: alternate.supplierKey,
+            destinationCountry: "US",
             shippingEstimates: alternate.shippingEstimates,
             rawPayload: alternate.rawPayload,
             refreshSuccessRate: refreshSuccessRates.get(alternate.supplierKey) ?? null,

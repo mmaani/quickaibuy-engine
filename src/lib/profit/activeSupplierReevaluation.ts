@@ -19,6 +19,8 @@ import {
 } from "@/lib/products/pipelinePolicy";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { calculateRealProfit } from "@/lib/profit/realProfitCalculator";
+import { computeSupplierIntelligenceSignal, compareSupplierIntelligence } from "@/lib/suppliers/intelligence";
+import { getSupplierRefreshTelemetryMap } from "@/lib/suppliers/telemetry";
 import { sql } from "drizzle-orm";
 
 type SupplierOptionRow = {
@@ -61,6 +63,10 @@ export type ActiveSupplierOption = {
   shippingOriginCountry: string | null;
   shippingErrorReason: string | null;
   shippingConfidence: number | null;
+  supplierReliabilityScore: number;
+  originAvailabilityRate: number;
+  shippingTransparencyRate: number;
+  hasUsWarehouse: boolean;
   availabilitySignal: string;
   availabilityConfidence: number | null;
   supplierSnapshotAgeHours: number | null;
@@ -126,14 +132,62 @@ function compareNullableNumbersAsc(a: number | null, b: number | null): number {
 function chooseBestOption(options: ActiveSupplierOption[]): ActiveSupplierOption | null {
   if (!options.length) return null;
   return [...options].sort((left, right) => {
+    const intelligenceOrder = compareSupplierIntelligence(
+      {
+        supplierKey: left.supplierKey,
+        basePriority: 0,
+        destinationCountry: left.destinationCountry,
+        originAvailabilityRate: left.originAvailabilityRate,
+        shippingTransparencyRate: left.shippingTransparencyRate,
+        stockReliabilityRate:
+          left.availabilitySignal === "IN_STOCK" ? 1 : left.availabilitySignal === "LOW_STOCK" ? 0.2 : 0,
+        stockEvidenceStrength: 0,
+        shippingEvidenceStrength: 0,
+        apiStabilityScore: 0,
+        refreshSuccessRate: null,
+        historicalSuccessRate: null,
+        rateLimitPressure: 0,
+        usMarketPriority: left.hasUsWarehouse ? 1 : left.originAvailabilityRate,
+        hasStrongOriginEvidence: left.originAvailabilityRate >= 0.75,
+        hasUsWarehouse: left.hasUsWarehouse,
+        lowStockOrWorse: left.availabilitySignal !== "IN_STOCK",
+        hardBlock: Boolean(left.shippingErrorReason) || left.availabilitySignal !== "IN_STOCK",
+        reliabilityScore: left.supplierReliabilityScore,
+        shouldDeprioritize: false,
+      },
+      {
+        supplierKey: right.supplierKey,
+        basePriority: 0,
+        destinationCountry: right.destinationCountry,
+        originAvailabilityRate: right.originAvailabilityRate,
+        shippingTransparencyRate: right.shippingTransparencyRate,
+        stockReliabilityRate:
+          right.availabilitySignal === "IN_STOCK" ? 1 : right.availabilitySignal === "LOW_STOCK" ? 0.2 : 0,
+        stockEvidenceStrength: 0,
+        shippingEvidenceStrength: 0,
+        apiStabilityScore: 0,
+        refreshSuccessRate: null,
+        historicalSuccessRate: null,
+        rateLimitPressure: 0,
+        usMarketPriority: right.hasUsWarehouse ? 1 : right.originAvailabilityRate,
+        hasStrongOriginEvidence: right.originAvailabilityRate >= 0.75,
+        hasUsWarehouse: right.hasUsWarehouse,
+        lowStockOrWorse: right.availabilitySignal !== "IN_STOCK",
+        hardBlock: Boolean(right.shippingErrorReason) || right.availabilitySignal !== "IN_STOCK",
+        reliabilityScore: right.supplierReliabilityScore,
+        shouldDeprioritize: false,
+      }
+    );
+    if (intelligenceOrder !== 0) return intelligenceOrder;
     const comparisons = [
       Number(left.listingEligible) - Number(right.listingEligible),
       Number(left.decisionStatus === "APPROVED") - Number(right.decisionStatus === "APPROVED"),
       Number(!left.shippingErrorReason) - Number(!right.shippingErrorReason),
-      compareNullableNumbersAsc(left.landedSupplierCostUsd, right.landedSupplierCostUsd),
       compareNullableNumbersDesc(left.estimatedProfitUsd, right.estimatedProfitUsd),
       compareNullableNumbersDesc(left.roiPct, right.roiPct),
       compareNullableNumbersDesc(left.marginPct, right.marginPct),
+      compareNullableNumbersAsc(left.totalShippingUsd, right.totalShippingUsd),
+      compareNullableNumbersAsc(left.landedSupplierCostUsd, right.landedSupplierCostUsd),
       compareNullableNumbersAsc(left.supplierSnapshotAgeHours, right.supplierSnapshotAgeHours),
       compareNullableNumbersAsc(left.marketplaceSnapshotAgeHours, right.marketplaceSnapshotAgeHours),
     ];
@@ -259,6 +313,7 @@ export async function reevaluateActiveListingSuppliers(input: {
       ON lmp.rn = 1
     WHERE rm.rn = 1
   `);
+  const refreshTelemetry = await getSupplierRefreshTelemetryMap();
 
   const now = new Date();
   const allOptions: ActiveSupplierOption[] = [];
@@ -317,6 +372,7 @@ export async function reevaluateActiveListingSuppliers(input: {
       supplierRawPayload
         ? normalizeSupplierQuality(String(supplierRawPayload.snapshotQuality ?? ""))
         : null;
+    const telemetry = refreshTelemetry.get(supplierKey);
 
     const economics = calculateRealProfit({
       marketplaceKey,
@@ -381,6 +437,24 @@ export async function reevaluateActiveListingSuppliers(input: {
       rawPayload: supplierRawPayload,
       telemetrySignals,
     });
+    const supplierIntelligence = computeSupplierIntelligenceSignal({
+      supplierKey,
+      destinationCountry,
+      availabilitySignal,
+      availabilityConfidence: availability.confidence ?? null,
+      shippingEstimates: row.supplierShippingEstimates,
+      rawPayload: supplierRawPayload,
+      shippingConfidence:
+        supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
+          ? supplierRawPayload.shippingConfidence
+          : null,
+      snapshotQuality: rawSupplierQuality,
+      refreshSuccessRate: telemetry?.refreshSuccessRate ?? null,
+      historicalSuccessRate:
+        telemetry?.attempts != null && telemetry.attempts > 0 ? telemetry.exactMatches / telemetry.attempts : null,
+      rateLimitEvents: telemetry?.rateLimitEvents ?? null,
+      refreshAttempts: telemetry?.attempts ?? null,
+    });
     const matchRoutingStatus = getMatchRoutingStatus(matchConfidence);
     const shippingUnsafe = Boolean(shippingResolution.errorReason);
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
@@ -429,6 +503,10 @@ export async function reevaluateActiveListingSuppliers(input: {
       shippingOriginCountry: shippingResolution.resolvedOriginCountry,
       shippingErrorReason: shippingResolution.errorReason,
       shippingConfidence: shippingResolution.sourceConfidence,
+      supplierReliabilityScore: supplierIntelligence.reliabilityScore,
+      originAvailabilityRate: supplierIntelligence.originAvailabilityRate,
+      shippingTransparencyRate: supplierIntelligence.shippingTransparencyRate,
+      hasUsWarehouse: supplierIntelligence.hasUsWarehouse,
       availabilitySignal,
       availabilityConfidence: availability.confidence ?? null,
       supplierSnapshotAgeHours,
@@ -479,11 +557,11 @@ export async function reevaluateActiveListingSuppliers(input: {
     bestOption,
     viableOptions,
     allOptions: allOptions.sort((left, right) => {
-      const viability = Number(right.listingEligible) - Number(left.listingEligible);
-      if (viability !== 0) return viability;
-      const landed = left.landedSupplierCostUsd - right.landedSupplierCostUsd;
-      if (landed !== 0) return landed;
-      return right.estimatedProfitUsd - left.estimatedProfitUsd;
+      const best = chooseBestOption([left, right]);
+      if (!best) return 0;
+      if (best.supplierKey === left.supplierKey && best.supplierProductId === left.supplierProductId) return -1;
+      if (best.supplierKey === right.supplierKey && best.supplierProductId === right.supplierProductId) return 1;
+      return 0;
     }),
   };
 }

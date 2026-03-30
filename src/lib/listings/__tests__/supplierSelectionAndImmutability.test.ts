@@ -28,6 +28,10 @@ function buildRow(overrides: Partial<Row>): Row {
       availabilitySignal: "IN_STOCK",
       shippingConfidence: 0.9,
       shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
       snapshotQuality: "HIGH",
       deliveryEstimateMinDays: 5,
       deliveryEstimateMaxDays: 8,
@@ -57,6 +61,14 @@ test("multi-supplier selection chooses best pre-listing row", () => {
     supplierRawPayload: {
       mediaQualityScore: 0.9,
       availabilityConfidence: 0.95,
+      availabilitySignal: "IN_STOCK",
+      shippingConfidence: 0.92,
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
+      snapshotQuality: "HIGH",
       deliveryEstimateMinDays: 4,
       deliveryEstimateMaxDays: 7,
     },
@@ -80,6 +92,10 @@ test("supplier intelligence deprioritizes weak AliExpress rows before listing", 
       availabilitySignal: "IN_STOCK",
       shippingConfidence: 0.88,
       shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
       snapshotQuality: "HIGH",
       deliveryEstimateMinDays: 4,
       deliveryEstimateMaxDays: 7,
@@ -97,6 +113,7 @@ test("supplier intelligence deprioritizes weak AliExpress rows before listing", 
       availabilityEvidenceQuality: "LOW",
       shippingConfidence: 0.25,
       shippingSignal: "MISSING",
+      shippingTransparencyState: "PRESENT",
       snapshotQuality: "LOW",
       deliveryEstimateMinDays: 7,
       deliveryEstimateMaxDays: 10,
@@ -107,6 +124,51 @@ test("supplier intelligence deprioritizes weak AliExpress rows before listing", 
 
   const selected = selectBestSupplierRowsBeforeListing([aliWeak, cj]);
   assert.equal(selected[0]?.candidateId, "c-cj");
+});
+
+test("US market selection prefers resolved-origin supplier over cheaper unresolved-origin row", () => {
+  const cheapAli = buildRow({
+    candidateId: "c-ali-cheap",
+    supplierKey: "aliexpress",
+    supplierPrice: 5,
+    marginPct: 55,
+    supplierRawPayload: {
+      mediaQualityScore: 0.92,
+      availabilityConfidence: 0.9,
+      availabilitySignal: "IN_STOCK",
+      shippingConfidence: 0.82,
+      shippingSignal: "PARTIAL",
+      shippingTransparencyState: "PRESENT",
+      snapshotQuality: "HIGH",
+      deliveryEstimateMinDays: 7,
+      deliveryEstimateMaxDays: 10,
+    },
+  });
+
+  const strongerCj = buildRow({
+    candidateId: "c-cj-strong",
+    supplierKey: "cjdropshipping",
+    supplierPrice: 8,
+    marginPct: 42,
+    supplierRawPayload: {
+      mediaQualityScore: 0.88,
+      availabilityConfidence: 0.92,
+      availabilitySignal: "IN_STOCK",
+      shippingConfidence: 0.9,
+      shippingSignal: "EXACT",
+      shippingTransparencyState: "PRESENT",
+      shippingOriginCountry: "US",
+      shippingOriginValidity: "EXPLICIT",
+      supplierWarehouseCountry: "US",
+      snapshotQuality: "HIGH",
+      deliveryEstimateMinDays: 4,
+      deliveryEstimateMaxDays: 6,
+    },
+  });
+
+  assert.ok(computeSupplierSelectionScore(strongerCj) > computeSupplierSelectionScore(cheapAli));
+  const selected = selectBestSupplierRowsBeforeListing([cheapAli, strongerCj]);
+  assert.equal(selected[0]?.candidateId, "c-cj-strong");
 });
 
 test("no post-approval supplier rebinding for READY/ACTIVE statuses", () => {

@@ -3,10 +3,21 @@ import type { SupplierProduct, SupplierSnapshotQuality } from "@/lib/products/su
 export type SupplierIntelligenceSignal = {
   supplierKey: string;
   basePriority: number;
+  destinationCountry: string | null;
+  originAvailabilityRate: number;
+  shippingTransparencyRate: number;
+  stockReliabilityRate: number;
   stockEvidenceStrength: number;
   shippingEvidenceStrength: number;
   apiStabilityScore: number;
   refreshSuccessRate: number | null;
+  historicalSuccessRate: number | null;
+  rateLimitPressure: number;
+  usMarketPriority: number;
+  hasStrongOriginEvidence: boolean;
+  hasUsWarehouse: boolean;
+  lowStockOrWorse: boolean;
+  hardBlock: boolean;
   reliabilityScore: number;
   shouldDeprioritize: boolean;
 };
@@ -36,6 +47,19 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function normalizeCountry(value: unknown): string | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "USA" || normalized === "US" || normalized === "UNITED STATES") return "US";
+  if (normalized === "CN" || normalized === "CHINA") return "CN";
+  if (normalized === "GB" || normalized === "UK" || normalized === "UNITED KINGDOM") return "GB";
+  if (normalized === "DE" || normalized === "GERMANY") return "DE";
+  if (normalized === "PL" || normalized === "POLAND") return "PL";
+  if (normalized === "CA" || normalized === "CANADA") return "CA";
+  if (normalized === "AU" || normalized === "AUSTRALIA") return "AU";
+  return normalized.length <= 3 ? normalized : null;
 }
 
 export function canonicalSupplierKey(value: unknown): string {
@@ -182,6 +206,133 @@ export function computeShippingEvidenceStrength(input: {
   return clamp01(score);
 }
 
+function computeOriginAvailabilityRate(input: {
+  shippingEstimates?: unknown;
+  rawPayload?: unknown;
+  destinationCountry?: string | null;
+}): {
+  rate: number;
+  hasStrongOriginEvidence: boolean;
+  hasUsWarehouse: boolean;
+} {
+  const raw = asObject(input.rawPayload) ?? {};
+  const shippingNode = asObject(raw.shipping);
+  const destinationCountry = normalizeCountry(input.destinationCountry) ?? null;
+  const estimates = Array.isArray(input.shippingEstimates)
+    ? (input.shippingEstimates as Array<Record<string, unknown>>)
+    : [];
+  const estimateOrigins = estimates
+    .map((estimate) => normalizeCountry(estimate?.ship_from_country))
+    .filter((value): value is string => Boolean(value));
+  const rawOrigins = [
+    raw.shipFromCountry,
+    raw.ship_from_country,
+    raw.shippingOriginCountry,
+    raw.originCountry,
+    raw.supplierWarehouseCountry,
+    raw.supplier_warehouse_country,
+    shippingNode?.shipFromCountry,
+    shippingNode?.ship_from_country,
+    shippingNode?.originCountry,
+    shippingNode?.warehouseCountry,
+  ]
+    .map((value) => normalizeCountry(value))
+    .filter((value): value is string => Boolean(value));
+  const originValidity = String(
+    raw.shippingOriginValidity ?? raw.originValidity ?? shippingNode?.originValidity ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  const warehouseCountry = normalizeCountry(raw.supplierWarehouseCountry ?? shippingNode?.warehouseCountry);
+  const originCountry = normalizeCountry(
+    raw.shippingOriginCountry ?? raw.shipFromCountry ?? raw.originCountry ?? shippingNode?.originCountry
+  );
+  const hasStrongOriginEvidence =
+    originValidity === "EXPLICIT" ||
+    originValidity === "STRONG_INFERRED" ||
+    originCountry != null ||
+    estimateOrigins.length > 0 ||
+    warehouseCountry != null;
+  const hasUsWarehouse = warehouseCountry === "US" || estimateOrigins.includes("US") || originCountry === "US";
+
+  let rate = hasStrongOriginEvidence ? 0.82 : 0.08;
+  if (originValidity === "EXPLICIT") rate = 0.98;
+  else if (originValidity === "STRONG_INFERRED") rate = 0.86;
+  else if (estimateOrigins.length > 0 && rawOrigins.length > 0) rate = 0.9;
+  else if (estimateOrigins.length > 0 || rawOrigins.length > 0) rate = 0.76;
+  if (destinationCountry === "US" && !hasStrongOriginEvidence) rate = 0;
+  if (hasUsWarehouse) rate = 1;
+
+  return {
+    rate: clamp01(rate),
+    hasStrongOriginEvidence: destinationCountry === "US" ? hasStrongOriginEvidence : rate >= 0.75,
+    hasUsWarehouse,
+  };
+}
+
+function computeShippingTransparencyRate(input: {
+  shippingEstimates?: unknown;
+  rawPayload?: unknown;
+}): number {
+  const raw = asObject(input.rawPayload) ?? {};
+  const shippingNode = asObject(raw.shipping);
+  const estimates = Array.isArray(input.shippingEstimates)
+    ? (input.shippingEstimates as Array<Record<string, unknown>>)
+    : [];
+  const hasEstimateData = estimates.some((estimate) => {
+    return (
+      estimate?.cost != null ||
+      estimate?.etaMinDays != null ||
+      estimate?.etaMaxDays != null ||
+      estimate?.label != null
+    );
+  });
+  const transparencyState = String(
+    raw.shippingTransparencyState ?? raw.shipping_transparency_state ?? shippingNode?.shippingTransparencyState ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  const shippingSignal = String(raw.shippingSignal ?? "").trim().toUpperCase();
+  const hasStructuredNode =
+    shippingNode != null &&
+    Object.values(shippingNode).some((value) => {
+      if (Array.isArray(value)) return value.length > 0;
+      if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>).length > 0;
+      return value != null && String(value).trim() !== "";
+    });
+
+  let rate = 0.12;
+  if (hasEstimateData) rate += 0.42;
+  if (hasStructuredNode) rate += 0.22;
+  if (shippingSignal === "DIRECT" || shippingSignal === "EXACT" || shippingSignal === "STRONG") rate += 0.2;
+  else if (shippingSignal === "PARTIAL") rate += 0.1;
+  else if (shippingSignal === "MISSING") rate -= 0.24;
+  if (transparencyState === "PRESENT") rate += 0.18;
+  else if (transparencyState === "MISSING" || transparencyState === "INCOMPLETE") rate -= 0.18;
+  return clamp01(rate);
+}
+
+function computeStockReliabilityRate(input: {
+  availabilitySignal?: unknown;
+  availabilityConfidence?: unknown;
+  rawPayload?: unknown;
+}): { rate: number; lowStockOrWorse: boolean } {
+  const raw = asObject(input.rawPayload) ?? {};
+  const signal = String(
+    input.availabilitySignal ?? raw.availabilitySignal ?? raw.availability_status ?? raw.availabilityStatus ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  const confidence = toNum(
+    input.availabilityConfidence ?? raw.availabilityConfidence ?? raw.availability_confidence
+  );
+  const lowStockOrWorse = signal === "LOW_STOCK" || signal === "OUT_OF_STOCK" || signal === "UNKNOWN";
+
+  let rate = signal === "IN_STOCK" ? 0.84 : signal === "LOW_STOCK" ? 0.28 : signal === "OUT_OF_STOCK" ? 0.05 : 0.12;
+  if (confidence != null) rate = rate * 0.72 + clamp01(confidence) * 0.28;
+  return { rate: clamp01(rate), lowStockOrWorse };
+}
+
 export function computeSupplierApiStabilityScore(input: {
   supplierKey: string;
   rawPayload?: unknown;
@@ -209,6 +360,7 @@ export function computeSupplierApiStabilityScore(input: {
 
 export function computeSupplierIntelligenceSignal(input: {
   supplierKey: string;
+  destinationCountry?: string | null;
   availabilitySignal?: unknown;
   availabilityConfidence?: unknown;
   shippingEstimates?: unknown;
@@ -216,9 +368,27 @@ export function computeSupplierIntelligenceSignal(input: {
   shippingConfidence?: unknown;
   snapshotQuality?: SupplierSnapshotQuality | unknown;
   refreshSuccessRate?: number | null;
+  historicalSuccessRate?: number | null;
+  rateLimitEvents?: number | null;
+  refreshAttempts?: number | null;
 }): SupplierIntelligenceSignal {
   const supplierKey = canonicalSupplierKey(input.supplierKey);
+  const destinationCountry = normalizeCountry(input.destinationCountry) ?? null;
   const basePriority = supplierBasePriorityScore(supplierKey);
+  const { rate: originAvailabilityRate, hasStrongOriginEvidence, hasUsWarehouse } = computeOriginAvailabilityRate({
+    shippingEstimates: input.shippingEstimates,
+    rawPayload: input.rawPayload,
+    destinationCountry,
+  });
+  const shippingTransparencyRate = computeShippingTransparencyRate({
+    shippingEstimates: input.shippingEstimates,
+    rawPayload: input.rawPayload,
+  });
+  const { rate: stockReliabilityRate, lowStockOrWorse } = computeStockReliabilityRate({
+    availabilitySignal: input.availabilitySignal,
+    availabilityConfidence: input.availabilityConfidence,
+    rawPayload: input.rawPayload,
+  });
   const stockEvidenceStrength = computeStockEvidenceStrength({
     availabilitySignal: input.availabilitySignal,
     availabilityConfidence: input.availabilityConfidence,
@@ -235,25 +405,78 @@ export function computeSupplierIntelligenceSignal(input: {
     rawPayload: input.rawPayload,
     refreshSuccessRate: input.refreshSuccessRate ?? null,
   });
+  const refreshAttempts = Math.max(0, Number(input.refreshAttempts ?? 0) || 0);
+  const rateLimitEvents = Math.max(0, Number(input.rateLimitEvents ?? 0) || 0);
+  const rateLimitPressure = clamp01(
+    refreshAttempts > 0 ? rateLimitEvents / refreshAttempts : rateLimitEvents > 0 ? 1 : 0
+  );
+  const historicalSuccessRate =
+    input.historicalSuccessRate != null
+      ? clamp01(input.historicalSuccessRate)
+      : input.refreshSuccessRate != null
+        ? clamp01(input.refreshSuccessRate)
+        : null;
+  const usMarketPriority =
+    destinationCountry === "US"
+      ? hasUsWarehouse
+        ? 1
+        : hasStrongOriginEvidence
+          ? 0.82
+          : 0
+      : hasStrongOriginEvidence
+        ? 0.72
+        : 0.45;
 
   let reliabilityScore =
-    basePriority * 0.34 +
-    stockEvidenceStrength * 0.24 +
-    shippingEvidenceStrength * 0.27 +
-    apiStabilityScore * 0.15;
+    basePriority * 0.12 +
+    originAvailabilityRate * 0.22 +
+    shippingTransparencyRate * 0.16 +
+    stockReliabilityRate * 0.18 +
+    stockEvidenceStrength * 0.08 +
+    shippingEvidenceStrength * 0.08 +
+    apiStabilityScore * 0.08 +
+    usMarketPriority * 0.08;
+
+  if (historicalSuccessRate != null) reliabilityScore += historicalSuccessRate * 0.08;
+  reliabilityScore -= rateLimitPressure * 0.12;
+
+  const hardBlock =
+    lowStockOrWorse ||
+    (destinationCountry === "US" && !hasStrongOriginEvidence) ||
+    shippingTransparencyRate < 0.45;
 
   const shouldDeprioritize =
-    supplierKey === "aliexpress" &&
-    (stockEvidenceStrength < 0.62 || shippingEvidenceStrength < 0.72 || apiStabilityScore < 0.58);
+    hardBlock ||
+    (supplierKey === "aliexpress" &&
+      (originAvailabilityRate < 0.82 ||
+        shippingTransparencyRate < 0.78 ||
+        stockReliabilityRate < 0.82 ||
+        apiStabilityScore < 0.6)) ||
+    reliabilityScore < 0.58;
 
-  if (shouldDeprioritize) reliabilityScore *= 0.55;
+  if (supplierKey === "cjdropshipping" && destinationCountry === "US" && hasStrongOriginEvidence && !lowStockOrWorse) {
+    reliabilityScore += 0.08;
+  }
+  if (hardBlock) reliabilityScore *= 0.2;
+  else if (shouldDeprioritize) reliabilityScore *= 0.55;
   return {
     supplierKey,
     basePriority: clamp01(basePriority),
+    destinationCountry,
+    originAvailabilityRate,
+    shippingTransparencyRate,
+    stockReliabilityRate,
     stockEvidenceStrength,
     shippingEvidenceStrength,
     apiStabilityScore,
     refreshSuccessRate: input.refreshSuccessRate ?? null,
+    historicalSuccessRate,
+    rateLimitPressure,
+    usMarketPriority,
+    hasStrongOriginEvidence,
+    hasUsWarehouse,
+    lowStockOrWorse,
+    hardBlock,
     reliabilityScore: clamp01(reliabilityScore),
     shouldDeprioritize,
   };
@@ -263,8 +486,23 @@ export function compareSupplierIntelligence(
   left: SupplierIntelligenceSignal,
   right: SupplierIntelligenceSignal
 ): number {
+  if (left.hardBlock !== right.hardBlock) {
+    return Number(left.hardBlock) - Number(right.hardBlock);
+  }
   if (left.reliabilityScore !== right.reliabilityScore) {
     return right.reliabilityScore - left.reliabilityScore;
+  }
+  if (left.usMarketPriority !== right.usMarketPriority) {
+    return right.usMarketPriority - left.usMarketPriority;
+  }
+  if (left.originAvailabilityRate !== right.originAvailabilityRate) {
+    return right.originAvailabilityRate - left.originAvailabilityRate;
+  }
+  if (left.shippingTransparencyRate !== right.shippingTransparencyRate) {
+    return right.shippingTransparencyRate - left.shippingTransparencyRate;
+  }
+  if (left.stockReliabilityRate !== right.stockReliabilityRate) {
+    return right.stockReliabilityRate - left.stockReliabilityRate;
   }
   if (left.shippingEvidenceStrength !== right.shippingEvidenceStrength) {
     return right.shippingEvidenceStrength - left.shippingEvidenceStrength;
@@ -281,6 +519,7 @@ export function compareSupplierIntelligence(
 export function computeSupplierIntelligenceForDiscover(item: SupplierProduct): SupplierIntelligenceSignal {
   return computeSupplierIntelligenceSignal({
     supplierKey: item.platform,
+    destinationCountry: "US",
     availabilitySignal: item.availabilitySignal,
     availabilityConfidence: item.availabilityConfidence,
     shippingEstimates: item.shippingEstimates,
@@ -288,4 +527,36 @@ export function computeSupplierIntelligenceForDiscover(item: SupplierProduct): S
     shippingConfidence: item.raw?.shippingConfidence,
     snapshotQuality: item.snapshotQuality,
   });
+}
+
+export function shouldRejectSupplierEarly(input: {
+  supplierKey: string;
+  destinationCountry?: string | null;
+  availabilitySignal?: unknown;
+  availabilityConfidence?: unknown;
+  shippingEstimates?: unknown;
+  rawPayload?: unknown;
+  shippingConfidence?: unknown;
+  snapshotQuality?: SupplierSnapshotQuality | unknown;
+  refreshSuccessRate?: number | null;
+  historicalSuccessRate?: number | null;
+  rateLimitEvents?: number | null;
+  refreshAttempts?: number | null;
+  minimumReliabilityScore?: number;
+}): { reject: boolean; reason: string | null; signal: SupplierIntelligenceSignal } {
+  const signal = computeSupplierIntelligenceSignal(input);
+  const minimumReliabilityScore = clamp01(input.minimumReliabilityScore ?? 0.58);
+  if (signal.lowStockOrWorse) {
+    return { reject: true, reason: "low_stock_or_unconfirmed_availability", signal };
+  }
+  if (signal.destinationCountry === "US" && !signal.hasStrongOriginEvidence) {
+    return { reject: true, reason: "us_origin_unresolved", signal };
+  }
+  if (signal.shippingTransparencyRate < 0.45) {
+    return { reject: true, reason: "shipping_transparency_too_weak", signal };
+  }
+  if (signal.reliabilityScore < minimumReliabilityScore || signal.hardBlock) {
+    return { reject: true, reason: "supplier_reliability_too_low", signal };
+  }
+  return { reject: false, reason: null, signal };
 }

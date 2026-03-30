@@ -203,23 +203,51 @@ function describeCandidateOption(option: CandidateOption): string {
 
 function chooseBestSupplierOption(options: CandidateOption[]): CandidateOption {
   const sorted = [...options].sort((left, right) => {
+    const leftUsWarehouse = Number(left.destinationCountry === "US" && left.supplierWarehouseCountry === "US");
+    const rightUsWarehouse = Number(right.destinationCountry === "US" && right.supplierWarehouseCountry === "US");
+    const leftKnownOrigin = Number(
+      left.shippingOriginValidity === "EXPLICIT" || left.shippingOriginValidity === "STRONG_INFERRED"
+    );
+    const rightKnownOrigin = Number(
+      right.shippingOriginValidity === "EXPLICIT" || right.shippingOriginValidity === "STRONG_INFERRED"
+    );
+    const leftFastIntl = Number(
+      leftKnownOrigin &&
+        left.destinationCountry === "US" &&
+        (left.deliveryEstimateMaxDays ?? Number.POSITIVE_INFINITY) <= 12 &&
+        left.supplierWarehouseCountry !== "US"
+    );
+    const rightFastIntl = Number(
+      rightKnownOrigin &&
+        right.destinationCountry === "US" &&
+        (right.deliveryEstimateMaxDays ?? Number.POSITIVE_INFINITY) <= 12 &&
+        right.supplierWarehouseCountry !== "US"
+    );
     const orderedComparisons = [
       Number(left.listingEligible) - Number(right.listingEligible),
       Number(left.decisionStatus === "APPROVED") - Number(right.decisionStatus === "APPROVED"),
       Number(!left.staleMarketplaceSnapshot) - Number(!right.staleMarketplaceSnapshot),
       Number(!left.shippingUnsafe) - Number(!right.shippingUnsafe),
+      leftUsWarehouse - rightUsWarehouse,
+      leftFastIntl - rightFastIntl,
+      leftKnownOrigin - rightKnownOrigin,
+      compareNullableNumbersDesc(left.shippingOriginConfidence, right.shippingOriginConfidence),
+      Number(left.shippingTransparencyState === "PRESENT") - Number(right.shippingTransparencyState === "PRESENT"),
+      compareNullableNumbersAsc(left.deliveryEstimateMaxDays, right.deliveryEstimateMaxDays),
       Number(!left.availabilityManualReview && !left.availabilityUnsafe) -
         Number(!right.availabilityManualReview && !right.availabilityUnsafe),
+      Number(left.availabilitySignal === "IN_STOCK") - Number(right.availabilitySignal === "IN_STOCK"),
       compareNullableNumbersDesc(left.availabilityConfidence, right.availabilityConfidence),
-      compareNullableNumbersAsc(left.landedSupplierCost, right.landedSupplierCost),
+      compareNullableNumbersDesc(left.supplierReliabilityScore, right.supplierReliabilityScore),
       compareNullableNumbersDesc(
         left.reliabilityAdjustedProfit.adjustedProfitUsd,
         right.reliabilityAdjustedProfit.adjustedProfitUsd
       ),
       compareNullableNumbersDesc(left.estimatedProfit, right.estimatedProfit),
-      compareNullableNumbersDesc(left.supplierReliabilityScore, right.supplierReliabilityScore),
       compareNullableNumbersDesc(left.roiPct, right.roiPct),
       compareNullableNumbersDesc(left.marginPct, right.marginPct),
+      compareNullableNumbersAsc(left.shipping + left.shippingReserve, right.shipping + right.shippingReserve),
+      compareNullableNumbersAsc(left.landedSupplierCost, right.landedSupplierCost),
       left.sourceQualityRank - right.sourceQualityRank,
       compareNullableNumbersDesc(left.pipeline.score, right.pipeline.score),
       compareNullableNumbersDesc(left.matchConfidence, right.matchConfidence),

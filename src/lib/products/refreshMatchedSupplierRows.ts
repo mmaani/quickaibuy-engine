@@ -129,12 +129,14 @@ export async function getMatchedSupplierRefreshTargets(input?: {
     const intelligenceOrder = compareSupplierIntelligence(
       computeSupplierIntelligenceSignal({
         supplierKey: left.supplierKey,
+        destinationCountry: "US",
         shippingEstimates: left.shippingEstimates,
         rawPayload: left.rawPayload,
         refreshSuccessRate: refreshSuccessRates.get(left.supplierKey) ?? null,
       }),
       computeSupplierIntelligenceSignal({
         supplierKey: right.supplierKey,
+        destinationCountry: "US",
         shippingEstimates: right.shippingEstimates,
         rawPayload: right.rawPayload,
         refreshSuccessRate: refreshSuccessRates.get(right.supplierKey) ?? null,

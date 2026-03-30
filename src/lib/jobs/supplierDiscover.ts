@@ -17,6 +17,7 @@ import {
   computeSupplierIntelligenceForDiscover,
   getDefaultSupplierWaveBudgets,
   getSupplierWaveBudget,
+  shouldRejectSupplierEarly,
 } from "@/lib/suppliers/intelligence";
 import {
   getSupplierLearningAdjustments,
@@ -457,6 +458,19 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
       const shippingUsable = isShippingSignalUsable(item);
       const targetedFriendly = isTargetedDiscoveryFriendly(item);
       const deprioritized = shouldDeprioritizeSupplier(item);
+      const earlySupplierGate = shouldRejectSupplierEarly({
+        supplierKey: item.platform,
+        destinationCountry: "US",
+        availabilitySignal: item.availabilitySignal ?? null,
+        availabilityConfidence: item.availabilityConfidence ?? null,
+        shippingEstimates: item.shippingEstimates,
+        rawPayload: item.raw,
+        shippingConfidence: item.raw?.shippingConfidence,
+        snapshotQuality: item.snapshotQuality ?? null,
+        refreshSuccessRate: supplierLearning.get(sourceKey)?.supplierReliability ?? null,
+        historicalSuccessRate: supplierLearning.get(sourceKey)?.publishability ?? null,
+        minimumReliabilityScore: waveBudget.minimumReliabilityScore,
+      });
       const persistedForSource = persistedCountsBySource.get(sourceKey) ?? 0;
       const persistedCapForSource = Math.max(
         1,
@@ -472,16 +486,20 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
       if (quality.eligible) {
         scoredProducts++;
         sourceCounter.eligible_count += 1;
-        if (passesWavePolicy) {
+        if (passesWavePolicy && !earlySupplierGate.reject) {
           productsToPersist.push(item);
           persistedCountsBySource.set(sourceKey, persistedForSource + 1);
         } else {
           sourceCounter.rejected_availability_count += 1;
-          bumpRejectionReason(sourceCounter, "supplier_wave_policy_rejected");
+          bumpRejectionReason(
+            sourceCounter,
+            earlySupplierGate.reason ? `strong_supplier_policy:${earlySupplierGate.reason}` : "supplier_wave_policy_rejected"
+          );
         }
       } else {
         const shouldPersist =
           passesWavePolicy &&
+          !earlySupplierGate.reject &&
           !deprioritized &&
           shippingUsable &&
           targetedFriendly &&
@@ -509,6 +527,9 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
         } else if (deprioritized) {
           sourceCounter.rejected_availability_count += 1;
           bumpRejectionReason(sourceCounter, "deprioritized_low_evidence_supplier");
+        } else if (earlySupplierGate.reject) {
+          sourceCounter.rejected_availability_count += 1;
+          bumpRejectionReason(sourceCounter, `strong_supplier_policy:${earlySupplierGate.reason}`);
         } else if (!passesWavePolicy) {
           sourceCounter.rejected_availability_count += 1;
           bumpRejectionReason(sourceCounter, "supplier_wave_policy_rejected");

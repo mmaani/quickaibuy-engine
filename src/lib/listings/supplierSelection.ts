@@ -1,4 +1,4 @@
-import { computeSupplierIntelligenceSignal } from "@/lib/suppliers/intelligence";
+import { computeSupplierIntelligenceSignal, shouldRejectSupplierEarly } from "@/lib/suppliers/intelligence";
 
 type SupplierSelectionRow = {
   candidateId: string;
@@ -25,6 +25,7 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
 }
 
 function toPositiveNumber(value: unknown): number | null {
+  if (value == null) return null;
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return parsed;
@@ -40,6 +41,7 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   const marginPct = toNum(row.marginPct) ?? 0;
   const mediaQuality = toNum(payload?.mediaQualityScore) ?? 0.5;
   const availabilityConfidence = toNum(payload?.availabilityConfidence) ?? 0.5;
+  const destinationCountry = "US";
   const shippingMin =
     toPositiveNumber(payload?.deliveryEstimateMinDays) ??
     toPositiveNumber(payload?.delivery_estimate_min_days) ??
@@ -51,11 +53,12 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   const shippingDays = Math.max(shippingMin, shippingMax);
   const shippingPenalty = Math.min(0.25, shippingDays / 100);
   const priceComponent = supplierPrice > 0 ? Math.min(0.25, 1 / Math.max(1, supplierPrice / 10)) : 0;
-  const marginComponent = Math.max(0, Math.min(0.25, marginPct / 200));
-  const mediaComponent = Math.max(0, Math.min(0.25, mediaQuality * 0.25));
-  const stockReliabilityComponent = Math.max(0, Math.min(0.25, availabilityConfidence * 0.25));
+  const marginComponent = Math.max(0, Math.min(0.18, marginPct / 220));
+  const mediaComponent = Math.max(0, Math.min(0.12, mediaQuality * 0.12));
+  const stockReliabilityComponent = Math.max(0, Math.min(0.12, availabilityConfidence * 0.12));
   const intelligence = computeSupplierIntelligenceSignal({
     supplierKey: String(row.supplierKey ?? payload?.supplierKey ?? ""),
+    destinationCountry,
     availabilitySignal: payload?.availabilitySignal ?? payload?.availability_status,
     availabilityConfidence,
     shippingEstimates: row.shippingEstimates ?? payload?.shippingEstimates ?? payload?.shipping_estimates,
@@ -63,8 +66,26 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
     shippingConfidence: payload?.shippingConfidence ?? payload?.shipping_confidence,
     snapshotQuality: payload?.snapshotQuality ?? payload?.snapshot_quality,
   });
-  const supplierIntelligenceComponent = intelligence.reliabilityScore * 0.3;
-  const aliExpressPenalty = intelligence.shouldDeprioritize ? 0.18 : 0;
+  const earlyReject = shouldRejectSupplierEarly({
+    supplierKey: String(row.supplierKey ?? payload?.supplierKey ?? ""),
+    destinationCountry,
+    availabilitySignal: payload?.availabilitySignal ?? payload?.availability_status,
+    availabilityConfidence,
+    shippingEstimates: row.shippingEstimates ?? payload?.shippingEstimates ?? payload?.shipping_estimates,
+    rawPayload: payload,
+    shippingConfidence: payload?.shippingConfidence ?? payload?.shipping_confidence,
+    snapshotQuality: payload?.snapshotQuality ?? payload?.snapshot_quality,
+    minimumReliabilityScore: 0.58,
+  });
+  if (earlyReject.reject) {
+    return Number((-1 - intelligence.reliabilityScore).toFixed(6));
+  }
+  const supplierIntelligenceComponent = intelligence.reliabilityScore * 0.32;
+  const originComponent = intelligence.originAvailabilityRate * 0.18;
+  const shippingComponent = intelligence.shippingTransparencyRate * 0.14;
+  const usPriorityComponent = intelligence.usMarketPriority * 0.16;
+  const rateLimitPenalty = intelligence.rateLimitPressure * 0.14;
+  const aliExpressPenalty = intelligence.shouldDeprioritize ? 0.22 : 0;
 
   return Number(
     (
@@ -73,6 +94,10 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
       mediaComponent +
       stockReliabilityComponent +
       supplierIntelligenceComponent -
+      rateLimitPenalty +
+      originComponent +
+      shippingComponent +
+      usPriorityComponent -
       shippingPenalty -
       aliExpressPenalty
     ).toFixed(6)
