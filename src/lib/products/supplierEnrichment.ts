@@ -78,6 +78,12 @@ function asPositiveNumber(value: unknown): number | null {
   return parsed != null && parsed > 0 ? parsed : null;
 }
 
+function nestedRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function sanitizeTitle(value: string | null): string | null {
   if (!value) return null;
   const cleaned = value
@@ -158,32 +164,40 @@ function deriveShippingDetails(
   shippingOriginEvidenceSource: string | null;
   shippingGuarantees: string | null;
 } {
+  const shippingNode = nestedRecord(rawPayload.shipping);
   const directConfidence = normalizeAvailabilityConfidence(rawPayload.shippingConfidence);
   const rawShippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
   const directMethod =
     asString(rawPayload.shippingMethod) ??
     asString(rawPayload.shippingBadge) ??
-    asString(rawPayload.shippingEvidenceText);
-  const directPrice = asString(rawPayload.shippingPriceExplicit);
-  const directCurrency = asString(rawPayload.shippingCurrency);
-  const directFree = asBoolean(rawPayload.freeShippingExplicit);
-  const directMin = asPositiveNumber(rawPayload.deliveryEstimateMinDays);
-  const directMax = asPositiveNumber(rawPayload.deliveryEstimateMaxDays);
+    asString(rawPayload.shippingEvidenceText) ??
+    asString(shippingNode?.method) ??
+    asString(shippingNode?.summary);
+  const directPrice = asString(rawPayload.shippingPriceExplicit) ?? asString(shippingNode?.price);
+  const directCurrency = asString(rawPayload.shippingCurrency) ?? asString(shippingNode?.currency);
+  const directFree = asBoolean(rawPayload.freeShippingExplicit) ?? asBoolean(shippingNode?.freeShipping);
+  const directMin = asPositiveNumber(rawPayload.deliveryEstimateMinDays) ?? asPositiveNumber(shippingNode?.etaMinDays);
+  const directMax = asPositiveNumber(rawPayload.deliveryEstimateMaxDays) ?? asPositiveNumber(shippingNode?.etaMaxDays);
   const directShipFromCountry =
     normalizeShipFromCountry(rawPayload.shipFromCountry) ??
     normalizeShipFromCountry(rawPayload.ship_from_country) ??
     normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
-    normalizeShipFromCountry(rawPayload.supplier_warehouse_country);
+    normalizeShipFromCountry(rawPayload.supplier_warehouse_country) ??
+    normalizeShipFromCountry(shippingNode?.shipFromCountry) ??
+    normalizeShipFromCountry(shippingNode?.ship_from_country);
   const directShipFromLocation =
     asString(rawPayload.shipFromLocation) ??
     asString(rawPayload.ship_from_location) ??
-    asString(rawPayload.shipsFromHint);
+    asString(rawPayload.shipsFromHint) ??
+    asString(shippingNode?.shipFromLocation) ??
+    asString(shippingNode?.ship_from_location);
   const directSupplierWarehouseCountry =
     normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
     normalizeShipFromCountry(rawPayload.supplier_warehouse_country);
   const directShippingGuarantees =
     asString(rawPayload.shippingGuarantees) ??
-    asString(rawPayload.shippingGuarantee);
+    asString(rawPayload.shippingGuarantee) ??
+    asString(shippingNode?.guarantees);
 
   const estimate = shippingEstimates.find((candidate) => {
     const label = String(candidate.label ?? "").toLowerCase();
@@ -232,6 +246,13 @@ function deriveShippingDetails(
     deliveryEstimateMaxDays != null ||
     shipFromCountry != null ||
     shipFromLocation != null;
+  const transparencyMarkers = [
+    asString(rawPayload.shippingTransparencyState),
+    asString(rawPayload.shippingDestinationCountry),
+    asString(rawPayload.shipping_destination_country),
+    asString(shippingNode?.destinationCountry),
+    asString(shippingNode?.destination_country),
+  ].filter(Boolean);
 
   let shippingConfidence =
     directConfidence ??
@@ -239,7 +260,7 @@ function deriveShippingDetails(
       ? 0.9
       : rawShippingSignal === "DIRECT" || rawShippingSignal === "PRESENT"
         ? 0.78
-        : rawShippingSignal === "PARTIAL" || shipFromCountry != null || shipFromLocation != null
+        : rawShippingSignal === "PARTIAL" || shipFromCountry != null || shipFromLocation != null || transparencyMarkers.length > 0
           ? 0.58
       : shippingMethod && /(dollar express|choice|free shipping|fast delivery|express)/i.test(shippingMethod)
         ? 0.78
@@ -253,6 +274,9 @@ function deriveShippingDetails(
 
   if (freeShippingExplicit === true && shippingConfidence < 0.82) {
     shippingConfidence = 0.82;
+  }
+  if (transparencyMarkers.length > 0 && shippingConfidence < 0.72) {
+    shippingConfidence = 0.72;
   }
 
   const shippingSignal =
@@ -334,7 +358,11 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
   const availabilityConfidence = normalizeAvailabilityConfidence(
     input.availabilityConfidence ?? rawPayload.availabilityConfidence
   );
-  const stockCount = asPositiveNumber(rawPayload.stockCount);
+  const stockCount =
+    asPositiveNumber(rawPayload.stockCount) ??
+    asPositiveNumber(rawPayload.availableQuantity) ??
+    asPositiveNumber(rawPayload.inventoryCount) ??
+    asPositiveNumber(nestedRecord(rawPayload.availability)?.stockCount);
   const evidenceSource =
     asString(rawPayload.evidenceSource) ??
     asString(rawPayload.provider) ??

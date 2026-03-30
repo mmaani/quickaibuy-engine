@@ -26,6 +26,9 @@ export const BLOCKING_RISK_FLAGS = new Set([
   "LOW_MATCH_CONFIDENCE",
   "MISSING_SHIPPING_ESTIMATE",
   "SHIPPING_SIGNAL_MISSING",
+  "SHIPPING_TRANSPARENCY_INCOMPLETE",
+  "SHIP_FROM_MISSING",
+  "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT",
   "SHIPPING_SIGNAL_WEAK",
   "BRAND_OR_RESTRICTED_TITLE",
   "DUPLICATE_CANDIDATE_PATTERN",
@@ -39,8 +42,12 @@ export const BLOCKING_RISK_FLAGS = new Set([
   "SOURCE_CHALLENGE_PAGE",
   "SOURCE_PROVIDER_BLOCK",
   "SUPPLIER_BLOCKED",
+  "MEDIA_MISSING",
+  "MEDIA_PRESENT_QUALITY_WEAK",
   "MEDIA_SIGNAL_WEAK",
   "SUPPLIER_SIGNAL_INSUFFICIENT",
+  "UNKNOWN_AVAILABILITY",
+  "LOW_CONFIDENCE_AVAILABILITY",
 ]);
 
 type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -403,7 +410,12 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     estimatedShipping === undefined ||
     Number.isNaN(estimatedShipping)
   ) {
-    if (!supplierEvidence.codes.includes("SOURCE_CHALLENGE_PAGE") && !supplierEvidence.codes.includes("SOURCE_PROVIDER_BLOCK")) {
+    if (
+      !supplierEvidence.codes.includes("SOURCE_CHALLENGE_PAGE") &&
+      !supplierEvidence.codes.includes("SOURCE_PROVIDER_BLOCK") &&
+      !supplierEvidence.codes.includes("SHIPPING_TRANSPARENCY_INCOMPLETE") &&
+      !supplierEvidence.codes.includes("SHIPPING_SIGNAL_WEAK")
+    ) {
       flags.add("SHIPPING_SIGNAL_MISSING");
     }
   } else {

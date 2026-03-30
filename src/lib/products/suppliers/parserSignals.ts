@@ -86,10 +86,13 @@ export function extractShippingEvidence(rawText: string): {
   }
 
   const shippingTextMatch = compact.match(
-    /(free shipping|shipping[:=]?\s*\$?\d+(?:\.\d{1,2})?|delivery[:=]?\s*\d+\s*(?:-|to)\s*\d+\s*(?:business\s*)?days|ships within\s+\d+\s+(?:business\s*)?days|arrives? (?:by|in|within)\s+[a-z0-9 ,\-]+|fast delivery|choice|aliexpress standard shipping|cainiao|e[- ]?packet|dollar express|standard shipping|us warehouse delivery)/i
+    /(free shipping|shipping(?: to [a-z ]+)?[:=]?\s*\$?\d+(?:\.\d{1,2})?|delivery(?: to [a-z ]+)?[:=]?\s*\d+\s*(?:-|to)\s*\d+\s*(?:business\s*)?days|ships within\s+\d+\s+(?:business\s*)?days|arrives? (?:by|in|within)\s+[a-z0-9 ,\-]+|estimated delivery[:=]?\s*(?:\d+\s*(?:-|to)\s*\d+\s*days|[a-z]{3,9}\s+\d{1,2})|fast delivery|choice|aliexpress standard shipping|cainiao|e[- ]?packet|dollar express|standard shipping|us warehouse delivery)/i
   );
-  const shipsFromMatch = compact.match(/ships from\s+([a-z][a-z ,.\-]{1,40})/i);
-  const shipFromCountryMatch = compact.match(/ship(?:s|ping)? from\s+(united states|usa|us|china|cn|poland|pl|germany|de)\b/i);
+  const shipsFromMatch = compact.match(/(?:ships?|shipping)\s+from\s+([a-z][a-z ,.\-]{1,60})/i);
+  const shipFromCountryMatch = compact.match(
+    /(?:ship(?:s|ping)? from|warehouse(?: location)?(?: in)?|dispatch(?:ed)? from)\s+(united states|usa|us|china|cn|poland|pl|germany|de|spain|es|france|fr|italy|it|czech republic|cz|turkey|tr|united kingdom|uk)\b/i
+  );
+  const destinationMatch = compact.match(/(?:ship(?:ping)? to|delivery to)\s+(united states|usa|us|canada|ca|united kingdom|uk|australia|au|europe|eu)\b/i);
   const warehouseMatch = compact.match(
     /(warehouse(?:s)?(?: in| service for product preparation, including warehouses in)?\s+[a-z][a-z ,.\-]{1,80})/i
   );
@@ -124,7 +127,9 @@ export function extractShippingEvidence(rawText: string): {
           etaMinDays: etaMatch ? Number(etaMatch[1]) : null,
           etaMaxDays: etaMatch ? Number(etaMatch[2] ?? etaMatch[1]) : null,
           ship_from_country: shipFromCountry,
-          ship_from_location: shipFromLocation,
+          ship_from_location:
+            shipFromLocation ??
+            (destinationMatch?.[1] ? `destination ${sliceEvidence(destinationMatch[1])}` : null),
         }
       : null;
 
