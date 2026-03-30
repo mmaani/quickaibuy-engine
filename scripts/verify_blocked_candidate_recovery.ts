@@ -53,7 +53,10 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function asFiniteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  const parsed = Number(String(value ?? "").trim());
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -61,6 +64,21 @@ function asString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function mediaImageArraysFromPayload(payload: JsonRecord | null): unknown[] {
+  const media = asRecord(payload?.media);
+  return [
+    ...(Array.isArray(payload?.images) ? payload.images : []),
+    ...(Array.isArray(payload?.imageGallery) ? payload.imageGallery : []),
+    ...(Array.isArray(payload?.galleryImages) ? payload.galleryImages : []),
+    ...(Array.isArray(payload?.variantImages) ? payload.variantImages : []),
+    ...(Array.isArray(payload?.descriptionImages) ? payload.descriptionImages : []),
+    ...(Array.isArray(media?.images) ? (media.images as unknown[]) : []),
+    ...(Array.isArray(media?.galleryImages) ? (media.galleryImages as unknown[]) : []),
+    ...(Array.isArray(media?.variantImages) ? (media.variantImages as unknown[]) : []),
+    ...(Array.isArray(media?.descriptionImages) ? (media.descriptionImages as unknown[]) : []),
+  ];
 }
 
 function parseCodes(listingBlockReason: unknown): string[] {
@@ -170,21 +188,27 @@ function classifyShipping(codes: string[], estimatedFees: unknown) {
   const shippingPresent = hasCanonicalShipping && hasShippingSignal;
 
   let shippingBlockReason: "SHIPPING_MISSING" | "SHIPPING_PRESENT_BUT_ORIGIN_UNRESOLVED" | "SHIPPING_TRANSPARENCY_INCOMPLETE" | null = null;
-  if (!shippingPresent || codes.includes("SHIPPING_SIGNAL_MISSING")) {
-    shippingBlockReason = "SHIPPING_MISSING";
-  } else if (
+  if (
+    shippingPresent &&
+    (
     codes.includes("MISSING_SHIP_FROM_COUNTRY") ||
     codes.includes("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT") ||
     shippingErrorReason === "MISSING_SHIP_FROM_COUNTRY" ||
     (!originCountry && originValidity === "WEAK_OR_UNRESOLVED")
+    )
   ) {
     shippingBlockReason = "SHIPPING_PRESENT_BUT_ORIGIN_UNRESOLVED";
   } else if (
-    shippingTransparencyState === "MISSING" ||
-    codes.includes("SHIPPING_TRANSPARENCY_INCOMPLETE") ||
-    shippingErrorReason === "MISSING_SHIPPING_TRANSPARENCY"
+    shippingPresent &&
+    (
+      shippingTransparencyState === "MISSING" ||
+      codes.includes("SHIPPING_TRANSPARENCY_INCOMPLETE") ||
+      shippingErrorReason === "MISSING_SHIPPING_TRANSPARENCY"
+    )
   ) {
     shippingBlockReason = "SHIPPING_TRANSPARENCY_INCOMPLETE";
+  } else if (!shippingPresent || codes.includes("SHIPPING_SIGNAL_MISSING")) {
+    shippingBlockReason = "SHIPPING_MISSING";
   }
 
   const explanation =
@@ -212,10 +236,15 @@ function classifyMedia(codes: string[], estimatedFees: unknown) {
   const fees = asRecord(estimatedFees);
   const payload = asRecord(fees?.supplierRawPayload) ?? asRecord(fees?.sourcePayload);
   const media = asRecord(payload?.media);
-  const images = Array.isArray(payload?.images) ? payload.images : [];
+  const images = mediaImageArraysFromPayload(payload);
   const imageCount =
     asFiniteNumber(payload?.imageGalleryCount) ?? asFiniteNumber(media?.imageCount) ?? images.length;
-  const videoCount = asFiniteNumber(payload?.videoCount) ?? asFiniteNumber(media?.videoCount) ?? 0;
+  const videoCount = Math.max(
+    asFiniteNumber(payload?.videoCount) ?? 0,
+    asFiniteNumber(media?.videoCount) ?? 0,
+    Array.isArray(payload?.videoUrls) ? payload.videoUrls.length : 0,
+    Array.isArray(media?.videoUrls) ? (media.videoUrls as unknown[]).length : 0
+  );
   const mediaPresent = (imageCount ?? 0) > 0 || (videoCount ?? 0) > 0;
 
   const weakMedia =
@@ -309,6 +338,7 @@ function parseStages(details: unknown) {
       status: String(entry.status ?? ""),
       reasonCode: entry.reasonCode ?? null,
       counts: asRecord(entry.counts) ?? {},
+      details: asRecord(entry.details) ?? null,
     }));
 }
 
@@ -517,9 +547,29 @@ async function resolveCandidates(client: pg.Client, options: Options): Promise<C
 
 async function main() {
   const options = parseArgs();
+  let databaseUrl: string;
+  try {
+    databaseUrl = getRequiredDatabaseUrl();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(
+      JSON.stringify(
+        {
+          ok: false,
+          error: "DB_RUNTIME_UNAVAILABLE",
+          message:
+            "Validation requires a DB-enabled runtime with DATABASE_URL or DATABASE_URL_DIRECT configured.",
+          detail,
+        },
+        null,
+        2
+      )
+    );
+    process.exit(2);
+  }
 
   const client = new Client({
-    connectionString: getRequiredDatabaseUrl(),
+    connectionString: databaseUrl,
     ssl: { rejectUnauthorized: false },
   });
 
@@ -630,7 +680,9 @@ async function main() {
         lastRecoveryAttempt: latestRecoveryAttempt ?? null,
         recoveryStageOutput: {
           blockedOutcomes:
-            shippingStage?.counts.blockedOutcomes ?? profitStage?.counts.blockedOutcomes ?? null,
+            (Array.isArray(shippingStage?.details?.blockedOutcomes)
+              ? shippingStage?.details?.blockedOutcomes
+              : null) ?? null,
           persistedQuotes: shippingStage?.counts.persistedQuotes ?? null,
           recomputedCandidates:
             profitStage?.counts.recomputedCandidates ?? matchStage?.counts.recomputedCandidates ?? null,

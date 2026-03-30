@@ -73,3 +73,48 @@ test("resolveShipFromOrigin keeps weak/unresolved state for destination-mismatch
   assert.equal(result.originValidity, "WEAK_OR_UNRESOLVED");
   assert.equal(result.unresolvedReason, "NO_SHIP_FROM_EVIDENCE_FOUND");
 });
+
+test("resolveShipFromOrigin uses structured shipping nodes from supplier payloads", () => {
+  const result = resolveShipFromOrigin({
+    destinationCountry: "US",
+    rawPayload: {
+      shipping: {
+        options: [
+          {
+            destinationCountry: "US",
+            shipFromCountry: "CN",
+            method: "AliExpress Standard Shipping",
+          },
+        ],
+        warehouses: [{ warehouseCountry: "CN" }],
+        variantOrigins: [{ shipFromCountry: "CN" }],
+      },
+    },
+  });
+
+  assert.equal(result.originCountry, "CN");
+  assert.ok(result.originConfidence >= 0.9);
+  assert.equal(result.originValidity, "EXPLICIT");
+  assert.equal(result.unresolvedReason, null);
+});
+
+test("resolveShipFromOrigin accepts logistics and warehouse aliases without guessing", () => {
+  const result = resolveShipFromOrigin({
+    destinationCountry: "US",
+    rawPayload: {
+      logistics_origin_country: "CN",
+      shipping: {
+        warehouses: [
+          {
+            destinationCountry: "US",
+            warehouseCode: "CN",
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(result.originCountry, "CN");
+  assert.equal(result.originValidity, "EXPLICIT");
+  assert.ok(result.evidence.some((entry) => entry.path.includes("warehouse")));
+});

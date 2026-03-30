@@ -96,9 +96,21 @@ function collectFromNode(
       normalizedKey.includes("ship_from") ||
       normalizedKey.includes("origin") ||
       normalizedKey.includes("warehouse") ||
+      normalizedKey.includes("dispatchfrom") ||
+      normalizedKey.includes("dispatch_from") ||
+      normalizedKey.includes("deliveryfrom") ||
+      normalizedKey.includes("delivery_from") ||
+      normalizedKey.includes("fulfillmentcountry") ||
+      normalizedKey.includes("fulfillment_country") ||
+      normalizedKey.includes("inventorycountry") ||
+      normalizedKey.includes("inventory_country") ||
+      normalizedKey.includes("logisticsorigin") ||
+      normalizedKey.includes("logistics_origin") ||
       normalizedKey.includes("shipsfrom") ||
       normalizedKey.includes("fromcountry") ||
       normalizedKey.includes("from_country") ||
+      normalizedKey.includes("sendcountry") ||
+      normalizedKey.includes("sendercountry") ||
       normalizedKey.includes("sellercountry") ||
       normalizedKey.includes("storecountry");
     if (isOriginSignal) {

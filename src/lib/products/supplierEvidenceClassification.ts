@@ -40,7 +40,10 @@ function asString(value: unknown): string | null {
 
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  const parsed = Number(String(value ?? "").trim());
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -48,6 +51,10 @@ function nestedRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function hasNonEmptyArray(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
 }
 
 function hasMeaningfulShippingEstimate(value: ShippingEstimate[] | unknown): boolean {
@@ -147,10 +154,19 @@ export function classifySupplierEvidence(
   if (!codes.has("SOURCE_PROVIDER_BLOCK") && !codes.has("SOURCE_CHALLENGE_PAGE") && !codes.has("SUPPLIER_BLOCKED")) {
     const shippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
     const shippingNode = nestedRecord(rawPayload.shipping);
+    const hasStructuredShippingNode =
+      shippingNode != null &&
+      Object.values(shippingNode).some((value) => {
+        if (Array.isArray(value)) return value.length > 0;
+        if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>).length > 0;
+        return value != null && String(value).trim() !== "";
+      });
     const destinationContextPresent =
       asString(rawPayload.shippingDestinationCountry) != null ||
       asString(rawPayload.shipping_destination_country) != null ||
-      asString(rawPayload.destinationCountry) != null;
+      asString(rawPayload.destinationCountry) != null ||
+      asString(shippingNode?.destinationCountry) != null ||
+      asString(shippingNode?.destination_country) != null;
     const shipFromCountry =
       asString(rawPayload.shipFromCountry) ??
       asString(rawPayload.ship_from_country) ??
@@ -187,6 +203,7 @@ export function classifySupplierEvidence(
     ].some((estimate) => asString(estimate?.ship_from_country) != null || asString(estimate?.ship_from_location) != null);
     const hasTransparentShippingEvidence =
       hasShippingEstimate ||
+      hasStructuredShippingNode ||
       (shippingEvidenceText != null &&
         (shippingEvidenceText.toLowerCase().includes("delivery") ||
           shippingEvidenceText.toLowerCase().includes("arrive") ||
@@ -197,11 +214,14 @@ export function classifySupplierEvidence(
       shippingSignal === "INFERRED" ||
       asString(rawPayload.shippingTransparencyState)?.toUpperCase() === "INCOMPLETE";
 
-    if (shippingSignal === "MISSING" || (!hasShippingEstimate && !shippingEvidenceText && (shippingConfidence ?? 0) < 0.35)) {
+    if (
+      (shippingSignal === "MISSING" && !hasTransparentShippingEvidence && !hasShipFromEvidence) ||
+      (!hasShippingEstimate && !shippingEvidenceText && !hasStructuredShippingNode && (shippingConfidence ?? 0) < 0.35)
+    ) {
       codes.add("SHIPPING_SIGNAL_MISSING");
     } else if (
       shippingSignal === "INFERRED" ||
-      (!hasShippingEstimate && Boolean(shippingEvidenceText)) ||
+      (!hasShippingEstimate && !hasStructuredShippingNode && Boolean(shippingEvidenceText)) ||
       (shippingConfidence != null && shippingConfidence < 0.75)
     ) {
       codes.add("SHIPPING_SIGNAL_WEAK");
@@ -221,21 +241,41 @@ export function classifySupplierEvidence(
       asNumber(rawPayload.mediaQualityScore) ??
       asNumber(mediaNode?.qualityScore) ??
       asNumber(mediaNode?.score);
+    const structuredImageCount = new Set(
+      [
+        ...(Array.isArray(rawPayload.images) ? rawPayload.images : []),
+        ...(hasNonEmptyArray(rawPayload.imageGallery) ? (rawPayload.imageGallery as unknown[]) : []),
+        ...(hasNonEmptyArray(rawPayload.galleryImages) ? (rawPayload.galleryImages as unknown[]) : []),
+        ...(hasNonEmptyArray(rawPayload.variantImages) ? (rawPayload.variantImages as unknown[]) : []),
+        ...(hasNonEmptyArray(rawPayload.descriptionImages) ? (rawPayload.descriptionImages as unknown[]) : []),
+        ...(Array.isArray(mediaNode?.images) ? (mediaNode?.images as unknown[]) : []),
+        ...(Array.isArray(mediaNode?.galleryImages) ? (mediaNode?.galleryImages as unknown[]) : []),
+        ...(Array.isArray(mediaNode?.variantImages) ? (mediaNode?.variantImages as unknown[]) : []),
+        ...(Array.isArray(mediaNode?.descriptionImages) ? (mediaNode?.descriptionImages as unknown[]) : []),
+      ]
+        .map((value) => asString(value) ?? JSON.stringify(value))
+        .filter(Boolean)
+    ).size;
     const imageCount = input.imageCount ??
       asNumber(rawPayload.imageGalleryCount) ??
       asNumber(mediaNode?.imageCount) ??
-      (Array.isArray(rawPayload.images) ? rawPayload.images.length : null);
+      (structuredImageCount > 0 ? structuredImageCount : null);
     const videoCount =
       asNumber(rawPayload.videoCount) ??
       asNumber(mediaNode?.videoCount) ??
-      (Array.isArray(rawPayload.videoUrls) ? rawPayload.videoUrls.length : null);
-    const mediaPresent = (imageCount != null && imageCount > 0) || (videoCount != null && videoCount > 0);
+      (Array.isArray(rawPayload.videoUrls)
+        ? rawPayload.videoUrls.length
+        : Array.isArray(mediaNode?.videoUrls)
+          ? mediaNode.videoUrls.length
+          : null);
+    const effectiveImageCount = imageCount ?? (structuredImageCount > 0 ? structuredImageCount : null);
+    const mediaPresent = (effectiveImageCount != null && effectiveImageCount > 0) || (videoCount != null && videoCount > 0);
     if (!mediaPresent) {
       codes.add("MEDIA_MISSING");
     }
     if (
       (mediaQualityScore != null && mediaQualityScore < 0.82) ||
-      (imageCount != null && imageCount > 0 && imageCount < 3 && (videoCount ?? 0) <= 0) ||
+      (effectiveImageCount != null && effectiveImageCount > 0 && effectiveImageCount < 3 && (videoCount ?? 0) <= 0) ||
       input.sourceQuality === "LOW" ||
       input.sourceQuality === "STUB"
     ) {

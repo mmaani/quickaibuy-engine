@@ -65,6 +65,83 @@ test("missing media is distinct from weak media quality", () => {
   assert.equal(weakMedia.codes.includes("MEDIA_MISSING"), false);
 });
 
+test("structured shipping evidence does not regress to shipping missing when origin is unresolved", () => {
+  const result = classifySupplierEvidence({
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.92,
+    shippingConfidence: 0.72,
+    sourceQuality: "HIGH",
+    rawPayload: {
+      shippingSignal: "MISSING",
+      shippingDestinationCountry: "US",
+      actionableSnapshot: true,
+      shipping: {
+        options: [
+          {
+            destinationCountry: "US",
+            method: "AliExpress Standard Shipping",
+            etaMinDays: 7,
+            etaMaxDays: 11,
+          },
+        ],
+      },
+    },
+    telemetrySignals: ["parsed"],
+  });
+
+  assert.equal(result.codes.includes("SHIPPING_SIGNAL_MISSING"), false);
+  assert.equal(result.codes.includes("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT"), true);
+});
+
+test("structured media arrays count as present media evidence", () => {
+  const result = classifySupplierEvidence({
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.91,
+    shippingEstimates: [{ label: "AliExpress Standard Shipping", cost: "4.22" }],
+    shippingConfidence: 0.86,
+    sourceQuality: "HIGH",
+    rawPayload: {
+      shippingSignal: "DIRECT",
+      actionableSnapshot: true,
+      imageGalleryCount: 3,
+      galleryImages: ["https://cdn.example.com/a.jpg"],
+      variantImages: ["https://cdn.example.com/b.jpg"],
+      descriptionImages: ["https://cdn.example.com/c.jpg"],
+      media: {
+        imageCount: 3,
+      },
+    },
+    telemetrySignals: ["parsed"],
+  });
+
+  assert.equal(result.codes.includes("MEDIA_MISSING"), false);
+});
+
+test("nested media arrays count as canonical media evidence", () => {
+  const result = classifySupplierEvidence({
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.91,
+    shippingEstimates: [{ label: "AliExpress Standard Shipping", cost: "4.22" }],
+    shippingConfidence: 0.86,
+    sourceQuality: "HIGH",
+    rawPayload: {
+      shippingSignal: "DIRECT",
+      actionableSnapshot: true,
+      media: {
+        galleryImages: ["https://cdn.example.com/a.jpg"],
+        variantImages: ["https://cdn.example.com/b.jpg"],
+        descriptionImages: ["https://cdn.example.com/c.jpg"],
+        videoUrls: ["https://cdn.example.com/demo.mp4"],
+        imageCount: 3,
+        videoCount: 1,
+      },
+    },
+    telemetrySignals: ["parsed"],
+  });
+
+  assert.equal(result.codes.includes("MEDIA_MISSING"), false);
+});
+
 
 test("parser extracts ship-from and destination-aware shipping evidence", () => {
   const shipping = extractShippingEvidence(

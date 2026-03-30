@@ -11,6 +11,30 @@ import {
 import { fetchSupplierPageWithFallback } from "./fetchWithFallback";
 
 const MAX_RESULTS = 20;
+const ALIEXPRESS_COUNTRY_PATTERN =
+  /(united states|usa|us|china|cn|poland|pl|germany|de|spain|es|france|fr|italy|it|czech republic|cz|turkey|tr|united kingdom|uk|canada|ca|australia|au|mexico|mx|netherlands|nl|belgium|be)/i;
+
+type AliExpressStructuredShippingNode = {
+  path: string;
+  shipFromCountry: string | null;
+  shipFromLocation: string | null;
+  destinationCountry: string | null;
+  method: string | null;
+  cost: string | null;
+  currency: string | null;
+  etaMinDays: number | null;
+  etaMaxDays: number | null;
+  evidenceText: string | null;
+};
+
+type AliExpressStructuredMediaEvidence = {
+  galleryImages: string[];
+  variantImages: string[];
+  descriptionImages: string[];
+  videoUrls: string[];
+  allImages: string[];
+  extractionPaths: string[];
+};
 
 function looksLikeAliExpressChallengePage(text: string): boolean {
   const compact = compactText(text).toLowerCase();
@@ -309,13 +333,371 @@ function extractDetailTitle(text: string): string | null {
 }
 
 function extractDetailImages(text: string): string[] {
-  const matches = Array.from(
-    String(text ?? "").matchAll(/https?:\/\/[^\s)"']*(?:aliexpress-media\.com|alicdn\.com)[^\s)"']*/gi)
-  )
-    .map((match) => String(match[0] ?? "").replace(/^http:\/\//i, "https://"))
-    .filter((url) => /\.(jpg|jpeg|png|webp|avif)/i.test(url));
+  return extractAliExpressMediaEvidence(text).allImages;
+}
 
-  return Array.from(new Set(matches)).slice(0, 48);
+function normalizeAliExpressAssetUrl(url: string): string | null {
+  const normalized = String(url ?? "")
+    .trim()
+    .replace(/^http:\/\//i, "https://")
+    .replace(/[)"',.;]+$/g, "");
+  if (!/^https?:\/\//i.test(normalized)) return null;
+  return normalized;
+}
+
+function dedupeUrls(urls: string[]): string[] {
+  return Array.from(new Set(urls.map((url) => normalizeAliExpressAssetUrl(url)).filter((value): value is string => Boolean(value))));
+}
+
+function extractCountryFromWindow(windowText: string, labels: string[]): string | null {
+  for (const label of labels) {
+    const match = windowText.match(
+      new RegExp(`${label}[^a-zA-Z]{0,20}${ALIEXPRESS_COUNTRY_PATTERN.source}`, "i")
+    );
+    const country = match?.[1] ?? match?.[2];
+    if (country) {
+      const normalized = compactText(country);
+      if (normalized) {
+        const resolved = extractShippingEvidence(`${label} ${country}`).shipFromCountry;
+        if (resolved) return resolved;
+      }
+    }
+  }
+  return null;
+}
+
+function extractLocationFromWindow(windowText: string, labels: string[]): string | null {
+  for (const label of labels) {
+    const match = windowText.match(
+      new RegExp(`${label}[^a-zA-Z]{0,20}([a-z][a-z0-9 ,.&\\-]{2,80})`, "i")
+    );
+    if (match?.[1]) return sliceEvidence(match[1], 120);
+  }
+  return null;
+}
+
+function classifyAliExpressShippingPath(windowText: string): string {
+  const lower = compactText(windowText).toLowerCase();
+  if (/(sku|variant|propertyvalue|skuattr|skuinfo)/i.test(lower)) return "shipping.variants";
+  if (/(warehouse|fulfillment|inventory)/i.test(lower)) return "shipping.warehouses";
+  if (/(route|logistic|deliveryoption|deliverydetail|freight|shippingoption|transit)/i.test(lower)) {
+    return "shipping.routes";
+  }
+  return "shipping.options";
+}
+
+function extractAliExpressStructuredShipping(text: string): {
+  options: AliExpressStructuredShippingNode[];
+  routes: AliExpressStructuredShippingNode[];
+  warehouses: AliExpressStructuredShippingNode[];
+  variantOrigins: AliExpressStructuredShippingNode[];
+  shippingEstimates: SupplierProduct["shippingEstimates"];
+  extractionPaths: string[];
+} {
+  const sourceText = String(text ?? "");
+  if (!sourceText.trim()) {
+    return {
+      options: [],
+      routes: [],
+      warehouses: [],
+      variantOrigins: [],
+      shippingEstimates: [],
+      extractionPaths: [],
+    };
+  }
+
+  const nodes: AliExpressStructuredShippingNode[] = [];
+  const originFieldPattern = [
+    "shipFromCountry",
+    "ship_from_country",
+    "originCountry",
+    "origin_country",
+    "warehouseCountry",
+    "warehouse_country",
+    "warehouseCode",
+    "warehouse_code",
+    "fromCountry",
+    "from_country",
+    "sellerCountry",
+    "storeCountry",
+    "dispatchFromCountry",
+    "dispatch_from_country",
+    "deliveryFromCountry",
+    "delivery_from_country",
+    "fulfillmentCountry",
+    "fulfillment_country",
+    "inventoryCountry",
+    "inventory_country",
+    "logisticsOriginCountry",
+    "logistics_origin_country",
+    "logisticsOrigin",
+    "logistics_origin",
+    "sendCountry",
+    "senderCountry",
+  ].join("|");
+  const locationFieldPattern = [
+    "shipFrom",
+    "shipsFrom",
+    "ship_from",
+    "warehouseName",
+    "warehouse",
+    "warehouseLocation",
+    "dispatchFrom",
+    "dispatch_from",
+    "deliveryFrom",
+    "delivery_from",
+    "fromLocation",
+    "from_location",
+    "shipFromWarehouse",
+    "ship_from_warehouse",
+    "fulfillmentCenter",
+    "fulfillment_center",
+    "senderCity",
+    "sender_city",
+    "sendFrom",
+    "send_from",
+  ].join("|");
+  const explicitOriginRegex =
+    new RegExp(`(${originFieldPattern})\\W{0,20}(${ALIEXPRESS_COUNTRY_PATTERN.source})`, "gi");
+  const explicitLocationRegex =
+    new RegExp(`(${locationFieldPattern})\\W{0,20}([a-z][a-z0-9 ,.&\\-]{2,80})`, "gi");
+  const routeOriginRegex =
+    /((?:shippingOption|deliveryOption|deliveryDetail|freight|route|logistics)[a-z0-9_.-]*)\W{0,80}(?:originCountry|fromCountry|shipFromCountry|warehouseCountry)\W{0,20}(united states|usa|us|china|cn|poland|pl|germany|de|spain|es|france|fr|italy|it|czech republic|cz|turkey|tr|united kingdom|uk|canada|ca|australia|au|mexico|mx|netherlands|nl|belgium|be)/gi;
+
+  for (const match of sourceText.matchAll(explicitOriginRegex)) {
+    const index = match.index ?? 0;
+    const windowText = sourceText.slice(Math.max(0, index - 180), Math.min(sourceText.length, index + 260));
+    const parsed = extractShippingEvidence(windowText);
+    const shipFromCountry = parsed.shipFromCountry ?? extractShippingEvidence(`${match[1]} ${match[2]}`).shipFromCountry;
+    if (!shipFromCountry) continue;
+    nodes.push({
+      path: `${classifyAliExpressShippingPath(windowText)}.${match[1]}`,
+      shipFromCountry,
+      shipFromLocation:
+        parsed.shipFromLocation ??
+        extractLocationFromWindow(windowText, ["shipFrom", "ship_from", "warehouse", "dispatchFrom", "fromLocation"]),
+      destinationCountry: extractCountryFromWindow(windowText, [
+        "destinationCountry",
+        "destination_country",
+        "shipToCountry",
+        "ship_to_country",
+        "shipping to",
+        "delivery to",
+      ]),
+      method: parsed.shippingEstimates[0]?.label ?? null,
+      cost: parsed.shippingEstimates[0]?.cost ?? null,
+      currency: parsed.shippingEstimates[0]?.currency ?? null,
+      etaMinDays: parsed.shippingEstimates[0]?.etaMinDays ?? null,
+      etaMaxDays: parsed.shippingEstimates[0]?.etaMaxDays ?? null,
+      evidenceText: sliceEvidence(windowText, 180),
+    });
+  }
+
+  for (const match of sourceText.matchAll(explicitLocationRegex)) {
+    const index = match.index ?? 0;
+    const windowText = sourceText.slice(Math.max(0, index - 180), Math.min(sourceText.length, index + 260));
+    const parsed = extractShippingEvidence(windowText);
+    const location = sliceEvidence(match[2], 120);
+    const shipFromCountry = parsed.shipFromCountry ?? extractShippingEvidence(`${match[1]} ${location}`).shipFromCountry;
+    if (!shipFromCountry && !location) continue;
+    nodes.push({
+      path: `${classifyAliExpressShippingPath(windowText)}.${match[1]}`,
+      shipFromCountry,
+      shipFromLocation: parsed.shipFromLocation ?? location,
+      destinationCountry: extractCountryFromWindow(windowText, [
+        "destinationCountry",
+        "destination_country",
+        "shipToCountry",
+        "ship_to_country",
+        "shipping to",
+        "delivery to",
+      ]),
+      method: parsed.shippingEstimates[0]?.label ?? null,
+      cost: parsed.shippingEstimates[0]?.cost ?? null,
+      currency: parsed.shippingEstimates[0]?.currency ?? null,
+      etaMinDays: parsed.shippingEstimates[0]?.etaMinDays ?? null,
+      etaMaxDays: parsed.shippingEstimates[0]?.etaMaxDays ?? null,
+      evidenceText: sliceEvidence(windowText, 180),
+    });
+  }
+
+  for (const match of sourceText.matchAll(routeOriginRegex)) {
+    const index = match.index ?? 0;
+    const windowText = sourceText.slice(Math.max(0, index - 180), Math.min(sourceText.length, index + 260));
+    const parsed = extractShippingEvidence(windowText);
+    const shipFromCountry = parsed.shipFromCountry ?? extractShippingEvidence(`${match[1]} ${match[2]}`).shipFromCountry;
+    if (!shipFromCountry) continue;
+    nodes.push({
+      path: `${classifyAliExpressShippingPath(windowText)}.${match[1]}`,
+      shipFromCountry,
+      shipFromLocation:
+        parsed.shipFromLocation ??
+        extractLocationFromWindow(windowText, [
+          "warehouse",
+          "warehouseLocation",
+          "shipFrom",
+          "dispatchFrom",
+          "deliveryFrom",
+          "fulfillmentCenter",
+        ]),
+      destinationCountry: extractCountryFromWindow(windowText, [
+        "destinationCountry",
+        "destination_country",
+        "shipToCountry",
+        "ship_to_country",
+        "shipping to",
+        "delivery to",
+      ]),
+      method: parsed.shippingEstimates[0]?.label ?? null,
+      cost: parsed.shippingEstimates[0]?.cost ?? null,
+      currency: parsed.shippingEstimates[0]?.currency ?? null,
+      etaMinDays: parsed.shippingEstimates[0]?.etaMinDays ?? null,
+      etaMaxDays: parsed.shippingEstimates[0]?.etaMaxDays ?? null,
+      evidenceText: sliceEvidence(windowText, 180),
+    });
+  }
+
+  const dedupedNodes = Array.from(
+    new Map(
+      nodes.map((node) => [
+        [
+          node.path,
+          node.shipFromCountry ?? "",
+          node.shipFromLocation ?? "",
+          node.destinationCountry ?? "",
+          node.method ?? "",
+          node.cost ?? "",
+          node.etaMinDays ?? "",
+          node.etaMaxDays ?? "",
+        ].join("|"),
+        node,
+      ])
+    ).values()
+  );
+
+  const shippingEstimates = Array.from(
+    new Map(
+      dedupedNodes
+        .filter(
+          (node) =>
+            node.method != null ||
+            node.cost != null ||
+            node.etaMinDays != null ||
+            node.etaMaxDays != null ||
+            node.shipFromCountry != null ||
+            node.shipFromLocation != null
+        )
+        .map((node) => [
+          [
+            node.method ?? "shipping signal",
+            node.cost ?? "",
+            node.currency ?? "",
+            node.etaMinDays ?? "",
+            node.etaMaxDays ?? "",
+            node.shipFromCountry ?? "",
+            node.shipFromLocation ?? "",
+          ].join("|"),
+          {
+            label: node.method ?? "shipping signal",
+            cost: node.cost,
+            currency: node.currency,
+            etaMinDays: node.etaMinDays,
+            etaMaxDays: node.etaMaxDays,
+            ship_from_country: node.shipFromCountry,
+            ship_from_location: node.shipFromLocation,
+          },
+        ])
+    ).values()
+  ).slice(0, 12);
+
+  const options = dedupedNodes.filter((node) => node.path.startsWith("shipping.options"));
+  const routes = dedupedNodes.filter((node) => node.path.startsWith("shipping.routes"));
+  const warehouses = dedupedNodes.filter((node) => node.path.startsWith("shipping.warehouses"));
+  const variantOrigins = dedupedNodes.filter((node) => node.path.startsWith("shipping.variants"));
+
+  return {
+    options,
+    routes,
+    warehouses,
+    variantOrigins,
+    shippingEstimates,
+    extractionPaths: dedupedNodes.map((node) => node.path),
+  };
+}
+
+function extractAliExpressMediaEvidence(text: string): AliExpressStructuredMediaEvidence {
+  const sourceText = String(text ?? "");
+  if (!sourceText.trim()) {
+    return {
+      galleryImages: [],
+      variantImages: [],
+      descriptionImages: [],
+      videoUrls: [],
+      allImages: [],
+      extractionPaths: [],
+    };
+  }
+
+  const galleryImages: string[] = [];
+  const variantImages: string[] = [];
+  const descriptionImages: string[] = [];
+  const videoUrls: string[] = [];
+  const extractionPaths = new Set<string>();
+
+  for (const match of sourceText.matchAll(/https?:\/\/[^\s)"']+/gi)) {
+    const url = normalizeAliExpressAssetUrl(match[0] ?? "");
+    if (!url) continue;
+    const index = match.index ?? 0;
+    const windowText = sourceText.slice(Math.max(0, index - 140), Math.min(sourceText.length, index + 160));
+    const lower = windowText.toLowerCase();
+    const isVideo =
+      /\.(mp4|webm|m3u8)(?:$|\?)/i.test(url) ||
+      /(video|playurl|videourl|videoid|videoPath|videoUid)/i.test(windowText);
+    const isImage =
+      /\.(jpg|jpeg|png|webp|avif)(?:$|\?)/i.test(url) ||
+      /(?:aliexpress-media\.com|alicdn\.com)/i.test(url) ||
+      /(image|img|gallery|photo|picture|sku|variant|description|detail)/i.test(windowText);
+
+    if (isVideo) {
+      videoUrls.push(url);
+      extractionPaths.add(
+        /(video|playurl|videourl|videoid|videopath|videouid|poster)/i.test(windowText)
+          ? "media.video.structured_node"
+          : "media.video.url_scan"
+      );
+      continue;
+    }
+    if (!isImage) continue;
+    if (/(description|detail|descimg|descimage|richtext|productdetail)/i.test(lower)) {
+      descriptionImages.push(url);
+      extractionPaths.add("media.description.url_scan");
+    } else if (/(sku|variant|propertyvalue|colorimage|skuimage|mainsku|skuattr)/i.test(lower)) {
+      variantImages.push(url);
+      extractionPaths.add("media.variant.url_scan");
+    } else {
+      galleryImages.push(url);
+      extractionPaths.add(
+        /(gallery|imagegallery|mainimage|thumbnail|banner|imagepathlist|imageurllist|photolist)/i.test(lower)
+          ? "media.gallery.structured_node"
+          : "media.gallery.url_scan"
+      );
+    }
+  }
+
+  const dedupedGallery = dedupeUrls(galleryImages).slice(0, 24);
+  const dedupedVariant = dedupeUrls(variantImages).slice(0, 24);
+  const dedupedDescription = dedupeUrls(descriptionImages).slice(0, 32);
+  const dedupedVideo = dedupeUrls(videoUrls).slice(0, 8);
+  const allImages = dedupeUrls([...dedupedGallery, ...dedupedVariant, ...dedupedDescription]).slice(0, 48);
+
+  return {
+    galleryImages: dedupedGallery,
+    variantImages: dedupedVariant,
+    descriptionImages: dedupedDescription,
+    videoUrls: dedupedVideo,
+    allImages,
+    extractionPaths: Array.from(extractionPaths),
+  };
 }
 
 function extractMerchandisingSignals(rawText: string): {
@@ -487,6 +869,7 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
     const evidence = extractAvailabilityEvidence(fetched.text);
     const structuredAvailability = extractAliExpressStructuredAvailability(fetched.text);
     const shipping = extractShippingEvidence(fetched.text);
+    const structuredShipping = extractAliExpressStructuredShipping(fetched.text);
     const priceEvidence = extractPriceEvidence(fetched.text);
     const listingValidity = inferListingValidity(fetched.text);
     if (listingValidity.status === "INVALID") {
@@ -494,8 +877,35 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
     }
 
     const title = extractDetailTitle(fetched.text) ?? product.title;
-    const images = extractDetailImages(fetched.text);
+    const media = extractAliExpressMediaEvidence(fetched.text);
+    const images = media.allImages.length ? media.allImages : extractDetailImages(fetched.text);
     const mergedImages = Array.from(new Set([...(product.images ?? []), ...images])).slice(0, 48);
+    const mergedShippingEstimates = Array.from(
+      new Map(
+        [
+          ...(shipping.shippingEstimates ?? []),
+          ...(structuredShipping.shippingEstimates ?? []),
+          ...((product.shippingEstimates ?? []) as SupplierProduct["shippingEstimates"]),
+        ].map((estimate) => [
+          [
+            estimate.label ?? "shipping signal",
+            estimate.cost ?? "",
+            estimate.currency ?? "",
+            estimate.etaMinDays ?? "",
+            estimate.etaMaxDays ?? "",
+            estimate.ship_from_country ?? "",
+            estimate.ship_from_location ?? "",
+          ].join("|"),
+          estimate,
+        ])
+      ).values()
+    ).slice(0, 12);
+    const shippingOriginEvidenceSource =
+      structuredShipping.extractionPaths.length > 0
+        ? structuredShipping.extractionPaths.join(",")
+        : shipping.shipFromCountry != null || shipping.shipFromLocation != null
+          ? "detail_shipping_text"
+          : null;
     const availabilitySignal =
       structuredAvailability.signal !== "UNKNOWN"
         ? structuredAvailability.signal
@@ -529,11 +939,11 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
       title,
       price: priceEvidence.price ?? product.price,
       images: mergedImages.length ? mergedImages : product.images,
-      shippingEstimates: shipping.shippingEstimates.length ? shipping.shippingEstimates : product.shippingEstimates,
+      shippingEstimates: mergedShippingEstimates.length ? mergedShippingEstimates : product.shippingEstimates,
       availabilitySignal,
       availabilityConfidence,
       snapshotQuality:
-        evidencePresent || shipping.shippingEstimates.length || mergedImages.length ? "MEDIUM" : product.snapshotQuality,
+        evidencePresent || mergedShippingEstimates.length || mergedImages.length ? "MEDIUM" : product.snapshotQuality,
       raw: {
         ...product.raw,
         provider: "aliexpress-detail",
@@ -554,16 +964,50 @@ async function enrichAliExpressProductWithDetail(product: SupplierProduct): Prom
             : null,
         priceText: priceEvidence.priceText,
         priceSignal: priceEvidence.signal,
-        shippingSignal: shipping.signal,
-        shippingEvidenceText: shipping.evidenceText,
-        shippingOriginEvidenceSource:
-          shipping.shipFromCountry != null || shipping.shipFromLocation != null ? "detail_shipping_text" : null,
-        shipsFromHint: shipping.shipsFromHint,
-        shipFromCountry: shipping.shipFromCountry,
-        ship_from_country: shipping.shipFromCountry,
-        shipFromLocation: shipping.shipFromLocation,
-        ship_from_location: shipping.shipFromLocation,
+        shippingSignal: mergedShippingEstimates.length ? shipping.signal : product.raw?.shippingSignal,
+        shippingEvidenceText: shipping.evidenceText ?? structuredShipping.options[0]?.evidenceText ?? null,
+        shippingOriginEvidenceSource,
+        shipsFromHint: shipping.shipsFromHint ?? structuredShipping.options[0]?.shipFromLocation ?? null,
+        shipFromCountry: shipping.shipFromCountry ?? structuredShipping.options[0]?.shipFromCountry ?? null,
+        ship_from_country: shipping.shipFromCountry ?? structuredShipping.options[0]?.shipFromCountry ?? null,
+        shipFromLocation: shipping.shipFromLocation ?? structuredShipping.options[0]?.shipFromLocation ?? null,
+        ship_from_location: shipping.shipFromLocation ?? structuredShipping.options[0]?.shipFromLocation ?? null,
         shippingGuarantee: shipping.shippingGuarantee,
+        shippingDestinationCountry:
+          structuredShipping.options[0]?.destinationCountry ??
+          structuredShipping.routes[0]?.destinationCountry ??
+          null,
+        shipping: {
+          summary: shipping.evidenceText ?? structuredShipping.options[0]?.evidenceText ?? null,
+          method: shipping.shippingEstimates[0]?.label ?? structuredShipping.options[0]?.method ?? null,
+          destinationCountry:
+            structuredShipping.options[0]?.destinationCountry ??
+            structuredShipping.routes[0]?.destinationCountry ??
+            null,
+          estimates: mergedShippingEstimates,
+          options: structuredShipping.options,
+          routes: structuredShipping.routes,
+          warehouses: structuredShipping.warehouses,
+          variantOrigins: structuredShipping.variantOrigins,
+          extractionPaths: structuredShipping.extractionPaths,
+        },
+        imageGallery: media.galleryImages,
+        galleryImages: media.galleryImages,
+        variantImages: media.variantImages,
+        descriptionImages: media.descriptionImages,
+        videoUrls: media.videoUrls,
+        videoCount: media.videoUrls.length,
+        media: {
+          images: media.allImages,
+          galleryImages: media.galleryImages,
+          variantImages: media.variantImages,
+          descriptionImages: media.descriptionImages,
+          videoUrls: media.videoUrls,
+          imageCount: media.allImages.length,
+          videoCount: media.videoUrls.length,
+          present: media.allImages.length > 0 || media.videoUrls.length > 0,
+          extractionPaths: media.extractionPaths,
+        },
         listingValidity: listingValidity.status,
         listingValidityReason: listingValidity.reason,
         evidenceSource:
@@ -598,7 +1042,8 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
     const title = extractTitleNear(text, idx);
     const priceEvidence = extractPriceEvidence(nearbyText);
     const price = extractPriceFromItemUrl(rawUrl) ?? extractPriceNear(text, idx) ?? priceEvidence.price;
-    const images = extractImagesNear(text, idx, title);
+    const nearbyMedia = extractAliExpressMediaEvidence(nearbyText);
+    const images = Array.from(new Set([...extractImagesNear(text, idx, title), ...nearbyMedia.allImages])).slice(0, 12);
     const sourceUrl = normalizeAliExpressItemUrl(rawUrl, itemId);
     const listingValidity = inferListingValidity(nearbyText);
     const merchandising = extractMerchandisingSignals(nearbyText);
@@ -612,6 +1057,27 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
     });
     const availabilityEvidence = extractAvailabilityEvidence(nearbyText);
     const shipping = deriveAliExpressShipping(nearbyText, merchandising);
+    const structuredShipping = extractAliExpressStructuredShipping(nearbyText);
+    const mergedShippingEstimates = Array.from(
+      new Map(
+        [...shipping.shippingEstimates, ...structuredShipping.shippingEstimates].map((estimate) => [
+          [
+            estimate.label ?? "shipping signal",
+            estimate.cost ?? "",
+            estimate.currency ?? "",
+            estimate.etaMinDays ?? "",
+            estimate.etaMaxDays ?? "",
+            estimate.ship_from_country ?? "",
+            estimate.ship_from_location ?? "",
+          ].join("|"),
+          estimate,
+        ])
+      ).values()
+    ).slice(0, 8);
+    const shipFromCountry = shipping.shipFromCountry ?? structuredShipping.options[0]?.shipFromCountry ?? null;
+    const shipFromLocation = shipping.shipFromLocation ?? structuredShipping.options[0]?.shipFromLocation ?? null;
+    const shippingDestinationCountry =
+      structuredShipping.options[0]?.destinationCountry ?? structuredShipping.routes[0]?.destinationCountry ?? null;
 
     seen.add(itemId);
 
@@ -623,7 +1089,7 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
       variants: [],
       sourceUrl,
       supplierProductId: itemId,
-      shippingEstimates: shipping.shippingEstimates,
+      shippingEstimates: mergedShippingEstimates,
       platform: "AliExpress",
       keyword,
       snapshotTs,
@@ -654,17 +1120,50 @@ function parseAliExpressText(text: string, keyword: string, snapshotTs: string):
         shippingMethod: shipping.shippingMethod,
         shippingConfidence: shipping.shippingConfidence,
         shippingOriginEvidenceSource:
-          shipping.shipFromCountry != null || shipping.shipFromLocation != null ? "search_shipping_text" : null,
+          structuredShipping.extractionPaths.length > 0
+            ? structuredShipping.extractionPaths.join(",")
+            : shipFromCountry != null || shipFromLocation != null
+              ? "search_shipping_text"
+              : null,
         shipsFromHint: shipping.shipsFromHint,
-        shipFromCountry: shipping.shipFromCountry,
-        ship_from_country: shipping.shipFromCountry,
-        shipFromLocation: shipping.shipFromLocation,
-        ship_from_location: shipping.shipFromLocation,
+        shipFromCountry: shipFromCountry,
+        ship_from_country: shipFromCountry,
+        shipFromLocation: shipFromLocation,
+        ship_from_location: shipFromLocation,
+        shippingDestinationCountry,
         shippingGuarantee: shipping.shippingGuarantee,
+        shipping: {
+          summary: shipping.evidenceText ?? structuredShipping.options[0]?.evidenceText ?? null,
+          method: shipping.shippingMethod ?? structuredShipping.options[0]?.method ?? null,
+          destinationCountry: shippingDestinationCountry,
+          estimates: mergedShippingEstimates,
+          options: structuredShipping.options,
+          routes: structuredShipping.routes,
+          warehouses: structuredShipping.warehouses,
+          variantOrigins: structuredShipping.variantOrigins,
+          extractionPaths: structuredShipping.extractionPaths,
+        },
         ratingValue: merchandising.rating,
         soldCount: merchandising.soldCount,
         soldText: merchandising.soldText,
         imageGalleryCount: images.length,
+        imageGallery: nearbyMedia.galleryImages.length ? nearbyMedia.galleryImages : images,
+        galleryImages: nearbyMedia.galleryImages.length ? nearbyMedia.galleryImages : images,
+        variantImages: nearbyMedia.variantImages,
+        descriptionImages: nearbyMedia.descriptionImages,
+        videoUrls: nearbyMedia.videoUrls,
+        videoCount: nearbyMedia.videoUrls.length,
+        media: {
+          images,
+          galleryImages: nearbyMedia.galleryImages.length ? nearbyMedia.galleryImages : images,
+          variantImages: nearbyMedia.variantImages,
+          descriptionImages: nearbyMedia.descriptionImages,
+          videoUrls: nearbyMedia.videoUrls,
+          imageCount: images.length,
+          videoCount: nearbyMedia.videoUrls.length,
+          present: images.length > 0 || nearbyMedia.videoUrls.length > 0,
+          extractionPaths: nearbyMedia.extractionPaths,
+        },
         mediaQualityScore: images.length >= 5 ? 0.9 : images.length >= 4 ? 0.84 : images.length >= 2 ? 0.66 : 0.45,
         listingValidity: listingValidity.status,
         listingValidityReason: listingValidity.reason,

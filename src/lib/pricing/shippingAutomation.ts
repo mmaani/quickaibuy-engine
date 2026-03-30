@@ -77,6 +77,7 @@ export type ShippingAutomationResult = {
     supplierProductId: string;
     reason: string;
     detail: string | null;
+    diagnostics?: Record<string, unknown> | null;
   }>;
 };
 
@@ -99,6 +100,57 @@ function hasShippingEstimateSignal(input: unknown): boolean {
       record.label != null
     );
   });
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function summarizeMediaEvidence(rawPayload: unknown): {
+  mediaPresent: boolean;
+  imageCount: number;
+  videoCount: number;
+  mediaQualityScore: number | null;
+} {
+  const payload = asObject(rawPayload) ?? {};
+  const media = asObject(payload.media);
+  const arrays = [
+    Array.isArray(payload.images) ? payload.images.length : 0,
+    Array.isArray(payload.imageGallery) ? payload.imageGallery.length : 0,
+    Array.isArray(payload.galleryImages) ? payload.galleryImages.length : 0,
+    Array.isArray(payload.variantImages) ? payload.variantImages.length : 0,
+    Array.isArray(payload.descriptionImages) ? payload.descriptionImages.length : 0,
+    Array.isArray(media?.images) ? (media?.images as unknown[]).length : 0,
+    Array.isArray(media?.galleryImages) ? (media?.galleryImages as unknown[]).length : 0,
+    Array.isArray(media?.variantImages) ? (media?.variantImages as unknown[]).length : 0,
+    Array.isArray(media?.descriptionImages) ? (media?.descriptionImages as unknown[]).length : 0,
+  ];
+  const imageCount =
+    asFiniteNumber(payload.imageGalleryCount) ??
+    asFiniteNumber(media?.imageCount) ??
+    Math.max(0, ...arrays);
+  const videoCount =
+    asFiniteNumber(payload.videoCount) ??
+    asFiniteNumber(media?.videoCount) ??
+    Math.max(
+      Array.isArray(payload.videoUrls) ? payload.videoUrls.length : 0,
+      Array.isArray(media?.videoUrls) ? (media?.videoUrls as unknown[]).length : 0
+    );
+  return {
+    mediaPresent: imageCount > 0 || videoCount > 0,
+    imageCount,
+    videoCount,
+    mediaQualityScore: asFiniteNumber(payload.mediaQualityScore) ?? asFiniteNumber(media?.qualityScore),
+  };
 }
 
 const ORIGIN_CONFIDENCE_INFERRED_STRONG = 0.75;
@@ -335,6 +387,12 @@ export async function automateShippingIntelligence(input?: {
           supplierProductId: row.supplierProductId,
           reason: "SUPPLIER_RATE_LIMITED",
           detail: "suppressed repeated exact-refresh attempts due to high 429/miss telemetry",
+          diagnostics: {
+            rootCause,
+            refreshAttempts: supplierTelemetry?.attempts ?? 0,
+            refreshSuccessRate: supplierTelemetry?.refreshSuccessRate ?? null,
+            rateLimitEvents: supplierTelemetry?.rateLimitEvents ?? 0,
+          },
         });
       } else {
         exactRefreshAttempts += 1;
@@ -410,6 +468,13 @@ export async function automateShippingIntelligence(input?: {
             supplierProductId: row.supplierProductId,
             reason: "NO_STRONG_SUPPLIER_RECOVERY",
             detail: inferred.confidence == null ? "shipping confidence unavailable" : `shipping confidence=${inferred.confidence}`,
+            diagnostics: {
+              rootCause,
+              inferredMode: inferred.mode,
+              inferredConfidence: inferred.confidence,
+              inferredOriginCountry: inferred.originCountry,
+              inferredOriginReason: inferred.originUnresolvedReason,
+            },
           });
         }
       } else {
@@ -419,6 +484,13 @@ export async function automateShippingIntelligence(input?: {
           supplierProductId: row.supplierProductId,
           reason: "APPROVED_ROW_BLOCKED_LOW_SHIPPING_CONFIDENCE",
           detail: inferred.confidence == null ? "shipping confidence unavailable" : `shipping confidence=${inferred.confidence}`,
+          diagnostics: {
+            rootCause,
+            inferredMode: inferred.mode,
+            inferredConfidence: inferred.confidence,
+            inferredOriginCountry: inferred.originCountry,
+            inferredOriginReason: inferred.originUnresolvedReason,
+          },
         });
       }
       continue;
@@ -458,6 +530,23 @@ export async function automateShippingIntelligence(input?: {
       !candidateOriginCountry ||
       originConfidence < ORIGIN_CONFIDENCE_INFERRED_STRONG
     ) {
+      const mediaEvidence = summarizeMediaEvidence(rawPayload);
+      const failureDiagnostics = {
+        rootCause,
+        inferredMode: inferred.mode,
+        inferredConfidence: inferred.confidence,
+        shippingPresent: inferred.shippingCostUsd != null || hasShippingEstimateSignal(shippingEstimates),
+        checkedExtractionSources: extractionSourcesUsed,
+        resolvedOriginCountry: resolvedOrigin.originCountry,
+        inferredOriginCountry: inferred.originCountry,
+        originConfidence,
+        originSource,
+        originUnresolvedReason: resolvedOrigin.unresolvedReason,
+        mediaPresent: mediaEvidence.mediaPresent,
+        mediaImageCount: mediaEvidence.imageCount,
+        mediaVideoCount: mediaEvidence.videoCount,
+        mediaQualityScore: mediaEvidence.mediaQualityScore,
+      };
       blockedOutcomes.push({
         candidateId: row.candidateId,
         supplierKey: row.supplierKey,
@@ -466,6 +555,7 @@ export async function automateShippingIntelligence(input?: {
         detail: candidateOriginCountry
           ? `origin evidence insufficient (resolved=${resolvedOrigin.originCountry ?? "NONE"} confidence=${originConfidence})`
           : `inference failed to resolve supplier ship-from country (${resolvedOrigin.unresolvedReason ?? "no_reason"})`,
+        diagnostics: failureDiagnostics,
       });
       await writeAuditLog({
         actorType,
@@ -485,6 +575,10 @@ export async function automateShippingIntelligence(input?: {
           originReason,
           extractionSourcesUsed,
           originUnresolvedReason: resolvedOrigin.unresolvedReason,
+          mediaPresent: mediaEvidence.mediaPresent,
+          mediaImageCount: mediaEvidence.imageCount,
+          mediaVideoCount: mediaEvidence.videoCount,
+          mediaQualityScore: mediaEvidence.mediaQualityScore,
         },
       });
       continue;

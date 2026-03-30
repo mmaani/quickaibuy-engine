@@ -331,7 +331,10 @@ function asString(value: unknown): string | null {
 
 function asFiniteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  const parsed = Number(String(value ?? "").trim());
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -446,8 +449,21 @@ function rowPayloadFromFees(fees: Record<string, unknown> | null): Record<string
 
 function rowImagesFromFees(fees: Record<string, unknown> | null): unknown[] | null {
   const payload = rowPayloadFromFees(fees);
-  if (Array.isArray(payload?.images)) return payload.images;
-  return null;
+  const media = asObject(payload?.media);
+  const arrays = [
+    Array.isArray(payload?.images) ? payload.images : [],
+    Array.isArray(payload?.imageGallery) ? payload.imageGallery : [],
+    Array.isArray(payload?.galleryImages) ? payload.galleryImages : [],
+    Array.isArray(payload?.variantImages) ? payload.variantImages : [],
+    Array.isArray(payload?.descriptionImages) ? payload.descriptionImages : [],
+    Array.isArray(payload?.videoUrls) ? payload.videoUrls : [],
+    Array.isArray(media?.images) ? (media.images as unknown[]) : [],
+    Array.isArray(media?.galleryImages) ? (media.galleryImages as unknown[]) : [],
+    Array.isArray(media?.variantImages) ? (media.variantImages as unknown[]) : [],
+    Array.isArray(media?.descriptionImages) ? (media.descriptionImages as unknown[]) : [],
+    Array.isArray(media?.videoUrls) ? (media.videoUrls as unknown[]) : [],
+  ].flat();
+  return arrays.length ? arrays : null;
 }
 
 function extractImageUrl(images: unknown, rawPayload: unknown): string | null {
@@ -477,6 +493,22 @@ function extractImageUrl(images: unknown, rawPayload: unknown): string | null {
 
   const firstThumbnail = Array.isArray(payload.thumbnailImages) ? asObject(payload.thumbnailImages[0]) : null;
   if (typeof firstThumbnail?.imageUrl === "string") return firstThumbnail.imageUrl;
+
+  const media = asObject(payload.media);
+  const nestedArrays = [
+    Array.isArray(payload.imageGallery) ? payload.imageGallery : [],
+    Array.isArray(payload.galleryImages) ? payload.galleryImages : [],
+    Array.isArray(payload.variantImages) ? payload.variantImages : [],
+    Array.isArray(payload.descriptionImages) ? payload.descriptionImages : [],
+    Array.isArray(media?.images) ? (media.images as unknown[]) : [],
+    Array.isArray(media?.galleryImages) ? (media.galleryImages as unknown[]) : [],
+    Array.isArray(media?.variantImages) ? (media.variantImages as unknown[]) : [],
+    Array.isArray(media?.descriptionImages) ? (media.descriptionImages as unknown[]) : [],
+  ];
+  for (const array of nestedArrays) {
+    const url = extractImageUrl(array, null);
+    if (url) return url;
+  }
 
   return null;
 }
@@ -543,7 +575,9 @@ function deriveRiskFlags(row: CandidateRow): string[] {
       !supplierEvidence.codes.includes("SOURCE_CHALLENGE_PAGE") &&
       !supplierEvidence.codes.includes("SOURCE_PROVIDER_BLOCK") &&
       !supplierEvidence.codes.includes("SHIPPING_TRANSPARENCY_INCOMPLETE") &&
-      !supplierEvidence.codes.includes("SHIPPING_SIGNAL_WEAK")
+      !supplierEvidence.codes.includes("SHIPPING_SIGNAL_WEAK") &&
+      !supplierEvidence.codes.includes("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT") &&
+      !supplierEvidence.codes.includes("SHIP_FROM_MISSING")
     ) {
       flags.add("SHIPPING_SIGNAL_MISSING");
     }
@@ -605,6 +639,7 @@ function deriveRiskFlags(row: CandidateRow): string[] {
   const supplierImageCount =
     asFiniteNumber(supplierPayload?.imageGalleryCount) ??
     asFiniteNumber(supplierMediaNode?.imageCount) ??
+    rowImagesFromFees({ supplierRawPayload: supplierPayload })?.length ??
     supplierImages.length;
   const supplierVideoCount =
     asFiniteNumber(supplierPayload?.videoCount) ??

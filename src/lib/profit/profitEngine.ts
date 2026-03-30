@@ -747,9 +747,60 @@ export async function runProfitEngine(input?: {
         ? formatSupplierEvidenceBlockReason(supplierEvidenceCodes)
           : marginOrRoiFailed
             ? `profit guard requires margin >= ${minMarginPct}% and roi >= ${minRoiPct}%`
-            : pipelineHardBlocked
-              ? `pipeline policy requires manual review: ${pipeline.penalties.join(", ")}`
-              : null;
+              : pipelineHardBlocked
+                ? `pipeline policy requires manual review: ${pipeline.penalties.join(", ")}`
+                : null;
+    const sourcePayload = supplierRawPayload
+      ? {
+          provider: supplierRawPayload.provider ?? null,
+          parseMode: supplierRawPayload.parseMode ?? null,
+          shippingSignal: supplierRawPayload.shippingSignal ?? null,
+          shippingEvidenceText: supplierRawPayload.shippingEvidenceText ?? null,
+          shippingOriginEvidenceSource: supplierRawPayload.shippingOriginEvidenceSource ?? null,
+          shipsFromHint: supplierRawPayload.shipsFromHint ?? null,
+          shipFromCountry: supplierRawPayload.shipFromCountry ?? supplierRawPayload.ship_from_country ?? null,
+          shipFromLocation: supplierRawPayload.shipFromLocation ?? supplierRawPayload.ship_from_location ?? null,
+          shippingDestinationCountry: supplierRawPayload.shippingDestinationCountry ?? null,
+          shipping: supplierRawPayload.shipping ?? null,
+          images: supplierImages.slice(0, 48),
+          imageGalleryCount:
+            supplierRawPayload.imageGalleryCount ?? (supplierImages.length ? supplierImages.length : null),
+          imageGallery: Array.isArray(supplierRawPayload.imageGallery)
+            ? (supplierRawPayload.imageGallery as unknown[]).slice(0, 48)
+            : null,
+          galleryImages: Array.isArray(supplierRawPayload.galleryImages)
+            ? (supplierRawPayload.galleryImages as unknown[]).slice(0, 48)
+            : null,
+          variantImages: Array.isArray(supplierRawPayload.variantImages)
+            ? (supplierRawPayload.variantImages as unknown[]).slice(0, 48)
+            : null,
+          descriptionImages: Array.isArray(supplierRawPayload.descriptionImages)
+            ? (supplierRawPayload.descriptionImages as unknown[]).slice(0, 48)
+            : null,
+          videoUrls: Array.isArray(supplierRawPayload.videoUrls)
+            ? (supplierRawPayload.videoUrls as unknown[]).slice(0, 12)
+            : null,
+          videoCount:
+            supplierRawPayload.videoCount ??
+            (Array.isArray(supplierRawPayload.videoUrls) ? supplierRawPayload.videoUrls.length : null),
+          mediaQualityScore: supplierRawPayload.mediaQualityScore ?? null,
+          media:
+            supplierRawPayload.media && typeof supplierRawPayload.media === "object" && !Array.isArray(supplierRawPayload.media)
+              ? supplierRawPayload.media
+              : {
+                  images: supplierImages.slice(0, 48),
+                  imageCount: supplierImages.length || null,
+                  videoCount:
+                    supplierRawPayload.videoCount ??
+                    (Array.isArray(supplierRawPayload.videoUrls) ? supplierRawPayload.videoUrls.length : null),
+                  present:
+                    supplierImages.length > 0 ||
+                    Boolean(
+                      Array.isArray(supplierRawPayload.videoUrls) && supplierRawPayload.videoUrls.length > 0
+                    ),
+                },
+        }
+      : null;
     const riskFlags =
       matchRoutingStatus === "REJECTED"
         ? ["MATCH_CONFIDENCE_BELOW_REJECT_THRESHOLD"]
@@ -807,6 +858,7 @@ export async function runProfitEngine(input?: {
       country: economics.assumptions.country,
       economicsModel: "jordan_ebay_deterministic_v1",
       breakEvenPriceUsd: economics.breakEvenPriceUsd,
+      sourcePayload,
       pipelinePolicy: pipeline,
     };
 
