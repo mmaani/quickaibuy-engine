@@ -6,6 +6,7 @@ import { expandTrendSignal } from "../lib/trends/expandTrendSignal";
 import { writeAuditLog } from "../lib/audit/writeAuditLog";
 import { discoverProductsForCandidate } from "../lib/products/discoverProducts";
 import { runSupplierDiscover } from "../lib/jobs/supplierDiscover";
+import { refreshSingleSupplierProduct } from "@/lib/products/refreshSingleSupplierProduct";
 import { handleMarketplaceScanJob } from "../lib/jobs/marketplaceScan";
 import { handleMatchProductsJob } from "../lib/jobs/matchProducts";
 import { runProfitEngine } from "../lib/profit/profitEngine";
@@ -417,24 +418,72 @@ export const jobsWorker = new Worker(
           }
         }
         const limitPerKeyword = Number(job.data?.limitPerKeyword ?? 20);
-        const result = await runSupplierDiscover(limitPerKeyword);
+        const refreshSupplierKey = String(job.data?.supplierKey ?? "").trim().toLowerCase();
+        const refreshSupplierProductId = String(job.data?.supplierProductId ?? "").trim();
+        const targetedRefresh = Boolean(refreshSupplierKey && refreshSupplierProductId);
+        const refreshResult = targetedRefresh
+          ? await refreshSingleSupplierProduct({
+              supplierKey: refreshSupplierKey,
+              supplierProductId: refreshSupplierProductId,
+              requireExactMatch: true,
+              updateExisting: true,
+              searchLimit: Math.max(30, limitPerKeyword * 3),
+            })
+          : null;
+        const discoverResult = targetedRefresh ? null : await runSupplierDiscover(limitPerKeyword);
+        const result = refreshResult ?? discoverResult;
+        const targetedRefreshDetails = refreshResult
+          ? {
+              supplierKey: refreshSupplierKey,
+              supplierProductId: refreshSupplierProductId,
+              refreshed: refreshResult.refreshed,
+              refreshedSnapshotId: refreshResult.refreshedSnapshotId,
+              refreshMode: refreshResult.refreshMode,
+              exactMatchFound: refreshResult.exactMatchFound,
+              availabilityStatus: refreshResult.availabilityStatus,
+            }
+          : null;
+        const discoverDetails = discoverResult
+          ? {
+              processedCandidates: discoverResult.processedCandidates,
+              insertedCount: discoverResult.insertedCount,
+              keywords: discoverResult.keywords,
+              sources: discoverResult.sources,
+              sourceBreakdown: discoverResult.sourceBreakdown,
+            }
+          : null;
 
         await writeAuditLog({
           actorType: "WORKER",
           actorId: JOB_NAMES.SUPPLIER_DISCOVER,
-          entityType: "TREND_CANDIDATE",
-          entityId: "batch",
-          eventType: "SUPPLIER_PRODUCTS_DISCOVERED",
+          entityType: targetedRefresh ? "SUPPLIER_PRODUCT" : "TREND_CANDIDATE",
+          entityId: targetedRefresh ? `${refreshSupplierKey}:${refreshSupplierProductId}` : "batch",
+          eventType: targetedRefresh ? "SUPPLIER_PRODUCT_REFRESHED" : "SUPPLIER_PRODUCTS_DISCOVERED",
           details: {
             source: "supplier-discover",
             jobId: String(job.id ?? ""),
-            processedCandidates: result.processedCandidates,
-            insertedCount: result.insertedCount,
-            keywords: result.keywords,
-            sources: result.sources,
-            sourceBreakdown: result.sourceBreakdown,
+            targetedRefresh,
+            ...(targetedRefreshDetails ?? {}),
+            ...(discoverDetails ?? {}),
           },
         });
+
+        if (refreshResult?.refreshed && refreshResult.refreshedSnapshotId) {
+          await handleMarketplaceScanJob({
+            limit: Number(job.data?.marketplaceLimit ?? 120),
+            productRawId: refreshResult.refreshedSnapshotId,
+            platform: "ebay",
+          });
+          await handleMatchProductsJob({
+            limit: Number(job.data?.matchLimit ?? 80),
+            productRawId: refreshResult.refreshedSnapshotId,
+          });
+          await runProfitEngine({
+            limit: Number(job.data?.profitLimit ?? 80),
+            supplierKey: refreshSupplierKey,
+            supplierProductId: refreshSupplierProductId,
+          });
+        }
 
         console.log("[jobs.worker] completed job", {
           id: job.id,

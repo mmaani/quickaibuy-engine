@@ -141,6 +141,18 @@ function readNumericField(payload: Record<string, unknown>, keys: string[]): num
   return null;
 }
 
+function readBooleanField(payload: Record<string, unknown>, keys: string[]): boolean | null {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "boolean") return value;
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (!normalized) continue;
+    if (["true", "1", "yes", "y", "in_stock", "available"].includes(normalized)) return true;
+    if (["false", "0", "no", "n", "out_of_stock", "unavailable", "sold_out"].includes(normalized)) return false;
+  }
+  return null;
+}
+
 export function extractAvailabilityFromRawPayload(input: {
   availabilityStatus: unknown;
   rawPayload: unknown;
@@ -175,6 +187,17 @@ export function extractAvailabilityFromRawPayload(input: {
         "quantity_available",
       ])
     : null;
+  const availabilityBoolFromPayload = payload
+    ? readBooleanField(payload, [
+        "inStock",
+        "in_stock",
+        "isAvailable",
+        "is_available",
+        "available",
+        "isInStock",
+        "is_in_stock",
+      ])
+    : null;
   const statusTextFromPayload = payload
     ? readStringField(payload, [
         "availabilityText",
@@ -201,6 +224,12 @@ export function extractAvailabilityFromRawPayload(input: {
     if (stockFromPayload <= 5) return { signal: "LOW_STOCK", confidence: 0.9 };
     if (stockFromPayload <= 20) return { signal: "LOW_STOCK", confidence: 0.82 };
     return { signal: "IN_STOCK", confidence: 0.78 };
+  }
+
+  if (availabilityBoolFromPayload != null) {
+    return availabilityBoolFromPayload
+      ? { signal: "IN_STOCK", confidence: confidence ?? 0.84 }
+      : { signal: "OUT_OF_STOCK", confidence: confidence ?? 0.95 };
   }
 
   if (statusTextFromPayload) {

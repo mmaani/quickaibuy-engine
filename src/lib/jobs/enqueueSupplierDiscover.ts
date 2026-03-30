@@ -13,6 +13,11 @@ export async function enqueueSupplierDiscoverRefresh(input?: {
   limitPerKeyword?: number;
   idempotencySuffix?: string;
   reason?: string;
+  supplierKey?: string;
+  supplierProductId?: string;
+  marketplaceLimit?: number;
+  matchLimit?: number;
+  profitLimit?: number;
 }) {
   await assertLearningHubReady({
     blockedAction: "enqueue_supplier_discover_refresh",
@@ -27,11 +32,23 @@ export async function enqueueSupplierDiscoverRefresh(input?: {
   });
 
   const limitPerKeyword = Number(input?.limitPerKeyword ?? 20);
-  const idempotencySuffix = String(input?.idempotencySuffix ?? "latest").trim() || "latest";
+  const supplierKey = String(input?.supplierKey ?? "").trim().toLowerCase();
+  const supplierProductId = String(input?.supplierProductId ?? "").trim();
+  const targetedRefresh = Boolean(supplierKey && supplierProductId);
+  const idempotencySuffix = String(
+    input?.idempotencySuffix ?? (targetedRefresh ? `${supplierKey}-${supplierProductId}` : "latest")
+  ).trim() || "latest";
   const reason = String(input?.reason ?? "supplier-snapshot-stale").trim() || "supplier-snapshot-stale";
   const jobId = `supplier-discover-refresh-${idempotencySuffix}`;
 
-  const payload = { limitPerKeyword, reason };
+  const payload = {
+    limitPerKeyword,
+    reason,
+    ...(targetedRefresh ? { supplierKey, supplierProductId } : {}),
+    ...(targetedRefresh ? { marketplaceLimit: Number(input?.marketplaceLimit ?? 120) } : {}),
+    ...(targetedRefresh ? { matchLimit: Number(input?.matchLimit ?? 80) } : {}),
+    ...(targetedRefresh ? { profitLimit: Number(input?.profitLimit ?? 80) } : {}),
+  };
   const job = await jobsQueue.add(
     JOB_NAMES.SUPPLIER_DISCOVER,
     payload,

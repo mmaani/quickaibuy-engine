@@ -950,6 +950,39 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 )}
               />
             </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                label="Stale entry candidates"
+                value={metricOrUnknown(
+                  data.recoveryStates.staleEntryCandidates,
+                  data.recoveryStates.sourceWired.staleEntryCandidates
+                )}
+              />
+              <StatCard
+                label="Refresh queue status"
+                value={
+                  data.recoveryStates.sourceWired.refreshQueueStatus
+                    ? `Q ${data.recoveryStates.refreshQueueStatus.queued ?? 0} / R ${data.recoveryStates.refreshQueueStatus.running ?? 0} / F24h ${data.recoveryStates.refreshQueueStatus.failed24h ?? 0}`
+                    : "-"
+                }
+              />
+              <StatCard
+                label="Avg snapshot age (h)"
+                value={
+                  data.recoveryStates.sourceWired.avgSnapshotAgeHours
+                    ? `S ${data.recoveryStates.avgSnapshotAgeHours.supplier ?? "n/a"} / M ${data.recoveryStates.avgSnapshotAgeHours.marketplace ?? "n/a"}`
+                    : "-"
+                }
+              />
+              <StatCard
+                label="Refresh success rate (24h)"
+                value={
+                  data.recoveryStates.sourceWired.refreshSuccessRate24h
+                    ? `${data.recoveryStates.refreshSuccessRate24h ?? 0}%`
+                    : "-"
+                }
+              />
+            </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               {data.recoveryStates.actionHints.length ? (
                 data.recoveryStates.actionHints.map((hint) => (
@@ -1311,6 +1344,39 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                   data.recoveryStates.supplierRefreshPending,
                   data.recoveryStates.sourceWired.supplierRefreshPending
                 )}
+              />
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                label="Stale entry candidates"
+                value={metricOrUnknown(
+                  data.recoveryStates.staleEntryCandidates,
+                  data.recoveryStates.sourceWired.staleEntryCandidates
+                )}
+              />
+              <StatCard
+                label="Refresh queue status"
+                value={
+                  data.recoveryStates.sourceWired.refreshQueueStatus
+                    ? `Q ${data.recoveryStates.refreshQueueStatus.queued ?? 0} / R ${data.recoveryStates.refreshQueueStatus.running ?? 0} / F24h ${data.recoveryStates.refreshQueueStatus.failed24h ?? 0}`
+                    : "-"
+                }
+              />
+              <StatCard
+                label="Avg snapshot age (h)"
+                value={
+                  data.recoveryStates.sourceWired.avgSnapshotAgeHours
+                    ? `S ${data.recoveryStates.avgSnapshotAgeHours.supplier ?? "n/a"} / M ${data.recoveryStates.avgSnapshotAgeHours.marketplace ?? "n/a"}`
+                    : "-"
+                }
+              />
+              <StatCard
+                label="Refresh success rate (24h)"
+                value={
+                  data.recoveryStates.sourceWired.refreshSuccessRate24h
+                    ? `${data.recoveryStates.refreshSuccessRate24h ?? 0}%`
+                    : "-"
+                }
               />
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-2">

@@ -37,6 +37,12 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function nestedRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function hasMeaningfulShippingEstimate(value: ShippingEstimate[] | unknown): boolean {
   if (!Array.isArray(value)) return false;
   return value.some((estimate) => {
@@ -125,10 +131,23 @@ export function classifySupplierEvidence(
 
   if (!codes.has("SOURCE_PROVIDER_BLOCK") && !codes.has("SOURCE_CHALLENGE_PAGE") && !codes.has("SUPPLIER_BLOCKED")) {
     const shippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
+    const shippingNode = nestedRecord(rawPayload.shipping);
     const shippingEvidenceText =
-      asString(rawPayload.shippingEvidenceText) ?? asString(rawPayload.shippingMethod) ?? asString(rawPayload.shippingBadge);
-    const shippingConfidence = input.shippingConfidence ?? asNumber(rawPayload.shippingConfidence);
-    const hasShippingEstimate = hasMeaningfulShippingEstimate(input.shippingEstimates);
+      asString(rawPayload.shippingEvidenceText) ??
+      asString(rawPayload.shippingMethod) ??
+      asString(rawPayload.shippingBadge) ??
+      asString(shippingNode?.method) ??
+      asString(shippingNode?.badge) ??
+      asString(shippingNode?.summary);
+    const shippingConfidence =
+      input.shippingConfidence ??
+      asNumber(rawPayload.shippingConfidence) ??
+      asNumber(shippingNode?.confidence) ??
+      asNumber(shippingNode?.score);
+    const hasShippingEstimate =
+      hasMeaningfulShippingEstimate(input.shippingEstimates) ||
+      hasMeaningfulShippingEstimate(rawPayload.shippingEstimates) ||
+      hasMeaningfulShippingEstimate(shippingNode?.estimates);
 
     if (shippingSignal === "MISSING" || (!hasShippingEstimate && !shippingEvidenceText && (shippingConfidence ?? 0) < 0.35)) {
       codes.add("SHIPPING_SIGNAL_MISSING");
@@ -140,8 +159,16 @@ export function classifySupplierEvidence(
       codes.add("SHIPPING_SIGNAL_WEAK");
     }
 
-    const mediaQualityScore = input.mediaQualityScore ?? asNumber(rawPayload.mediaQualityScore);
-    const imageCount = input.imageCount ?? asNumber(rawPayload.imageGalleryCount);
+    const mediaNode = nestedRecord(rawPayload.media);
+    const mediaQualityScore =
+      input.mediaQualityScore ??
+      asNumber(rawPayload.mediaQualityScore) ??
+      asNumber(mediaNode?.qualityScore) ??
+      asNumber(mediaNode?.score);
+    const imageCount = input.imageCount ??
+      asNumber(rawPayload.imageGalleryCount) ??
+      asNumber(mediaNode?.imageCount) ??
+      (Array.isArray(rawPayload.images) ? rawPayload.images.length : null);
     if (
       (mediaQualityScore != null && mediaQualityScore < 0.82) ||
       (imageCount != null && imageCount > 0 && imageCount < 3) ||

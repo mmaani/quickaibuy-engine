@@ -179,6 +179,17 @@ export type ControlPanelData = {
     marketplaceRefreshPending: number | null;
     supplierRefreshPending: number | null;
     refreshJobsPending: number | null;
+    refreshQueueStatus: {
+      queued: number | null;
+      running: number | null;
+      failed24h: number | null;
+    };
+    staleEntryCandidates: number | null;
+    avgSnapshotAgeHours: {
+      supplier: number | null;
+      marketplace: number | null;
+    };
+    refreshSuccessRate24h: number | null;
     reEvaluationNeeded: number | null;
     rePromotionReady: number | null;
     sourceWired: {
@@ -190,6 +201,10 @@ export type ControlPanelData = {
       marketplaceRefreshPending: boolean;
       supplierRefreshPending: boolean;
       refreshJobsPending: boolean;
+      refreshQueueStatus: boolean;
+      staleEntryCandidates: boolean;
+      avgSnapshotAgeHours: boolean;
+      refreshSuccessRate24h: boolean;
       reEvaluationNeeded: boolean;
       rePromotionReady: boolean;
     };
@@ -1436,6 +1451,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     : false;
   const jobsHasStatus = jobsExists ? await columnExists("jobs", "status") : false;
   const jobsHasJobType = jobsExists ? await columnExists("jobs", "job_type") : false;
+  const jobsHasFinishedTs = jobsExists ? await columnExists("jobs", "finished_ts") : false;
 
   const workerRunsHasStartedAt = workerRunsExists ? await columnExists("worker_runs", "started_at") : false;
   const workerRunsHasFinishedAt = workerRunsExists ? await columnExists("worker_runs", "finished_at") : false;
@@ -1780,6 +1796,110 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   const refreshJobsPending = jobsExists && jobsHasStatus && jobsHasJobType
     ? (marketplaceRefreshPending ?? 0) + (supplierRefreshPending ?? 0)
     : null;
+  const refreshQueueQueued = jobsExists && jobsHasStatus && jobsHasJobType
+    ? toNum(
+        (
+          await runQuery(`
+            select count(*)::int as count
+            from jobs
+            where upper(coalesce(status, '')) = 'QUEUED'
+              and (
+                job_type in ('SCAN_MARKETPLACE_PRICE', 'supplier:discover')
+                or lower(job_type) in ('scan_marketplace_price', 'supplier:discover')
+              )
+          `)
+        )[0]?.count
+      )
+    : null;
+  const refreshQueueRunning = jobsExists && jobsHasStatus && jobsHasJobType
+    ? toNum(
+        (
+          await runQuery(`
+            select count(*)::int as count
+            from jobs
+            where upper(coalesce(status, '')) = 'RUNNING'
+              and (
+                job_type in ('SCAN_MARKETPLACE_PRICE', 'supplier:discover')
+                or lower(job_type) in ('scan_marketplace_price', 'supplier:discover')
+              )
+          `)
+        )[0]?.count
+      )
+    : null;
+  const refreshQueueFailed24h = jobsExists && jobsHasStatus && jobsHasJobType && jobsHasFinishedTs
+    ? toNum(
+        (
+          await runQuery(`
+            select count(*)::int as count
+            from jobs
+            where upper(coalesce(status, '')) = 'FAILED'
+              and (
+                job_type in ('SCAN_MARKETPLACE_PRICE', 'supplier:discover')
+                or lower(job_type) in ('scan_marketplace_price', 'supplier:discover')
+              )
+              and finished_ts >= now() - interval '24 hours'
+          `)
+        )[0]?.count
+      )
+    : null;
+  const refreshSuccessRate24h =
+    workerRunsExists
+      ? toPct(
+          toNum(
+            (
+              await runQuery(`
+                select count(*)::int as count
+                from worker_runs
+                where worker = 'jobs.worker'
+                  and upper(coalesce(status, '')) = 'SUCCEEDED'
+                  and job_name in ('SCAN_MARKETPLACE_PRICE', 'supplier:discover')
+                  and coalesce(finished_at, started_at) >= now() - interval '24 hours'
+              `)
+            )[0]?.count
+          ),
+          toNum(
+            (
+              await runQuery(`
+                select count(*)::int as count
+                from worker_runs
+                where worker = 'jobs.worker'
+                  and job_name in ('SCAN_MARKETPLACE_PRICE', 'supplier:discover')
+                  and coalesce(finished_at, started_at) >= now() - interval '24 hours'
+              `)
+            )[0]?.count
+          )
+        )
+      : null;
+  const staleEntryCandidates =
+    profitableCandidatesExists
+      ? toNum(
+          (
+            await runQuery(`
+              select count(*)::int as count
+              from profitable_candidates pc
+              left join products_raw ps on ps.id = pc.supplier_snapshot_id
+              left join marketplace_prices mp on mp.id = pc.market_price_snapshot_id
+              where ps.id is null
+                 or mp.id is null
+                 or ps.snapshot_ts <= now() - interval '48 hours'
+                 or mp.snapshot_ts <= now() - interval '24 hours'
+            `)
+          )[0]?.count
+        )
+      : null;
+  const snapshotAgeAverages =
+    profitableCandidatesExists
+      ? (
+          await runQuery(`
+            select
+              round(avg(extract(epoch from (now() - ps.snapshot_ts)) / 3600.0)::numeric, 2) as supplier_age_hours,
+              round(avg(extract(epoch from (now() - mp.snapshot_ts)) / 3600.0)::numeric, 2) as marketplace_age_hours
+            from profitable_candidates pc
+            left join products_raw ps on ps.id = pc.supplier_snapshot_id
+            left join marketplace_prices mp on mp.id = pc.market_price_snapshot_id
+          `)
+        )[0] ?? {}
+      : {};
 
   const reEvaluationNeeded =
     profitableCandidatesExists &&
@@ -2566,6 +2686,17 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       marketplaceRefreshPending,
       supplierRefreshPending,
       refreshJobsPending,
+      refreshQueueStatus: {
+        queued: refreshQueueQueued,
+        running: refreshQueueRunning,
+        failed24h: refreshQueueFailed24h,
+      },
+      staleEntryCandidates,
+      avgSnapshotAgeHours: {
+        supplier: toNum(snapshotAgeAverages.supplier_age_hours),
+        marketplace: toNum(snapshotAgeAverages.marketplace_age_hours),
+      },
+      refreshSuccessRate24h,
       reEvaluationNeeded,
       rePromotionReady,
       sourceWired: {
@@ -2592,6 +2723,10 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         marketplaceRefreshPending: jobsExists && jobsHasStatus && jobsHasJobType,
         supplierRefreshPending: jobsExists && jobsHasStatus && jobsHasJobType,
         refreshJobsPending: jobsExists && jobsHasStatus && jobsHasJobType,
+        refreshQueueStatus: jobsExists && jobsHasStatus && jobsHasJobType,
+        staleEntryCandidates: profitableCandidatesExists,
+        avgSnapshotAgeHours: profitableCandidatesExists,
+        refreshSuccessRate24h: workerRunsExists,
         reEvaluationNeeded:
           profitableCandidatesExists &&
           profitableCandidatesHasListingEligible &&
