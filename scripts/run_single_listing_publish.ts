@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { assertNonCanonicalScriptAccess } from "./lib/nonCanonicalSurfaceGuard";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -8,6 +9,13 @@ function isLivePublishEnabled(): boolean {
 }
 
 async function main() {
+  await assertNonCanonicalScriptAccess({
+    scriptName: "run_single_listing_publish.ts",
+    blockedAction: "run_single_listing_publish",
+    canonicalAction: "pnpm ops:autonomous publish via control-plane-governed backbone",
+    mutatesState: true,
+  });
+
   const selectedListingId = String(process.argv[2] ?? "").trim();
   const livePublishEnabled = isLivePublishEnabled();
 

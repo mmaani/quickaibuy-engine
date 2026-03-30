@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { LOW_MATCH_CONFIDENCE_THRESHOLD } from "@/lib/review/console";
 import { REVIEW_CONSOLE_REALM, getReviewConsoleCredentials, isAuthorizedReviewRequest } from "@/lib/review/auth";
+import { enforceNonCanonicalRouteQuarantine } from "@/lib/enforcement/nonCanonicalRoute";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +30,16 @@ function maskDbUrlFingerprint(dbUrl: string | undefined): string | null {
 }
 
 export async function GET(request: NextRequest) {
+  const blocked = await enforceNonCanonicalRouteQuarantine({
+    path: "api/health/review-debug",
+    blockedAction: "review-debug-health",
+    code: "REVIEW_DEBUG_ROUTE_QUARANTINED",
+    reason: "review debug route is non-canonical and engineering-only",
+    actorId: "review.debug.route",
+    severity: "HIGH",
+  });
+  if (blocked) return blocked;
+
   const configured = getReviewConsoleCredentials();
   if (!configured) {
     return new NextResponse("Review console auth is not configured.", {

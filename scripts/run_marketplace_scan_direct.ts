@@ -1,8 +1,16 @@
 import { loadRuntimeEnv } from "@/lib/runtimeEnv";
+import { assertNonCanonicalScriptAccess } from "./lib/nonCanonicalSurfaceGuard";
 
 loadRuntimeEnv();
 
 async function main() {
+  await assertNonCanonicalScriptAccess({
+    scriptName: "run_marketplace_scan_direct.ts",
+    blockedAction: "run_marketplace_scan_direct",
+    canonicalAction: "POST /api/admin/pipeline/run-marketplace-scan or /admin/control quick action",
+    mutatesState: true,
+  });
+
   const { runTrendMarketplaceScanner } = await import("@/lib/marketplaces/trendMarketplaceScanner");
 
   const limit = Number(process.argv[2] || "3");

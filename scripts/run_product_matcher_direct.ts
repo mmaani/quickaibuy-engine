@@ -1,8 +1,16 @@
 import dotenv from "dotenv";
+import { assertNonCanonicalScriptAccess } from "./lib/nonCanonicalSurfaceGuard";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 async function main() {
+  await assertNonCanonicalScriptAccess({
+    scriptName: "run_product_matcher_direct.ts",
+    blockedAction: "run_product_matcher_direct",
+    canonicalAction: "POST /api/admin/pipeline/run-match-products or /admin/control quick action",
+    mutatesState: true,
+  });
+
   const limitArg = Number(process.argv[2] || "20");
   const productRawIdArg = process.argv[3] || undefined;
 

@@ -26,6 +26,26 @@ Canonical queue governance note: `/api/queue/enqueue` is retired as a generic su
 | Stale publish fail-close repair | `pnpm exec tsx scripts/mutate_listings_mark_stale_publish_failed.ts` | Canonical mutation/repair |
 | Control-plane operator surface | `/admin/control` | Canonical operational surface |
 
+
+## Final supported operator authority (control-plane sovereign)
+
+All supported operator mutations must resolve through this chain only:
+
+`CONTROL PLANE ACTION -> typed enqueue or approved diagnostic -> worker or safe read path -> backbone or guarded mutation -> Learning Hub audit/freshness -> output`
+
+Final supported operator-facing surface:
+
+- `/admin/control` quick actions and visibility
+- Action-keyed admin API wrappers mapped to `/admin/control`
+- Canonical package commands listed above (ops, diagnostics, typed enqueue)
+
+Explicitly **unsupported** as operator-facing surfaces:
+
+- `/api/queue/enqueue` (hard-blocked 410 + `CANONICAL_ENFORCEMENT_BLOCKED`)
+- `/api/queue/test` (quarantined 410 unless explicit engineering route mode)
+- `/api/health/review-debug` (quarantined 410 unless explicit engineering route mode)
+- Direct non-canonical runtime scripts under `scripts/run_*_direct*`
+
 ## Operator-facing package command inventory
 
 ### Canonical operational commands
@@ -121,27 +141,21 @@ Canonical queue governance note: `/api/queue/enqueue` is retired as a generic su
 - `scripts/check_migration_ledger.ts`
 - `scripts/check_vercel_env_access.ts`
 
-### Retained low-level engineering utilities
+### Retained low-level engineering utilities (quarantined)
 
-- Direct queue helpers:
-  `scripts/enqueue_listing_prepare.ts`,
-  `scripts/enqueue_supplier_discover.ts`,
-  `scripts/enqueue_inventory_risk_scan.ts`,
-  `scripts/enqueue_profit_eval.ts`,
-  `scripts/enqueue_listing_optimize.ts`
-- Direct runtime workers:
-  `scripts/run_listing_execution_direct.ts`,
-  `scripts/run_listing_prepare_direct.ts`,
-  `scripts/run_marketplace_scan_direct.ts`,
-  `scripts/run_product_matcher_direct.ts`,
-  `scripts/run_profit_engine_direct.ts`
-- One-off repair/mutation utilities:
-  `scripts/run_shipping_orphan_resolution.ts`,
-  `scripts/approve_profitable_candidate.ts`,
-  `scripts/reject_profitable_candidate.ts`,
-  `scripts/promote_single_listing_ready.ts`,
-  `scripts/run_single_listing_publish.ts`,
-  `scripts/run_first_guarded_live_publish.ts`
+These paths are retained for engineering diagnostics/repair only. They are blocked by default and require explicit guard intent:
+
+- `NON_CANONICAL_ENGINEERING_MODE=true` for non-canonical script access
+- `CONTROLLED_REPAIR_PATH=true` for any state-mutating engineering script
+
+Quarantined script examples:
+
+- Direct queue helper: `scripts/enqueue_listing_prepare.ts`
+- Direct runtime workers: `scripts/run_listing_execution_direct.ts`, `scripts/run_listing_prepare_direct.ts`, `scripts/run_marketplace_scan_direct.ts`, `scripts/run_product_matcher_direct.ts`, `scripts/run_profit_engine_direct.ts`
+- Direct publish/mutation one-offs: `scripts/run_single_listing_publish.ts`, `scripts/promote_single_listing_ready.ts`, `scripts/approve_profitable_candidate.ts`, `scripts/reject_profitable_candidate.ts`, `scripts/run_shipping_orphan_resolution.ts`
+- Deep diagnostic helper: `scripts/run_listing_monitor_direct.ts`
+
+Every blocked invocation emits `CANONICAL_ENFORCEMENT_BLOCKED` with path, reason, and severity.
 
 ### Deprecated legacy paths still present
 
@@ -199,3 +213,13 @@ The following duplicate or versioned paths were retired after canonical replacem
 - Inventory risk quick action uses the same `enqueueInventoryRiskScan()` helper as CLI enqueue paths.
 
 There should be no operator-facing legacy script path required to trigger normal production behavior.
+
+## Controlled repair policy
+
+Controlled repair is non-canonical by design and allowed only when all conditions hold:
+
+1. Purpose is incident recovery or data correction with no canonical operator action equivalent.
+2. Invocation is engineering-only (`NON_CANONICAL_ENGINEERING_MODE=true`).
+3. Mutation intent is explicit (`CONTROLLED_REPAIR_PATH=true`).
+4. Invocation is auditable (enforcement/audit events retained in control-plane visibility).
+5. Learning Hub freshness and publish/mutation hard locks remain enforced at mutation entrypoints.
