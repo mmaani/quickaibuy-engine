@@ -28,6 +28,7 @@ export const BLOCKING_RISK_FLAGS = new Set([
   "SHIPPING_SIGNAL_MISSING",
   "SHIPPING_TRANSPARENCY_INCOMPLETE",
   "SHIP_FROM_MISSING",
+  "MISSING_SHIP_FROM_COUNTRY",
   "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT",
   "SHIPPING_SIGNAL_WEAK",
   "BRAND_OR_RESTRICTED_TITLE",
@@ -324,6 +325,122 @@ function asObject(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Number(String(value ?? "").trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function canonicalEvidenceFromFees(
+  estimatedFees: unknown
+): {
+  shipping: {
+    hasCanonicalShipping: boolean;
+    hasShippingSignal: boolean;
+    transparencyIncomplete: boolean;
+    shipFromUnresolved: boolean;
+    weakSignal: boolean;
+  };
+  media: {
+    hasCanonicalMedia: boolean;
+    mediaPresent: boolean;
+  };
+} {
+  const fees = asObject(estimatedFees);
+  const shippingBreakdown = asObject(fees?.shippingBreakdown);
+  const selectedSupplierOption = asObject(fees?.selectedSupplierOption);
+
+  const transparencyState =
+    asString(shippingBreakdown?.shippingTransparencyState)?.toUpperCase() ??
+    asString(selectedSupplierOption?.shippingTransparencyState)?.toUpperCase() ??
+    null;
+  const shippingErrorReason =
+    asString(shippingBreakdown?.shippingErrorReason)?.toUpperCase() ??
+    asString(selectedSupplierOption?.shippingErrorReason)?.toUpperCase() ??
+    null;
+  const resolutionMode =
+    asString(shippingBreakdown?.resolutionMode)?.toUpperCase() ??
+    asString(selectedSupplierOption?.shippingResolutionMode)?.toUpperCase() ??
+    null;
+  const sourceConfidence =
+    asFiniteNumber(shippingBreakdown?.sourceConfidence) ??
+    asFiniteNumber(selectedSupplierOption?.shippingSourceConfidence);
+  const totalShippingUsd = asFiniteNumber(shippingBreakdown?.totalShippingUsd);
+  const baseShippingCostUsd =
+    asFiniteNumber(shippingBreakdown?.baseShippingCostUsd) ??
+    asFiniteNumber(selectedSupplierOption?.selectedShippingCostUsd);
+  const minDays =
+    asFiniteNumber(shippingBreakdown?.deliveryEstimateMinDays) ??
+    asFiniteNumber(selectedSupplierOption?.deliveryEstimateMinDays);
+  const maxDays =
+    asFiniteNumber(shippingBreakdown?.deliveryEstimateMaxDays) ??
+    asFiniteNumber(selectedSupplierOption?.deliveryEstimateMaxDays);
+  const destinationCountry =
+    asString(shippingBreakdown?.destinationCountry) ??
+    asString(selectedSupplierOption?.shippingDestinationCountry);
+
+  const hasCanonicalShipping = Boolean(shippingBreakdown || selectedSupplierOption);
+  const hasShippingSignal =
+    totalShippingUsd != null ||
+    baseShippingCostUsd != null ||
+    minDays != null ||
+    maxDays != null ||
+    transparencyState === "PRESENT";
+  const transparencyIncomplete =
+    transparencyState === "MISSING" ||
+    shippingErrorReason === "MISSING_SHIPPING_TRANSPARENCY";
+  const shipFromUnresolved =
+    shippingErrorReason === "MISSING_SHIP_FROM_COUNTRY" ||
+    (hasShippingSignal &&
+      destinationCountry != null &&
+      !asString(shippingBreakdown?.originCountry) &&
+      !asString(selectedSupplierOption?.shippingOriginCountry));
+  const weakSignal =
+    resolutionMode === "INFERRED_WEAK" ||
+    (sourceConfidence != null && sourceConfidence < 0.75);
+
+  const mediaFromRawPayload = asObject(asObject(rowPayloadFromFees(fees))?.media);
+  const imageGalleryCount =
+    asFiniteNumber(rowPayloadFromFees(fees)?.imageGalleryCount) ??
+    asFiniteNumber(mediaFromRawPayload?.imageCount);
+  const videoCount =
+    asFiniteNumber(rowPayloadFromFees(fees)?.videoCount) ??
+    asFiniteNumber(mediaFromRawPayload?.videoCount);
+  const images = rowImagesFromFees(fees);
+  const mediaPresent =
+    (Array.isArray(images) && images.length > 0) ||
+    (imageGalleryCount != null && imageGalleryCount > 0) ||
+    (videoCount != null && videoCount > 0);
+
+  return {
+    shipping: {
+      hasCanonicalShipping,
+      hasShippingSignal,
+      transparencyIncomplete,
+      shipFromUnresolved,
+      weakSignal,
+    },
+    media: {
+      hasCanonicalMedia: mediaPresent || Boolean(mediaFromRawPayload),
+      mediaPresent,
+    },
+  };
+}
+
+function rowPayloadFromFees(fees: Record<string, unknown> | null): Record<string, unknown> | null {
+  return asObject(fees?.supplierRawPayload) ?? asObject(fees?.sourcePayload);
+}
+
+function rowImagesFromFees(fees: Record<string, unknown> | null): unknown[] | null {
+  const payload = rowPayloadFromFees(fees);
+  if (Array.isArray(payload?.images)) return payload.images;
+  return null;
+}
+
 function extractImageUrl(images: unknown, rawPayload: unknown): string | null {
   if (Array.isArray(images)) {
     for (const item of images) {
@@ -368,6 +485,7 @@ function deriveRiskFlags(row: CandidateRow): string[] {
         return "AVAILABILITY_NOT_CONFIRMED";
       }
       if (flag === "MISSING_SHIPPING_ESTIMATE") return "SHIPPING_SIGNAL_MISSING";
+      if (flag === "MISSING_SHIP_FROM_COUNTRY") return "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT";
       if (flag === "SHIPPING_STABILITY_WEAK") return "SHIPPING_SIGNAL_WEAK";
       if (flag === "WEAK_MEDIA") return "MEDIA_SIGNAL_WEAK";
       return flag;
@@ -399,6 +517,7 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     rawPayload: supplierPayload,
     telemetrySignals: supplierTelemetry.signals,
   });
+  const canonicalEvidence = canonicalEvidenceFromFees(row.estimated_fees);
   const joinedTitle = `${row.supplier_title ?? ""} ${row.marketplace_title ?? ""}`.trim();
 
   if (confidence != null && confidence < LOW_MATCH_CONFIDENCE_THRESHOLD) {
@@ -406,9 +525,10 @@ function deriveRiskFlags(row: CandidateRow): string[] {
   }
 
   if (
-    estimatedShipping === null ||
-    estimatedShipping === undefined ||
-    Number.isNaN(estimatedShipping)
+    (estimatedShipping === null ||
+      estimatedShipping === undefined ||
+      Number.isNaN(estimatedShipping)) &&
+    !canonicalEvidence.shipping.hasShippingSignal
   ) {
     if (
       !supplierEvidence.codes.includes("SOURCE_CHALLENGE_PAGE") &&
@@ -449,6 +569,47 @@ function deriveRiskFlags(row: CandidateRow): string[] {
 
   for (const code of supplierEvidence.codes) {
     flags.add(code);
+  }
+
+  if (canonicalEvidence.shipping.hasCanonicalShipping) {
+    if (canonicalEvidence.shipping.hasShippingSignal) {
+      flags.delete("SHIPPING_SIGNAL_MISSING");
+      flags.delete("MISSING_SHIPPING_ESTIMATE");
+    }
+    if (canonicalEvidence.shipping.transparencyIncomplete) {
+      flags.add("SHIPPING_TRANSPARENCY_INCOMPLETE");
+    }
+    if (canonicalEvidence.shipping.shipFromUnresolved) {
+      flags.add("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT");
+      flags.delete("SHIPPING_SIGNAL_MISSING");
+      flags.delete("MISSING_SHIPPING_ESTIMATE");
+    }
+    if (canonicalEvidence.shipping.weakSignal) {
+      flags.add("SHIPPING_SIGNAL_WEAK");
+    }
+  }
+
+  const supplierImages = Array.isArray((supplierPayload as Record<string, unknown> | null)?.images)
+    ? ((supplierPayload as Record<string, unknown>).images as unknown[])
+    : [];
+  const supplierMediaNode = asObject(supplierPayload?.media);
+  const supplierImageCount =
+    asFiniteNumber(supplierPayload?.imageGalleryCount) ??
+    asFiniteNumber(supplierMediaNode?.imageCount) ??
+    supplierImages.length;
+  const supplierVideoCount =
+    asFiniteNumber(supplierPayload?.videoCount) ??
+    asFiniteNumber(supplierMediaNode?.videoCount);
+  const supplierMediaPresent =
+    extractImageUrl(supplierImages, supplierPayload) != null ||
+    supplierImageCount > 0 ||
+    (supplierVideoCount != null && supplierVideoCount > 0);
+
+  if ((canonicalEvidence.media.hasCanonicalMedia && canonicalEvidence.media.mediaPresent) || supplierMediaPresent) {
+    flags.delete("MEDIA_MISSING");
+  }
+  if (flags.has("MEDIA_MISSING")) {
+    flags.delete("MEDIA_PRESENT_QUALITY_WEAK");
   }
 
   return Array.from(flags);
@@ -515,6 +676,14 @@ function computeListingEligibility(input: {
 
   if (input.riskFlags.includes("SHIPPING_SIGNAL_MISSING")) {
     reasons.push("shipping signal is missing");
+  } else if (
+    input.riskFlags.includes("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT") ||
+    input.riskFlags.includes("SHIP_FROM_MISSING") ||
+    input.riskFlags.includes("MISSING_SHIP_FROM_COUNTRY")
+  ) {
+    reasons.push("shipping is present, but ship-from country is unresolved");
+  } else if (input.riskFlags.includes("SHIPPING_TRANSPARENCY_INCOMPLETE")) {
+    reasons.push("shipping signal is present, but transparency is incomplete");
   } else if (input.riskFlags.includes("SHIPPING_SIGNAL_WEAK")) {
     reasons.push("shipping signal is weak");
   }
