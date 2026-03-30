@@ -13,6 +13,8 @@ export type ShippingResolutionMode =
 
 export type ShippingResolutionError =
   | "MISSING_SHIPPING_INTELLIGENCE"
+  | "MISSING_SHIP_FROM_COUNTRY"
+  | "MISSING_SHIPPING_TRANSPARENCY"
   | "STALE_SHIPPING_QUOTE"
   | "SHIPPING_DELIVERY_WINDOW_TOO_LONG"
   | "SHIPPING_COST_UNRESOLVED"
@@ -31,6 +33,9 @@ export type ShippingResolution = {
   stale: boolean;
   quoteAgeHours: number | null;
   sourceType: string | null;
+  shippingMethod: string | null;
+  shippingTransparencyState: "PRESENT" | "MISSING";
+  shippingValidity: "PASS" | "BLOCKED";
   errorReason: ShippingResolutionError;
 };
 
@@ -213,6 +218,9 @@ export async function resolveShippingCost(input: {
   }
 
   let errorReason: ShippingResolutionError = null;
+  const shippingMethod = sourceType ?? null;
+  const shippingTransparencyState =
+    minDays != null || maxDays != null ? "PRESENT" : "MISSING";
 
   if (baseShippingUsd == null) {
     return {
@@ -227,11 +235,18 @@ export async function resolveShippingCost(input: {
       stale,
       quoteAgeHours,
       sourceType,
+      shippingMethod,
+      shippingTransparencyState,
+      shippingValidity: "BLOCKED",
       errorReason: "MISSING_SHIPPING_INTELLIGENCE",
     };
   }
 
-  if (stale) errorReason = "STALE_SHIPPING_QUOTE";
+  if (!originCountry) errorReason = "MISSING_SHIP_FROM_COUNTRY";
+  if (!errorReason && shippingTransparencyState === "MISSING") {
+    errorReason = "MISSING_SHIPPING_TRANSPARENCY";
+  }
+  if (!errorReason && stale) errorReason = "STALE_SHIPPING_QUOTE";
   if (!errorReason && confidence != null && confidence < config.minShippingConfidence && resolutionMode !== "INFERRED_STRONG") {
     errorReason = "SHIPPING_CONFIDENCE_TOO_LOW";
   }
@@ -258,6 +273,9 @@ export async function resolveShippingCost(input: {
     stale,
     quoteAgeHours,
     sourceType,
+    shippingMethod,
+    shippingTransparencyState,
+    shippingValidity: errorReason ? "BLOCKED" : "PASS",
     errorReason,
   };
 }

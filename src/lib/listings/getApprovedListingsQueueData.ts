@@ -54,6 +54,12 @@ type ListingQueueRow = {
   shipping_destination_country: string | null;
   shipping_quote_age_hours: string | number | null;
   shipping_resolution_mode: string | null;
+  shipping_method: string | null;
+  shipping_transparency_state: string | null;
+  shipping_validity: string | null;
+  shipping_error_reason: string | null;
+  delivery_estimate_min_days: string | number | null;
+  delivery_estimate_max_days: string | number | null;
   reprice_action: string | null;
   reprice_last_reason: string | null;
   reprice_last_evaluated_ts: string | null;
@@ -122,6 +128,12 @@ export type QueueListItem = {
   shippingDestinationCountry: string | null;
   shippingQuoteAgeHours: number | null;
   shippingResolutionMode: string | null;
+  shippingMethod: string | null;
+  shippingTransparencyState: string | null;
+  shippingValidity: string | null;
+  shippingErrorReason: string | null;
+  deliveryEstimateMinDays: number | null;
+  deliveryEstimateMaxDays: number | null;
   repriceAction: string | null;
   repriceLastReason: string | null;
   repriceLastEvaluatedTs: string | null;
@@ -380,6 +392,12 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     shippingDestinationCountry: row.shipping_destination_country ?? null,
     shippingQuoteAgeHours: toNumber(row.shipping_quote_age_hours),
     shippingResolutionMode: row.shipping_resolution_mode ?? null,
+    shippingMethod: row.shipping_method ?? null,
+    shippingTransparencyState: row.shipping_transparency_state ?? null,
+    shippingValidity: row.shipping_validity ?? null,
+    shippingErrorReason: row.shipping_error_reason ?? null,
+    deliveryEstimateMinDays: toNumber(row.delivery_estimate_min_days),
+    deliveryEstimateMaxDays: toNumber(row.delivery_estimate_max_days),
     repriceAction: row.reprice_action ?? null,
     repriceLastReason: row.reprice_last_reason ?? null,
     repriceLastEvaluatedTs: row.reprice_last_evaluated_ts ?? null,
@@ -649,6 +667,12 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingDestinationCountry' AS shipping_destination_country,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingQuoteAgeHours' AS shipping_quote_age_hours,
       pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingResolutionMode' AS shipping_resolution_mode,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingMethod' AS shipping_method,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingTransparencyState' AS shipping_transparency_state,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingValidity' AS shipping_validity,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'shippingErrorReason' AS shipping_error_reason,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'deliveryEstimateMinDays' AS delivery_estimate_min_days,
+      pc.estimated_fees -> 'selectedSupplierOption' ->> 'deliveryEstimateMaxDays' AS delivery_estimate_max_days,
       pc.approved_ts,
       pc.approved_by,
       l.id AS listing_id,

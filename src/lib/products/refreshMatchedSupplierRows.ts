@@ -159,7 +159,6 @@ async function getApprovedCandidatesForSupplierProduct(input: {
     WHERE LOWER(pc.supplier_key) = ${String(input.supplierKey).trim().toLowerCase()}
       AND pc.supplier_product_id = ${String(input.supplierProductId).trim()}
       AND pc.decision_status = 'APPROVED'
-      AND pc.listing_eligible = TRUE
     ORDER BY pc.calc_ts DESC, pc.id DESC
   `);
 
