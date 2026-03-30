@@ -19,6 +19,10 @@ import {
   isPausedListingStatus,
 } from "@/lib/listings/statuses";
 import { recordPublishLearning } from "@/lib/learningHub/pipelineWriters";
+import {
+  assertLearningHubReady,
+  assertPublishExecutionContext,
+} from "@/lib/enforcement/runtimeSovereignty";
 
 // Supplier snapshot older than 48h must be refreshed before publish.
 const SUPPLIER_SNAPSHOT_REFRESH_MAX_AGE_HOURS = 48;
@@ -50,6 +54,11 @@ export async function runListingExecution(opts?: {
   marketplaceKey?: "ebay";
   actorId?: string;
   listingId?: string;
+  executionContext?: {
+    viaWorkerJob?: boolean;
+    viaBackbone?: boolean;
+    viaControlPlane?: boolean;
+  };
 }) {
   const limit = opts?.limit ?? opts?.dailyCap ?? 5;
   const dryRun = opts?.dryRun ?? true;
@@ -57,6 +66,32 @@ export async function runListingExecution(opts?: {
   const actorId = opts?.actorId ?? "listingExecute.worker";
   const listingIdFilter = String(opts?.listingId ?? "").trim();
   const livePublishEnabled = isLivePublishEnabled();
+  const executionContext = {
+    viaWorkerJob: Boolean(opts?.executionContext?.viaWorkerJob),
+    viaBackbone: Boolean(opts?.executionContext?.viaBackbone),
+    viaControlPlane: Boolean(opts?.executionContext?.viaControlPlane),
+  };
+
+  await assertPublishExecutionContext({
+    blockedAction: "listing_publish_execution",
+    path: "runListingExecution",
+    actorId,
+    actorType: "WORKER",
+    ...executionContext,
+  });
+
+  await assertLearningHubReady({
+    blockedAction: "listing_publish_execution",
+    path: "runListingExecution",
+    actorId,
+    actorType: "WORKER",
+    requiredDomains: [
+      "supplier_intelligence",
+      "shipping_intelligence",
+      "opportunity_scores",
+      "control_plane_scorecards",
+    ],
+  });
 
   const rows = await getListingExecutionCandidates({
     marketplace: marketplaceKey,

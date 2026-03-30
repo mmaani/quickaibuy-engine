@@ -795,6 +795,12 @@ export const jobsWorker = new Worker(
           shippingLimit: Number(job.data?.shippingLimit ?? 50),
           prepareLimit: Number(job.data?.prepareLimit ?? 25),
           publishLimit: Number(job.data?.publishLimit ?? 3),
+          executionSource:
+            job.data?.triggerSource === "control-plane" ||
+            job.data?.triggerSource === "schedule" ||
+            job.data?.triggerSource === "script"
+              ? job.data.triggerSource
+              : "system",
         });
 
         console.log("[jobs.worker] completed job", {

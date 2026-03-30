@@ -47,11 +47,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "listingId required" }, { status: 400 });
   }
 
-  const result = await markListingReadyToPublish({
-    listingId,
-    actorType: "ADMIN",
-    actorId: getReviewActorIdFromAuthorizationHeader(authorization) ?? "admin-listings",
-  });
+  let result;
+  try {
+    result = await markListingReadyToPublish({
+      listingId,
+      actorType: "ADMIN",
+      actorId: getReviewActorIdFromAuthorizationHeader(authorization) ?? "admin-listings",
+    });
+  } catch (error) {
+    const redirectUrl = buildRedirectUrl(request);
+    if (candidateId) redirectUrl.searchParams.set("candidateId", candidateId);
+    redirectUrl.searchParams.set(
+      "promoteError",
+      error instanceof Error ? error.message : "Canonical execution enforcement blocked promotion"
+    );
+    return NextResponse.redirect(redirectUrl, { status: 303 });
+  }
 
   const redirectUrl = buildRedirectUrl(request);
   if (candidateId) redirectUrl.searchParams.set("candidateId", candidateId);

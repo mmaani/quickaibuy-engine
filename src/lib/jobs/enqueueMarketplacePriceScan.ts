@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import { bullConnection } from "@/lib/bull";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
 import { markJobQueued } from "@/lib/jobs/jobLedger";
+import { assertLearningHubReady } from "@/lib/enforcement/runtimeSovereignty";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
@@ -13,6 +14,18 @@ export async function enqueueMarketplacePriceScan(input?: {
   productRawId?: string;
   platform?: "amazon" | "ebay" | "all";
 }) {
+  await assertLearningHubReady({
+    blockedAction: "enqueue_marketplace_price_scan",
+    path: "enqueueMarketplacePriceScan",
+    actorId: "enqueueMarketplacePriceScan",
+    actorType: "SYSTEM",
+    requiredDomains: [
+      "marketplace_fit_intelligence",
+      "opportunity_scores",
+      "control_plane_scorecards",
+    ],
+  });
+
   const limit = Number(input?.limit ?? 100);
   const productRawId = input?.productRawId ? String(input.productRawId).trim() : undefined;
   const platform = (input?.platform ?? "all") as "amazon" | "ebay" | "all";

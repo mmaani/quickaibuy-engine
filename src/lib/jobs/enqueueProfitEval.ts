@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import { bullConnection } from "@/lib/bull";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
 import { markJobQueued } from "@/lib/jobs/jobLedger";
+import { assertLearningHubReady } from "@/lib/enforcement/runtimeSovereignty";
 
 const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
   connection: bullConnection,
@@ -13,6 +14,19 @@ export async function enqueueProfitEval(input?: {
   idempotencySuffix?: string;
   triggerSource?: "manual" | "schedule" | "follow-up";
 }) {
+  await assertLearningHubReady({
+    blockedAction: "enqueue_profit_eval",
+    path: "enqueueProfitEval",
+    actorId: "enqueueProfitEval",
+    actorType: "SYSTEM",
+    requiredDomains: [
+      "supplier_intelligence",
+      "shipping_intelligence",
+      "opportunity_scores",
+      "control_plane_scorecards",
+    ],
+  });
+
   const limit = Number(input?.limit ?? 100);
   const idempotencySuffix = String(input?.idempotencySuffix ?? "latest").trim() || "latest";
   const triggerSource = (input?.triggerSource ?? "manual") as "manual" | "schedule" | "follow-up";
@@ -40,4 +54,3 @@ export async function enqueueProfitEval(input?: {
 
   return job;
 }
-

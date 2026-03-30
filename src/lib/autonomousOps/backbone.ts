@@ -710,10 +710,12 @@ export async function runAutonomousOperations(input?: {
   shippingLimit?: number;
   prepareLimit?: number;
   publishLimit?: number;
+  executionSource?: "control-plane" | "schedule" | "script" | "system";
 }): Promise<AutonomousOpsRunResult> {
   const phase = input?.phase ?? "full";
   const actorId = input?.actorId ?? "runAutonomousOperations";
   const actorType = normalizeActorType(input?.actorType);
+  const executionSource = input?.executionSource ?? "system";
   const stages: AutonomousOpsStageResult[] = [];
   const generatedAt = new Date().toISOString();
   let runtime: RuntimeDiagnostics = {
@@ -1150,6 +1152,11 @@ export async function runAutonomousOperations(input?: {
           marketplaceKey: "ebay",
           dryRun: String(process.env.ENABLE_EBAY_LIVE_PUBLISH ?? "false").trim().toLowerCase() !== "true",
           actorId,
+          executionContext: {
+            viaWorkerJob: actorType === "WORKER",
+            viaBackbone: true,
+            viaControlPlane: executionSource === "control-plane",
+          },
         });
         stages.push({
           key: "guarded_publish_execution",

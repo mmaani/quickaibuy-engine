@@ -24,6 +24,10 @@ import {
   findListingDuplicatesForCandidate,
   getDuplicateBlockDecision,
 } from "./duplicateProtection";
+import {
+  assertControlledMutationContext,
+  assertLearningHubReady,
+} from "@/lib/enforcement/runtimeSovereignty";
 
 export type MarkListingReadyInput = {
   listingId: string;
@@ -94,6 +98,26 @@ export async function markListingReadyToPublish(
 ): Promise<MarkListingReadyResult> {
   const actorId = input.actorId ?? "markListingReadyToPublish";
   const actorType = normalizeActorType(input.actorType);
+  await assertControlledMutationContext({
+    blockedAction: "listing_promote_ready_to_publish",
+    path: "markListingReadyToPublish",
+    actorId,
+    actorType,
+    viaWorkerJob: actorType === "WORKER",
+    controlledRepairPath: String(process.env.CONTROLLED_REPAIR_PATH ?? "false").trim().toLowerCase() === "true",
+  });
+  await assertLearningHubReady({
+    blockedAction: "listing_promote_ready_to_publish",
+    path: "markListingReadyToPublish",
+    actorId,
+    actorType,
+    requiredDomains: [
+      "supplier_intelligence",
+      "shipping_intelligence",
+      "opportunity_scores",
+      "control_plane_scorecards",
+    ],
+  });
 
   const current = await db.execute(sql`
     SELECT

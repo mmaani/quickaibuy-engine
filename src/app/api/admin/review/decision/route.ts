@@ -11,6 +11,10 @@ import {
   isAuthorizedReviewAuthorizationHeader,
   isReviewConsoleConfigured,
 } from "@/lib/review/auth";
+import {
+  assertControlledMutationContext,
+  assertLearningHubReady,
+} from "@/lib/enforcement/runtimeSovereignty";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -264,6 +268,29 @@ export async function POST(request: Request) {
 
     if (!REVIEW_ACTION_STATUSES.includes(decisionStatus as (typeof REVIEW_ACTION_STATUSES)[number])) {
       return redirectWithError(request, "Choose Approve, Reject, or Mark for Recheck before submitting.");
+    }
+    if (decisionStatus === "APPROVED") {
+      await assertControlledMutationContext({
+        blockedAction: "candidate_approval",
+        path: "api/admin/review/decision",
+        actorId,
+        actorType: "ADMIN",
+        viaWorkerJob: false,
+        controlledRepairPath:
+          String(process.env.CONTROLLED_REPAIR_PATH ?? "false").trim().toLowerCase() === "true",
+      });
+      await assertLearningHubReady({
+        blockedAction: "candidate_approval",
+        path: "api/admin/review/decision",
+        actorId,
+        actorType: "ADMIN",
+        requiredDomains: [
+          "supplier_intelligence",
+          "shipping_intelligence",
+          "opportunity_scores",
+          "control_plane_scorecards",
+        ],
+      });
     }
 
     const redirectUrl = buildRedirectUrl(request);
