@@ -23,6 +23,9 @@ export type ShippingResolutionError =
 
 export type ShippingResolution = {
   resolvedOriginCountry: string | null;
+  resolvedOriginSource: "explicit" | "inferred" | "weak";
+  resolvedOriginConfidence: number;
+  resolvedOriginUnresolvedReason: string | null;
   destinationCountry: string;
   shippingCostUsd: number;
   shippingReserveUsd: number;
@@ -176,6 +179,9 @@ export async function resolveShippingCost(input: {
   let minDays: number | null = null;
   let maxDays: number | null = null;
   let originCountry: string | null = null;
+  let originSource: "explicit" | "inferred" | "weak" = "weak";
+  let originConfidence = 0;
+  let originUnresolvedReason: string | null = null;
   let stale = false;
   let quoteAgeHours: number | null = null;
 
@@ -187,6 +193,8 @@ export async function resolveShippingCost(input: {
     minDays = row.estimatedMinDays;
     maxDays = row.estimatedMaxDays;
     originCountry = row.originCountry;
+    originSource = row.originCountry ? "explicit" : "weak";
+    originConfidence = row.originCountry ? Math.max(originConfidence, 0.92) : originConfidence;
     const verifiedAt = toDate(row.lastVerifiedAt);
     if (verifiedAt) {
       quoteAgeHours = round2((now.getTime() - verifiedAt.getTime()) / (1000 * 60 * 60));
@@ -213,6 +221,9 @@ export async function resolveShippingCost(input: {
     minDays = inferred.estimatedMinDays;
     maxDays = inferred.estimatedMaxDays;
     originCountry = inferred.originCountry;
+    originSource = inferred.originSource;
+    originConfidence = inferred.originConfidence;
+    originUnresolvedReason = inferred.originUnresolvedReason;
     stale = false;
     quoteAgeHours = 0;
   }
@@ -225,6 +236,9 @@ export async function resolveShippingCost(input: {
   if (baseShippingUsd == null) {
     return {
       resolvedOriginCountry: originCountry,
+      resolvedOriginSource: originSource,
+      resolvedOriginConfidence: originConfidence,
+      resolvedOriginUnresolvedReason: originUnresolvedReason,
       destinationCountry,
       shippingCostUsd: 0,
       shippingReserveUsd: 0,
@@ -263,6 +277,9 @@ export async function resolveShippingCost(input: {
 
   return {
     resolvedOriginCountry: originCountry,
+    resolvedOriginSource: originSource,
+    resolvedOriginConfidence: originConfidence,
+    resolvedOriginUnresolvedReason: originUnresolvedReason,
     destinationCountry,
     shippingCostUsd: round2(baseShippingUsd),
     shippingReserveUsd,

@@ -82,6 +82,9 @@ type CandidateOption = {
   shippingQuoteAgeHours: number | null;
   shippingConfidence: number | null;
   shippingOriginCountry: string | null;
+  shippingOriginSource: "explicit" | "inferred" | "weak";
+  shippingOriginConfidence: number;
+  shippingOriginUnresolvedReason: string | null;
   shippingSourceType: string | null;
   shippingMethod: string | null;
   shippingTransparencyState: "PRESENT" | "MISSING";
@@ -773,6 +776,9 @@ export async function runProfitEngine(input?: {
       shippingBreakdown: {
         destinationCountry,
         originCountry: shippingResolution.resolvedOriginCountry,
+        originSource: shippingResolution.resolvedOriginSource,
+        originConfidence: shippingResolution.resolvedOriginConfidence,
+        originUnresolvedReason: shippingResolution.resolvedOriginUnresolvedReason,
         shippingMethod: shippingResolution.shippingMethod,
         baseShippingCostUsd: shippingResolution.shippingCostUsd,
         shippingReserveUsd: shippingResolution.shippingReserveUsd,
@@ -834,6 +840,9 @@ export async function runProfitEngine(input?: {
       shippingQuoteAgeHours: shippingResolution.quoteAgeHours,
       shippingConfidence: shippingResolution.sourceConfidence,
       shippingOriginCountry: shippingResolution.resolvedOriginCountry,
+      shippingOriginSource: shippingResolution.resolvedOriginSource,
+      shippingOriginConfidence: shippingResolution.resolvedOriginConfidence,
+      shippingOriginUnresolvedReason: shippingResolution.resolvedOriginUnresolvedReason,
       shippingSourceType: shippingResolution.sourceType,
       shippingMethod: shippingResolution.shippingMethod,
       shippingTransparencyState: shippingResolution.shippingTransparencyState,
@@ -1055,6 +1064,9 @@ export async function runProfitEngine(input?: {
         selectedLandedCostUsd: round2(option.landedSupplierCost),
         selectedShippingCostUsd: round2(option.shipping),
         shippingOriginCountry: option.shippingOriginCountry,
+        shippingOriginSource: option.shippingOriginSource,
+        shippingOriginConfidence: option.shippingOriginConfidence,
+        shippingOriginUnresolvedReason: option.shippingOriginUnresolvedReason,
         shippingDestinationCountry: option.destinationCountry,
         shippingMethod: option.shippingMethod,
         shippingResolutionMode: option.shippingResolutionMode,

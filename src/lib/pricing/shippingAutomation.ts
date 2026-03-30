@@ -7,6 +7,7 @@ import { refreshSingleSupplierProduct } from "@/lib/products/refreshSingleSuppli
 import { compareSupplierIntelligence, computeSupplierIntelligenceSignal } from "@/lib/suppliers/intelligence";
 import { getSupplierRefreshSuccessRateMap, getSupplierRefreshTelemetryMap } from "@/lib/suppliers/telemetry";
 import { recordShippingAutomationLearning } from "@/lib/learningHub/pipelineWriters";
+import { resolveShipFromOrigin } from "@/lib/products/shipFromOrigin";
 
 type ActorType = "ADMIN" | "SYSTEM" | "WORKER";
 
@@ -100,34 +101,7 @@ function hasShippingEstimateSignal(input: unknown): boolean {
   });
 }
 
-function asObject(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function hasExplicitShipFromEvidence(input: { rawPayload: unknown; shippingEstimates: unknown }): boolean {
-  const rawPayload = asObject(input.rawPayload) ?? {};
-  const rawSignal = [
-    rawPayload.shipFromCountry,
-    rawPayload.ship_from_country,
-    rawPayload.supplierWarehouseCountry,
-    rawPayload.supplier_warehouse_country,
-    rawPayload.shippingOriginCountry,
-    rawPayload.shipping_origin_country,
-  ]
-    .map((value) => String(value ?? "").trim())
-    .some(Boolean);
-  const estimateSignal = Array.isArray(input.shippingEstimates)
-    ? input.shippingEstimates.some((estimate) => {
-        const entry = asObject(estimate) ?? {};
-        return [entry.ship_from_country, entry.origin_country, entry.ship_from_location]
-          .map((value) => String(value ?? "").trim())
-          .some(Boolean);
-      })
-    : false;
-  return rawSignal || estimateSignal;
-}
+const ORIGIN_PERSISTENCE_THRESHOLD = 0.75;
 
 export function classifyShippingGap(row: ShippingBlockedCandidateRow): ShippingGapClassification {
   if (!row.snapshotTs) return "STALE_OR_MISSING_SUPPLIER_SNAPSHOT";
@@ -450,19 +424,25 @@ export async function automateShippingIntelligence(input?: {
       continue;
     }
 
-    const explicitShipFromEvidence = hasExplicitShipFromEvidence({
+    const resolvedOrigin = resolveShipFromOrigin({
       rawPayload,
       shippingEstimates,
+      destinationCountry: "US",
     });
-    if (!inferred.originCountry || !explicitShipFromEvidence) {
+    if (
+      !inferred.originCountry ||
+      !resolvedOrigin.originCountry ||
+      resolvedOrigin.originCountry !== inferred.originCountry ||
+      resolvedOrigin.originConfidence < ORIGIN_PERSISTENCE_THRESHOLD
+    ) {
       blockedOutcomes.push({
         candidateId: row.candidateId,
         supplierKey: row.supplierKey,
         supplierProductId: row.supplierProductId,
         reason: "MISSING_EXPLICIT_SHIP_FROM_EVIDENCE",
         detail: inferred.originCountry
-          ? "inference had normalized origin but supplier payload lacks explicit ship-from evidence"
-          : "inference failed to resolve supplier ship-from country",
+          ? `origin evidence insufficient (resolved=${resolvedOrigin.originCountry ?? "NONE"} confidence=${resolvedOrigin.originConfidence})`
+          : `inference failed to resolve supplier ship-from country (${resolvedOrigin.unresolvedReason ?? "no_reason"})`,
       });
       await writeAuditLog({
         actorType,
@@ -477,6 +457,9 @@ export async function automateShippingIntelligence(input?: {
           inferredMode: inferred.mode,
           inferredConfidence: inferred.confidence,
           inferredOriginCountry: inferred.originCountry,
+          originSource: resolvedOrigin.originSource,
+          originConfidence: resolvedOrigin.originConfidence,
+          originUnresolvedReason: resolvedOrigin.unresolvedReason,
         },
       });
       continue;

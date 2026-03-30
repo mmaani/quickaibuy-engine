@@ -4,6 +4,7 @@ import {
   type AvailabilitySignal,
 } from "./supplierAvailability";
 import { normalizeShipFromCountry } from "./shipFromCountry";
+import { resolveShipFromOrigin } from "./shipFromOrigin";
 import type { ShippingEstimate } from "./suppliers/types";
 
 export type SupplierRowDecision = "ACTIONABLE" | "MANUAL_REVIEW" | "BLOCKED";
@@ -198,6 +199,15 @@ function deriveShippingDetails(
     asString(rawPayload.shippingGuarantees) ??
     asString(rawPayload.shippingGuarantee) ??
     asString(shippingNode?.guarantees);
+  const resolvedOrigin = resolveShipFromOrigin({
+    rawPayload,
+    shippingEstimates,
+    destinationCountry:
+      asString(rawPayload.shippingDestinationCountry) ??
+      asString(rawPayload.shipping_destination_country) ??
+      asString(shippingNode?.destinationCountry) ??
+      asString(shippingNode?.destination_country),
+  });
 
   const estimate = shippingEstimates.find((candidate) => {
     const label = String(candidate.label ?? "").toLowerCase();
@@ -223,12 +233,16 @@ function deriveShippingDetails(
   const shippingMethod = directMethod ?? label;
   const deliveryEstimateMinDays = directMin ?? estimate?.etaMinDays ?? null;
   const deliveryEstimateMaxDays = directMax ?? estimate?.etaMaxDays ?? null;
-  const shipFromCountry = directShipFromCountry ?? normalizeShipFromCountry(estimate?.ship_from_country);
+  const shipFromCountry =
+    directShipFromCountry ?? resolvedOrigin.originCountry ?? normalizeShipFromCountry(estimate?.ship_from_country);
   const shipFromLocation = directShipFromLocation ?? asString(estimate?.ship_from_location);
   const parseMode = asString(rawPayload.parseMode)?.toLowerCase();
   const evidenceSource = asString(rawPayload.shippingOriginEvidenceSource);
   const shippingOriginEvidenceSource =
     evidenceSource ??
+    (resolvedOrigin.originCountry
+      ? `origin_resolver:${resolvedOrigin.originSource}`
+      : null) ??
     (directShipFromCountry != null || directShipFromLocation != null
       ? parseMode === "detail" || asString(rawPayload.detailQuality) != null
         ? "supplier_detail"
@@ -292,6 +306,8 @@ function deriveShippingDetails(
   const shipFromConfidence = clamp01(
     shipFromCountry == null && shipFromLocation == null
       ? 0
+      : resolvedOrigin.originCountry != null
+        ? resolvedOrigin.originConfidence
       : shippingOriginEvidenceSource === "supplier_detail"
         ? shipFromCountry != null
           ? 0.92
