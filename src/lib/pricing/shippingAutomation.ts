@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { runProfitEngine } from "@/lib/profit/profitEngine";
 import { refreshSingleSupplierProduct } from "@/lib/products/refreshSingleSupplierProduct";
 import { compareSupplierIntelligence, computeSupplierIntelligenceSignal } from "@/lib/suppliers/intelligence";
-import { getSupplierRefreshSuccessRateMap } from "@/lib/suppliers/telemetry";
+import { getSupplierRefreshSuccessRateMap, getSupplierRefreshTelemetryMap } from "@/lib/suppliers/telemetry";
 import { recordShippingAutomationLearning } from "@/lib/learningHub/pipelineWriters";
 
 type ActorType = "ADMIN" | "SYSTEM" | "WORKER";
@@ -70,6 +70,13 @@ export type ShippingAutomationResult = {
     confidence: number;
     sourceType: string | null;
   }>;
+  blockedOutcomes: Array<{
+    candidateId: string;
+    supplierKey: string;
+    supplierProductId: string;
+    reason: string;
+    detail: string | null;
+  }>;
 };
 
 function normalizeActorType(value?: string): ActorType {
@@ -91,6 +98,35 @@ function hasShippingEstimateSignal(input: unknown): boolean {
       record.label != null
     );
   });
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function hasExplicitShipFromEvidence(input: { rawPayload: unknown; shippingEstimates: unknown }): boolean {
+  const rawPayload = asObject(input.rawPayload) ?? {};
+  const rawSignal = [
+    rawPayload.shipFromCountry,
+    rawPayload.ship_from_country,
+    rawPayload.supplierWarehouseCountry,
+    rawPayload.supplier_warehouse_country,
+    rawPayload.shippingOriginCountry,
+    rawPayload.shipping_origin_country,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .some(Boolean);
+  const estimateSignal = Array.isArray(input.shippingEstimates)
+    ? input.shippingEstimates.some((estimate) => {
+        const entry = asObject(estimate) ?? {};
+        return [entry.ship_from_country, entry.origin_country, entry.ship_from_location]
+          .map((value) => String(value ?? "").trim())
+          .some(Boolean);
+      })
+    : false;
+  return rawSignal || estimateSignal;
 }
 
 export function classifyShippingGap(row: ShippingBlockedCandidateRow): ShippingGapClassification {
@@ -174,6 +210,8 @@ export async function findShippingBlockedCandidates(limit = 100): Promise<Shippi
     WHERE lower(pc.marketplace_key) = 'ebay'
       AND (
         pc.listing_block_reason = 'MISSING_SHIPPING_INTELLIGENCE'
+        OR pc.listing_block_reason = 'shipping intelligence unresolved: MISSING_SHIP_FROM_COUNTRY'
+        OR pc.listing_block_reason = 'shipping intelligence unresolved: MISSING_SHIPPING_TRANSPARENCY'
         OR pc.listing_block_reason LIKE 'shipping intelligence unresolved:%'
       )
     ORDER BY pc.calc_ts DESC NULLS LAST
@@ -278,9 +316,11 @@ export async function automateShippingIntelligence(input?: {
   const actorType = normalizeActorType(input?.actorType);
   const rows = await findShippingBlockedCandidates(input?.limit ?? 100);
   const refreshSuccessRates = await getSupplierRefreshSuccessRateMap();
+  const refreshTelemetry = await getSupplierRefreshTelemetryMap();
   const gapCounts = new Map<ShippingGapClassification, number>();
   const supplierStats = new Map<string, { blocked: number; persistedQuotes: number }>();
   const persisted: ShippingAutomationResult["persisted"] = [];
+  const blockedOutcomes: ShippingAutomationResult["blockedOutcomes"] = [];
   let recomputedCandidates = 0;
   let exactRefreshAttempts = 0;
   let exactRefreshRecovered = 0;
@@ -288,6 +328,7 @@ export async function automateShippingIntelligence(input?: {
   let alternateSupplierRecovered = 0;
 
   for (const row of rows) {
+    const supplierTelemetry = refreshTelemetry.get(row.supplierKey);
     const rootCause = classifyShippingGap(row);
     gapCounts.set(rootCause, (gapCounts.get(rootCause) ?? 0) + 1);
     const supplierStat = supplierStats.get(row.supplierKey) ?? { blocked: 0, persistedQuotes: 0 };
@@ -309,37 +350,66 @@ export async function automateShippingIntelligence(input?: {
       rootCause === "SUPPLIER_PAYLOAD_LACKS_SHIPPING" ||
       rootCause === "PARSING_OR_PERSIST_GAP"
     ) {
-      exactRefreshAttempts += 1;
-      const refresh = await refreshSingleSupplierProduct({
-        supplierKey: row.supplierKey,
-        supplierProductId: row.supplierProductId,
-        requireExactMatch: true,
-        updateExisting: true,
-        searchLimit: 60,
-      });
-
-      if (refresh.refreshedSnapshotId || refresh.refreshed) {
-        const latest = await getLatestShippingEvidence({
+      const supplierRateLimited =
+        (supplierTelemetry?.attempts ?? 0) >= 5 &&
+        ((supplierTelemetry?.rateLimitEvents ?? 0) / Math.max(1, supplierTelemetry?.attempts ?? 0) >= 0.45 ||
+          (supplierTelemetry?.refreshSuccessRate ?? 0) <= 0.2);
+      if (supplierRateLimited) {
+        blockedOutcomes.push({
+          candidateId: row.candidateId,
           supplierKey: row.supplierKey,
           supplierProductId: row.supplierProductId,
+          reason: "SUPPLIER_RATE_LIMITED",
+          detail: "suppressed repeated exact-refresh attempts due to high 429/miss telemetry",
         });
-        shippingEstimates = latest.shippingEstimates;
-        rawPayload = latest.rawPayload;
-        inferred = inferShippingFromEvidence({
+      } else {
+        exactRefreshAttempts += 1;
+        const refresh = await refreshSingleSupplierProduct({
           supplierKey: row.supplierKey,
-          destinationCountry: "US",
-          shippingEstimates,
-          rawPayload,
-          defaultShippingUsd: null,
+          supplierProductId: row.supplierProductId,
+          requireExactMatch: true,
+          updateExisting: true,
+          searchLimit: 60,
         });
+
+        if (refresh.refreshedSnapshotId || refresh.refreshed) {
+          const latest = await getLatestShippingEvidence({
+            supplierKey: row.supplierKey,
+            supplierProductId: row.supplierProductId,
+          });
+          shippingEstimates = latest.shippingEstimates;
+          rawPayload = latest.rawPayload;
+          inferred = inferShippingFromEvidence({
+            supplierKey: row.supplierKey,
+            destinationCountry: "US",
+            shippingEstimates,
+            rawPayload,
+            defaultShippingUsd: null,
+          });
+        }
       }
     }
 
     if (inferred.shippingCostUsd == null || inferred.confidence == null || inferred.confidence < 0.6) {
       const canTryAlternateSupplier = row.decisionStatus !== "APPROVED";
       if (canTryAlternateSupplier) {
+        const currentSignal = computeSupplierIntelligenceSignal({
+          supplierKey: row.supplierKey,
+          shippingEstimates,
+          rawPayload,
+          refreshSuccessRate: refreshSuccessRates.get(row.supplierKey) ?? null,
+        });
         const alternates = await getAlternateSupplierTargets(row, refreshSuccessRates);
-        for (const alternate of alternates.slice(0, 2)) {
+        const strongerAlternates = alternates.filter((alternate) => {
+          const signal = computeSupplierIntelligenceSignal({
+            supplierKey: alternate.supplierKey,
+            shippingEstimates: alternate.shippingEstimates,
+            rawPayload: alternate.rawPayload,
+            refreshSuccessRate: refreshSuccessRates.get(alternate.supplierKey) ?? null,
+          });
+          return signal.reliabilityScore >= currentSignal.reliabilityScore;
+        });
+        for (const alternate of strongerAlternates.slice(0, 2)) {
           alternateSupplierAttempts += 1;
           await refreshSingleSupplierProduct({
             supplierKey: alternate.supplierKey,
@@ -359,8 +429,56 @@ export async function automateShippingIntelligence(input?: {
 
         if (!(await isCandidateStillShippingBlocked(row.candidateId))) {
           alternateSupplierRecovered += 1;
+        } else {
+          blockedOutcomes.push({
+            candidateId: row.candidateId,
+            supplierKey: row.supplierKey,
+            supplierProductId: row.supplierProductId,
+            reason: "NO_STRONG_SUPPLIER_RECOVERY",
+            detail: inferred.confidence == null ? "shipping confidence unavailable" : `shipping confidence=${inferred.confidence}`,
+          });
         }
+      } else {
+        blockedOutcomes.push({
+          candidateId: row.candidateId,
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+          reason: "APPROVED_ROW_BLOCKED_LOW_SHIPPING_CONFIDENCE",
+          detail: inferred.confidence == null ? "shipping confidence unavailable" : `shipping confidence=${inferred.confidence}`,
+        });
       }
+      continue;
+    }
+
+    const explicitShipFromEvidence = hasExplicitShipFromEvidence({
+      rawPayload,
+      shippingEstimates,
+    });
+    if (!inferred.originCountry || !explicitShipFromEvidence) {
+      blockedOutcomes.push({
+        candidateId: row.candidateId,
+        supplierKey: row.supplierKey,
+        supplierProductId: row.supplierProductId,
+        reason: "MISSING_EXPLICIT_SHIP_FROM_EVIDENCE",
+        detail: inferred.originCountry
+          ? "inference had normalized origin but supplier payload lacks explicit ship-from evidence"
+          : "inference failed to resolve supplier ship-from country",
+      });
+      await writeAuditLog({
+        actorType,
+        actorId,
+        entityType: "PROFITABLE_CANDIDATE",
+        entityId: row.candidateId,
+        eventType: "SHIPPING_INTELLIGENCE_RECOVERY_BLOCKED",
+        details: {
+          supplierKey: row.supplierKey,
+          supplierProductId: row.supplierProductId,
+          reason: "MISSING_EXPLICIT_SHIP_FROM_EVIDENCE",
+          inferredMode: inferred.mode,
+          inferredConfidence: inferred.confidence,
+          inferredOriginCountry: inferred.originCountry,
+        },
+      });
       continue;
     }
 
@@ -467,6 +585,7 @@ export async function automateShippingIntelligence(input?: {
     })),
     gapBreakdown: Array.from(gapCounts.entries()).map(([rootCause, count]) => ({ rootCause, count })),
     persisted,
+    blockedOutcomes,
   };
   await recordShippingAutomationLearning(result);
   return result;
