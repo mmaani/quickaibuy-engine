@@ -22,6 +22,8 @@ import { resolvePricingDestinationForMarketplace } from "@/lib/pricing/destinati
 import { resolveShippingCost } from "@/lib/pricing/shippingCalculator";
 import { evaluateProfitHardGate } from "./hardProfitGate";
 import { recordProfitLearning } from "@/lib/learningHub/pipelineWriters";
+import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
+import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -58,6 +60,7 @@ type ExistingCandidateState = {
   listingBlockReason: string | null;
   expectedSupplierPrice: string | null;
   expectedShipping: string | null;
+  roiPct: string | null;
 };
 
 type CandidateOption = {
@@ -114,6 +117,8 @@ type CandidateOption = {
 // Supplier drift threshold for post-approval protection.
 const SUPPLIER_DRIFT_MANUAL_REVIEW_PCT = 15;
 const PIPELINE_HARD_BLOCK_FLAGS = new Set(["HARD_EXCLUDE", "BRAND_RISK", "HIGH_RISK_ELECTRONICS"]);
+const SUPPLIER_ENTRY_FRESHNESS_MAX_AGE_HOURS = 48;
+const MARKETPLACE_ENTRY_FRESHNESS_MAX_AGE_HOURS = 24;
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -407,8 +412,23 @@ export async function runProfitEngine(input?: {
 
   let insertedOrUpdated = 0;
   let skipped = 0;
+  let staleFreshnessSkipped = 0;
 
   const candidateOptions: CandidateOption[] = [];
+  const supplierRefreshRequests = new Map<
+    string,
+    { supplierKey: string; supplierProductId: string; urgent: boolean; reason: string }
+  >();
+  const marketplaceRefreshRequests = new Map<
+    string,
+    { productRawId: string; urgent: boolean; reason: string }
+  >();
+  let supplierRefreshEnqueueAttempts = 0;
+  let supplierRefreshEnqueueSuccess = 0;
+  let supplierRefreshEnqueueFailed = 0;
+  let marketplaceRefreshEnqueueAttempts = 0;
+  let marketplaceRefreshEnqueueSuccess = 0;
+  let marketplaceRefreshEnqueueFailed = 0;
 
   for (const row of rows) {
     const now = new Date();
@@ -449,7 +469,8 @@ export async function runProfitEngine(input?: {
         pc.listing_eligible AS "listingEligible",
         pc.listing_block_reason AS "listingBlockReason",
         pc.estimated_shipping::text AS "expectedShipping",
-        ps.price_min::text AS "expectedSupplierPrice"
+        ps.price_min::text AS "expectedSupplierPrice",
+        pc.roi_pct::text AS "roiPct"
       FROM profitable_candidates pc
       LEFT JOIN products_raw ps
         ON ps.id = pc.supplier_snapshot_id
@@ -460,6 +481,55 @@ export async function runProfitEngine(input?: {
       LIMIT 1
     `);
     const existing = existingResult.rows?.[0];
+    const staleSupplierSnapshot =
+      supplierSnapshotAgeHours == null ||
+      supplierSnapshotAgeHours >= SUPPLIER_ENTRY_FRESHNESS_MAX_AGE_HOURS;
+    const staleMarketplaceSnapshot =
+      marketplaceSnapshotAgeHours == null ||
+      marketplaceSnapshotAgeHours >= MARKETPLACE_ENTRY_FRESHNESS_MAX_AGE_HOURS;
+    if (staleSupplierSnapshot || staleMarketplaceSnapshot) {
+      staleFreshnessSkipped++;
+      skipped++;
+      const existingRoiPct = toNum(existing?.roiPct);
+      const closeToApproved =
+        String(existing?.decisionStatus ?? "").toUpperCase() === "APPROVED" ||
+        Boolean(existing?.listingEligible) ||
+        String(existing?.listingBlockReason ?? "").toUpperCase().includes("STALE");
+      const urgentRefresh = matchConfidence > 0.8 || (existingRoiPct != null && existingRoiPct >= 20) || closeToApproved;
+      const staleReason = [
+        staleSupplierSnapshot
+          ? `supplier_snapshot_age_hours=${supplierSnapshotAgeHours ?? "n/a"}>=${SUPPLIER_ENTRY_FRESHNESS_MAX_AGE_HOURS}`
+          : null,
+        staleMarketplaceSnapshot
+          ? `marketplace_snapshot_age_hours=${marketplaceSnapshotAgeHours ?? "n/a"}>=${MARKETPLACE_ENTRY_FRESHNESS_MAX_AGE_HOURS}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("|");
+
+      if (staleSupplierSnapshot) {
+        const supplierRequestKey = `${normalizedSupplierKey}:${supplierProductId}`;
+        const existingRequest = supplierRefreshRequests.get(supplierRequestKey);
+        supplierRefreshRequests.set(supplierRequestKey, {
+          supplierKey: normalizedSupplierKey,
+          supplierProductId,
+          urgent: Boolean(existingRequest?.urgent) || urgentRefresh,
+          reason: `profit-entry-freshness-block:${staleReason}`,
+        });
+      }
+
+      if (staleMarketplaceSnapshot && row.supplierSnapshotId) {
+        const productRawId = String(row.supplierSnapshotId);
+        const existingRequest = marketplaceRefreshRequests.get(productRawId);
+        marketplaceRefreshRequests.set(productRawId, {
+          productRawId,
+          urgent: Boolean(existingRequest?.urgent) || urgentRefresh,
+          reason: `profit-entry-freshness-block:${staleReason}`,
+        });
+      }
+      continue;
+    }
+
     const expectedSupplierPrice = toNum(existing?.expectedSupplierPrice);
     const expectedShipping = toNum(existing?.expectedShipping);
     const supplierPriceDriftPct = computePctChange(expectedSupplierPrice, supplierCost);
@@ -467,8 +537,7 @@ export async function runProfitEngine(input?: {
     const supplierDriftExceeded =
       supplierPriceDriftPct != null && Math.abs(supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT;
     const shippingDriftDetected = shippingPriceDriftPct != null && Math.abs(shippingPriceDriftPct) >= 8;
-    const staleMarketplaceSnapshot =
-      marketplaceSnapshotAgeHours != null &&
+    const staleMarketplaceSnapshot = marketplaceSnapshotAgeHours != null &&
       marketplaceSnapshotAgeHours > maxMarketplaceSnapshotAgeHours;
     const supplierImages = Array.isArray(row.supplierImages)
       ? row.supplierImages.filter((value): value is string => typeof value === "string")
@@ -751,6 +820,39 @@ export async function runProfitEngine(input?: {
     }, new Map<string, CandidateOption>())
   ).map(([, option]) => option);
 
+  for (const request of supplierRefreshRequests.values()) {
+    supplierRefreshEnqueueAttempts++;
+    try {
+      await enqueueSupplierDiscoverRefresh({
+        limitPerKeyword: request.urgent ? 60 : 20,
+        idempotencySuffix: `${request.urgent ? "urgent" : "normal"}-${request.supplierKey}-${request.supplierProductId}`,
+        reason: request.reason,
+        supplierKey: request.supplierKey,
+        supplierProductId: request.supplierProductId,
+        marketplaceLimit: request.urgent ? 200 : 120,
+        matchLimit: request.urgent ? 120 : 80,
+        profitLimit: request.urgent ? 120 : 80,
+      });
+      supplierRefreshEnqueueSuccess++;
+    } catch {
+      supplierRefreshEnqueueFailed++;
+    }
+  }
+
+  for (const request of marketplaceRefreshRequests.values()) {
+    marketplaceRefreshEnqueueAttempts++;
+    try {
+      await enqueueMarketplacePriceScan({
+        productRawId: request.productRawId,
+        limit: request.urgent ? 250 : 100,
+        platform: "ebay",
+      });
+      marketplaceRefreshEnqueueSuccess++;
+    } catch {
+      marketplaceRefreshEnqueueFailed++;
+    }
+  }
+
   let staleDeleted = 0;
   const exactScopedRun = Boolean(
     supplierProductIdFilter || marketplaceKeyFilter || marketplaceListingIdFilter
@@ -927,6 +1029,13 @@ export async function runProfitEngine(input?: {
     scanned: rows.length,
     insertedOrUpdated,
     skipped,
+    staleFreshnessSkipped,
+    supplierRefreshEnqueueAttempts,
+    supplierRefreshEnqueueSuccess,
+    supplierRefreshEnqueueFailed,
+    marketplaceRefreshEnqueueAttempts,
+    marketplaceRefreshEnqueueSuccess,
+    marketplaceRefreshEnqueueFailed,
     staleDeleted,
     minRoiPct,
     minMarginPct,
