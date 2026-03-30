@@ -8,6 +8,7 @@ import {
   numeric,
   boolean,
   integer,
+  bigint,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -64,6 +65,24 @@ export const listings = pgTable(
     publishAttemptCount: integer("publish_attempt_count").notNull().default(0),
     lastPublishError: text("last_publish_error"),
     listingDate: date("listing_date"),
+    performanceImpressions: bigint("performance_impressions", { mode: "number" }),
+    performanceClicks: bigint("performance_clicks", { mode: "number" }),
+    performanceOrders: bigint("performance_orders", { mode: "number" }),
+    performanceCtr: numeric("performance_ctr", { precision: 8, scale: 6 }),
+    performanceConversionRate: numeric("performance_conversion_rate", { precision: 8, scale: 6 }),
+    performanceLastSignalAt: timestamp("performance_last_signal_at"),
+    killScore: numeric("kill_score", { precision: 8, scale: 6 }),
+    killDecision: text("kill_decision"),
+    killReasonCodes: text("kill_reason_codes").array(),
+    killEvaluatedAt: timestamp("kill_evaluated_at"),
+    autoKilledAt: timestamp("auto_killed_at"),
+    evolutionAttemptCount: integer("evolution_attempt_count").notNull().default(0),
+    lastEvolutionAt: timestamp("last_evolution_at"),
+    listingEvolutionStatus: text("listing_evolution_status"),
+    listingEvolutionReason: text("listing_evolution_reason"),
+    listingEvolutionCandidatePayload: jsonb("listing_evolution_candidate_payload").$type<unknown>(),
+    listingEvolutionAppliedAt: timestamp("listing_evolution_applied_at"),
+    listingEvolutionResult: text("listing_evolution_result"),
 
     idempotencyKey: text("idempotency_key").notNull(),
 
@@ -75,6 +94,14 @@ export const listings = pgTable(
     listingsMarketplaceStatusIdx: index("listings_marketplace_status_idx").on(
       t.marketplaceKey,
       t.status
+    ),
+    listingsKillDecisionEvaluatedIdx: index("listings_kill_decision_evaluated_idx").on(
+      t.killDecision,
+      t.killEvaluatedAt
+    ),
+    listingsEvolutionStatusLastEvolutionIdx: index("listings_evolution_status_last_evolution_idx").on(
+      t.listingEvolutionStatus,
+      t.lastEvolutionAt
     ),
     listingsUniqueIdempotencyKey: uniqueIndex("listings_unique_idempotency_key").on(
       t.idempotencyKey
@@ -205,7 +232,23 @@ export const profitableCandidates = pgTable("profitable_candidates", {
   listingEligible: boolean("listing_eligible").notNull().default(false),
   listingEligibleTs: timestamp("listing_eligible_ts"),
   listingBlockReason: text("listing_block_reason"),
-});
+  supplierTrustScore: numeric("supplier_trust_score", { precision: 8, scale: 6 }),
+  supplierTrustBand: text("supplier_trust_band"),
+  supplierDeliveryScore: numeric("supplier_delivery_score", { precision: 8, scale: 6 }),
+  supplierStockScore: numeric("supplier_stock_score", { precision: 8, scale: 6 }),
+  supplierPriceStabilityScore: numeric("supplier_price_stability_score", { precision: 8, scale: 6 }),
+  supplierIssuePenalty: numeric("supplier_issue_penalty", { precision: 8, scale: 6 }),
+  supplierTrustEvaluatedAt: timestamp("supplier_trust_evaluated_at"),
+  supplierTrustReasonCodes: text("supplier_trust_reason_codes").array(),
+},
+(t) => ({
+  profitableCandidatesSupplierTrustBandScoreIdx: index(
+    "profitable_candidates_supplier_trust_band_score_idx"
+  ).on(t.supplierTrustBand, t.supplierTrustScore),
+  profitableCandidatesSupplierTrustEvaluatedIdx: index(
+    "profitable_candidates_supplier_trust_evaluated_idx"
+  ).on(t.supplierTrustEvaluatedAt),
+}));
 
 export const listingDailyCaps = pgTable(
   "listing_daily_caps",

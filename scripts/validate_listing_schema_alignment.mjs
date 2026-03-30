@@ -13,6 +13,14 @@ const expected = {
     "listing_eligible",
     "listing_eligible_ts",
     "listing_block_reason",
+    "supplier_trust_score",
+    "supplier_trust_band",
+    "supplier_delivery_score",
+    "supplier_stock_score",
+    "supplier_price_stability_score",
+    "supplier_issue_penalty",
+    "supplier_trust_evaluated_at",
+    "supplier_trust_reason_codes",
   ],
   listings: [
     "publish_marketplace",
@@ -22,6 +30,24 @@ const expected = {
     "publish_attempt_count",
     "last_publish_error",
     "listing_date",
+    "performance_impressions",
+    "performance_clicks",
+    "performance_orders",
+    "performance_ctr",
+    "performance_conversion_rate",
+    "performance_last_signal_at",
+    "kill_score",
+    "kill_decision",
+    "kill_reason_codes",
+    "kill_evaluated_at",
+    "auto_killed_at",
+    "evolution_attempt_count",
+    "last_evolution_at",
+    "listing_evolution_status",
+    "listing_evolution_reason",
+    "listing_evolution_candidate_payload",
+    "listing_evolution_applied_at",
+    "listing_evolution_result",
   ],
   listing_daily_caps: ["id", "marketplace_key", "cap_date", "cap_limit", "cap_used"],
   worker_runs: ["id", "worker", "job_name", "job_id", "status", "stats", "started_at"],
@@ -29,7 +55,17 @@ const expected = {
 };
 
 async function main() {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  const connectionString =
+    process.env.DATABASE_URL ||
+    process.env.QAB_DATABASE_URL ||
+    process.env.DATABASE_URL_DIRECT ||
+    process.env.QAB_DATABASE_URL_DIRECT;
+  if (!connectionString) {
+    throw new Error(
+      "Missing DATABASE_URL/DATABASE_URL_DIRECT (or QAB_DATABASE_URL/QAB_DATABASE_URL_DIRECT aliases)"
+    );
+  }
+  const client = new Client({ connectionString });
   await client.connect();
 
   const result = await client.query(`
