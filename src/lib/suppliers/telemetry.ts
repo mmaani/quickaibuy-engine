@@ -55,3 +55,8 @@ export async function getSupplierRefreshSuccessRateMap(days = 7): Promise<Map<st
   const rows = await getSupplierRefreshTelemetry(days);
   return new Map(rows.map((row) => [row.supplierKey, row.refreshSuccessRate]));
 }
+
+export async function getSupplierRefreshTelemetryMap(days = 7): Promise<Map<string, SupplierRefreshTelemetry>> {
+  const rows = await getSupplierRefreshTelemetry(days);
+  return new Map(rows.map((row) => [row.supplierKey, row]));
+}
