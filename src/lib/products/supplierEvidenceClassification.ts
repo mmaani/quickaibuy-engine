@@ -10,8 +10,15 @@ export type SupplierEvidenceReasonCode =
   | "SOURCE_CHALLENGE_PAGE"
   | "SOURCE_PROVIDER_BLOCK"
   | "AVAILABILITY_NOT_CONFIRMED"
+  | "UNKNOWN_AVAILABILITY"
+  | "LOW_CONFIDENCE_AVAILABILITY"
   | "SHIPPING_SIGNAL_MISSING"
+  | "SHIPPING_TRANSPARENCY_INCOMPLETE"
+  | "SHIP_FROM_MISSING"
+  | "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT"
   | "SHIPPING_SIGNAL_WEAK"
+  | "MEDIA_MISSING"
+  | "MEDIA_PRESENT_QUALITY_WEAK"
   | "MEDIA_SIGNAL_WEAK"
   | "SUPPLIER_SIGNAL_INSUFFICIENT";
 
@@ -68,9 +75,16 @@ function sortCodes(codes: Iterable<SupplierEvidenceReasonCode>): SupplierEvidenc
     "SUPPLIER_BLOCKED",
     "SUPPLIER_OUT_OF_STOCK",
     "SUPPLIER_LOW_STOCK",
+    "UNKNOWN_AVAILABILITY",
+    "LOW_CONFIDENCE_AVAILABILITY",
     "AVAILABILITY_NOT_CONFIRMED",
     "SHIPPING_SIGNAL_MISSING",
+    "SHIPPING_TRANSPARENCY_INCOMPLETE",
+    "SHIP_FROM_MISSING",
+    "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT",
     "SHIPPING_SIGNAL_WEAK",
+    "MEDIA_MISSING",
+    "MEDIA_PRESENT_QUALITY_WEAK",
     "MEDIA_SIGNAL_WEAK",
     "SUPPLIER_SIGNAL_INSUFFICIENT",
   ];
@@ -121,10 +135,11 @@ export function classifySupplierEvidence(
       codes.add("SUPPLIER_OUT_OF_STOCK");
     } else if (input.availabilitySignal === "LOW_STOCK") {
       codes.add("SUPPLIER_LOW_STOCK");
-    } else if (
-      input.availabilitySignal === "UNKNOWN" ||
-      (input.availabilityConfidence != null && input.availabilityConfidence < 0.5)
-    ) {
+    } else if (input.availabilitySignal === "UNKNOWN") {
+      codes.add("UNKNOWN_AVAILABILITY");
+      codes.add("AVAILABILITY_NOT_CONFIRMED");
+    } else if (input.availabilityConfidence != null && input.availabilityConfidence < 0.5) {
+      codes.add("LOW_CONFIDENCE_AVAILABILITY");
       codes.add("AVAILABILITY_NOT_CONFIRMED");
     }
   }
@@ -132,6 +147,23 @@ export function classifySupplierEvidence(
   if (!codes.has("SOURCE_PROVIDER_BLOCK") && !codes.has("SOURCE_CHALLENGE_PAGE") && !codes.has("SUPPLIER_BLOCKED")) {
     const shippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
     const shippingNode = nestedRecord(rawPayload.shipping);
+    const destinationContextPresent =
+      asString(rawPayload.shippingDestinationCountry) != null ||
+      asString(rawPayload.shipping_destination_country) != null ||
+      asString(rawPayload.destinationCountry) != null;
+    const shipFromCountry =
+      asString(rawPayload.shipFromCountry) ??
+      asString(rawPayload.ship_from_country) ??
+      asString(rawPayload.supplierWarehouseCountry) ??
+      asString(rawPayload.supplier_warehouse_country) ??
+      asString(shippingNode?.shipFromCountry) ??
+      asString(shippingNode?.ship_from_country);
+    const shipFromLocation =
+      asString(rawPayload.shipFromLocation) ??
+      asString(rawPayload.ship_from_location) ??
+      asString(rawPayload.shipsFromHint) ??
+      asString(shippingNode?.shipFromLocation) ??
+      asString(shippingNode?.ship_from_location);
     const shippingEvidenceText =
       asString(rawPayload.shippingEvidenceText) ??
       asString(rawPayload.shippingMethod) ??
@@ -148,6 +180,22 @@ export function classifySupplierEvidence(
       hasMeaningfulShippingEstimate(input.shippingEstimates) ||
       hasMeaningfulShippingEstimate(rawPayload.shippingEstimates) ||
       hasMeaningfulShippingEstimate(shippingNode?.estimates);
+    const estimateShipFromEvidence = [
+      ...(Array.isArray(input.shippingEstimates) ? input.shippingEstimates : []),
+      ...(Array.isArray(rawPayload.shippingEstimates) ? (rawPayload.shippingEstimates as ShippingEstimate[]) : []),
+      ...(Array.isArray(shippingNode?.estimates) ? (shippingNode.estimates as ShippingEstimate[]) : []),
+    ].some((estimate) => asString(estimate?.ship_from_country) != null || asString(estimate?.ship_from_location) != null);
+    const hasTransparentShippingEvidence =
+      hasShippingEstimate ||
+      (shippingEvidenceText != null &&
+        (shippingEvidenceText.toLowerCase().includes("delivery") ||
+          shippingEvidenceText.toLowerCase().includes("arrive") ||
+          shippingEvidenceText.toLowerCase().includes("ship")));
+    const hasShipFromEvidence = Boolean(shipFromCountry || shipFromLocation || estimateShipFromEvidence);
+    const shippingTransparencyIncompleteSignal =
+      shippingSignal === "PARTIAL" ||
+      shippingSignal === "INFERRED" ||
+      asString(rawPayload.shippingTransparencyState)?.toUpperCase() === "INCOMPLETE";
 
     if (shippingSignal === "MISSING" || (!hasShippingEstimate && !shippingEvidenceText && (shippingConfidence ?? 0) < 0.35)) {
       codes.add("SHIPPING_SIGNAL_MISSING");
@@ -157,6 +205,14 @@ export function classifySupplierEvidence(
       (shippingConfidence != null && shippingConfidence < 0.75)
     ) {
       codes.add("SHIPPING_SIGNAL_WEAK");
+    }
+    if (shippingTransparencyIncompleteSignal && hasTransparentShippingEvidence) {
+      codes.add("SHIPPING_TRANSPARENCY_INCOMPLETE");
+    }
+    if (!hasShipFromEvidence && destinationContextPresent) {
+      codes.add("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT");
+    } else if (!hasShipFromEvidence && hasTransparentShippingEvidence) {
+      codes.add("SHIP_FROM_MISSING");
     }
 
     const mediaNode = nestedRecord(rawPayload.media);
@@ -169,21 +225,42 @@ export function classifySupplierEvidence(
       asNumber(rawPayload.imageGalleryCount) ??
       asNumber(mediaNode?.imageCount) ??
       (Array.isArray(rawPayload.images) ? rawPayload.images.length : null);
+    const videoCount =
+      asNumber(rawPayload.videoCount) ??
+      asNumber(mediaNode?.videoCount) ??
+      (Array.isArray(rawPayload.videoUrls) ? rawPayload.videoUrls.length : null);
+    const mediaPresent = (imageCount != null && imageCount > 0) || (videoCount != null && videoCount > 0);
+    if (!mediaPresent) {
+      codes.add("MEDIA_MISSING");
+    }
     if (
       (mediaQualityScore != null && mediaQualityScore < 0.82) ||
-      (imageCount != null && imageCount > 0 && imageCount < 3) ||
+      (imageCount != null && imageCount > 0 && imageCount < 3 && (videoCount ?? 0) <= 0) ||
       input.sourceQuality === "LOW" ||
       input.sourceQuality === "STUB"
     ) {
+      if (mediaPresent) codes.add("MEDIA_PRESENT_QUALITY_WEAK");
       codes.add("MEDIA_SIGNAL_WEAK");
     }
 
+    const weakSignalCount = [
+      codes.has("AVAILABILITY_NOT_CONFIRMED"),
+      codes.has("SHIPPING_SIGNAL_MISSING"),
+      codes.has("SHIPPING_SIGNAL_WEAK"),
+      codes.has("SHIPPING_TRANSPARENCY_INCOMPLETE"),
+      codes.has("SHIP_FROM_MISSING"),
+      codes.has("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT"),
+      codes.has("MEDIA_MISSING"),
+      codes.has("MEDIA_PRESENT_QUALITY_WEAK"),
+    ].filter(Boolean).length;
+
+    const actionableSnapshotValue = String(rawPayload.actionableSnapshot ?? "").trim().toLowerCase();
     if (
-      String(rawPayload.actionableSnapshot ?? "").trim().toLowerCase() === "false" ||
+      actionableSnapshotValue === "false" ||
       telemetry.has("fallback") ||
       telemetry.has("low_quality") ||
-      input.sourceQuality === "LOW" ||
-      input.sourceQuality === "STUB"
+      ((input.sourceQuality === "LOW" || input.sourceQuality === "STUB") && weakSignalCount >= 2) ||
+      weakSignalCount >= 3
     ) {
       codes.add("SUPPLIER_SIGNAL_INSUFFICIENT");
     }

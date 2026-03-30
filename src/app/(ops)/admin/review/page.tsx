@@ -224,7 +224,15 @@ function isSafePresetCandidate(candidate: ReviewListItem): boolean {
 }
 
 function hasShippingException(candidate: ReviewListItem): boolean {
-  return candidate.riskFlags.some((flag) => flag === "SHIPPING_SIGNAL_MISSING" || flag === "SHIPPING_SIGNAL_WEAK");
+  return candidate.riskFlags.some((flag) =>
+    [
+      "SHIPPING_SIGNAL_MISSING",
+      "SHIPPING_SIGNAL_WEAK",
+      "SHIPPING_TRANSPARENCY_INCOMPLETE",
+      "SHIP_FROM_MISSING",
+      "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT",
+    ].includes(flag)
+  );
 }
 
 function hasSupplierException(candidate: ReviewListItem): boolean {
@@ -233,10 +241,14 @@ function hasSupplierException(candidate: ReviewListItem): boolean {
       "SUPPLIER_LOW_STOCK",
       "SUPPLIER_OUT_OF_STOCK",
       "SUPPLIER_AVAILABILITY_UNKNOWN",
+      "UNKNOWN_AVAILABILITY",
+      "LOW_CONFIDENCE_AVAILABILITY",
       "AVAILABILITY_NOT_CONFIRMED",
       "SUPPLIER_BLOCKED",
       "STALE_SUPPLIER_SNAPSHOT",
       "SUPPLIER_SIGNAL_INSUFFICIENT",
+      "MEDIA_MISSING",
+      "MEDIA_PRESENT_QUALITY_WEAK",
     ].includes(flag)
   );
 }
@@ -261,6 +273,9 @@ function RiskBadge({ flag }: { flag: string }) {
     flag === "LOW_MATCH_CONFIDENCE" ||
     flag === "MISSING_SHIPPING_ESTIMATE" ||
     flag === "SHIPPING_SIGNAL_MISSING" ||
+    flag === "SHIPPING_TRANSPARENCY_INCOMPLETE" ||
+    flag === "SHIP_FROM_MISSING" ||
+    flag === "SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT" ||
     flag === "SHIPPING_SIGNAL_WEAK" ||
     flag === "BRAND_OR_RESTRICTED_TITLE" ||
     flag === "DUPLICATE_CANDIDATE_PATTERN" ||
@@ -269,6 +284,8 @@ function RiskBadge({ flag }: { flag: string }) {
     flag === "SUPPLIER_BLOCKED" ||
     flag === "SUPPLIER_OUT_OF_STOCK" ||
     flag === "SUPPLIER_LOW_STOCK" ||
+    flag === "UNKNOWN_AVAILABILITY" ||
+    flag === "LOW_CONFIDENCE_AVAILABILITY" ||
     flag === "AVAILABILITY_NOT_CONFIRMED";
 
   return (
