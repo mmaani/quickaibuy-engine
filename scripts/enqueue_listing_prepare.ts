@@ -1,8 +1,16 @@
 import dotenv from "dotenv";
+import { assertNonCanonicalScriptAccess } from "./lib/nonCanonicalSurfaceGuard";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 async function main() {
+  await assertNonCanonicalScriptAccess({
+    scriptName: "enqueue_listing_prepare.ts",
+    blockedAction: "enqueue_listing_prepare",
+    canonicalAction: "typed control-plane enqueue wrappers only",
+    mutatesState: true,
+  });
+
   const { Queue } = await import("bullmq");
   const { bullConnection } = await import("../src/lib/bull");
   const { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } = await import("../src/lib/jobNames");

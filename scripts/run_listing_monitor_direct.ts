@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { assertNonCanonicalScriptAccess } from "./lib/nonCanonicalSurfaceGuard";
 import pg from "pg";
 
 dotenv.config({ path: ".env.local" });
@@ -7,6 +8,13 @@ dotenv.config();
 const { Client } = pg;
 
 async function main() {
+  await assertNonCanonicalScriptAccess({
+    scriptName: "run_listing_monitor_direct.ts",
+    blockedAction: "run_listing_monitor_direct",
+    canonicalAction: "pnpm runtime:diag and /admin/control visibility",
+    mutatesState: false,
+  });
+
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
