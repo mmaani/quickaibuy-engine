@@ -15,28 +15,6 @@ export class CanonicalEnforcementError extends Error {
   }
 }
 
-let learningHubCache:
-  | {
-      expiresAt: number;
-      scorecard: Awaited<ReturnType<typeof getLearningHubScorecard>>;
-    }
-  | null = null;
-
-async function getCachedLearningHubScorecard() {
-  const now = Date.now();
-  if (learningHubCache && learningHubCache.expiresAt > now) {
-    return learningHubCache.scorecard;
-  }
-
-  const scorecard = await getLearningHubScorecard();
-  learningHubCache = {
-    scorecard,
-    expiresAt: now + 60_000,
-  };
-
-  return scorecard;
-}
-
 async function logEnforcementViolation(input: {
   code: string;
   blockedAction: string;
@@ -72,7 +50,7 @@ export async function assertLearningHubReady(input: {
   actorType?: "ADMIN" | "WORKER" | "SYSTEM";
   requiredDomains?: string[];
 }) {
-  const scorecard = await getCachedLearningHubScorecard();
+  const scorecard = await getLearningHubScorecard();
   const requiredDomains = new Set(input.requiredDomains ?? []);
 
   if (!scorecard) {

@@ -137,6 +137,10 @@ export function ControlPlaneOverviewPanel({
               value={`${data.learningHub.openDrift.total} (${data.learningHub.openDrift.critical})`}
             />
             <Stat
+              label="Open drift by severity"
+              value={`${data.learningHub.openDrift.critical}/${data.learningHub.openDrift.warning}/${data.learningHub.openDrift.info}`}
+            />
+            <Stat
               label="Supplier reliability"
               value={formatPercent(data.learningHub.supplierReliability.average)}
             />
@@ -206,6 +210,22 @@ export function ControlPlaneOverviewPanel({
               </div>
             </div>
           ) : null}
+          {data.learningHub.activeDriftMetrics.length ? (
+            <div className="mt-3 rounded-2xl border border-red-300/25 bg-red-500/10 p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-red-100/80">Active drift truth source (learning_drift_events)</div>
+              <div className="mt-2 space-y-1 text-sm text-red-50/90">
+                {data.learningHub.activeDriftMetrics.slice(0, compact ? 3 : 8).map((metric) => (
+                  <div key={`${metric.metricKey}:${metric.segmentKey}:${metric.category}`}>
+                    {metric.severity.toUpperCase()} · {metric.metricKey} · {metric.segmentKey} · {metric.reasonCode}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 rounded-2xl border border-emerald-300/25 bg-emerald-500/10 p-3 text-sm text-emerald-50/90">
+              No active OPEN drift events in learning_drift_events.
+            </div>
+          )}
           {data.continuousLearning.staleWarnings.length ? (
             <div className="mt-3 rounded-2xl border border-amber-300/25 bg-amber-500/10 p-3">
               <div className="text-[11px] uppercase tracking-[0.18em] text-amber-100/80">Stale knowledge warnings</div>

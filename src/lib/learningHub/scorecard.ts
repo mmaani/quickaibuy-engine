@@ -14,7 +14,16 @@ export type LearningHubScorecard = {
     total: number;
     critical: number;
     warning: number;
+    info: number;
   };
+  activeDriftMetrics: Array<{
+    metricKey: string;
+    segmentKey: string;
+    category: string;
+    severity: string;
+    reasonCode: string;
+    observedAt: string;
+  }>;
   features: {
     total: number;
     supplierReliabilityFeatures: number;
@@ -69,6 +78,7 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
     const [
       evidenceRes,
       driftRes,
+      activeDriftRes,
       featureRes,
       reliabilityRes,
       shippingRes,
@@ -90,12 +100,66 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
         WHERE observed_at >= now() - interval '14 days'
       `),
       db.execute(sql`
+        WITH latest_drift_state AS (
+          SELECT DISTINCT ON (metric_key, segment_key, category)
+            metric_key,
+            segment_key,
+            category,
+            severity,
+            status,
+            observed_at,
+            created_at
+          FROM learning_drift_events
+          ORDER BY metric_key, segment_key, category, observed_at DESC, created_at DESC, id DESC
+        )
         SELECT
           count(*) FILTER (WHERE status = 'OPEN')::int AS total,
           count(*) FILTER (WHERE severity = 'critical' AND status = 'OPEN')::int AS critical,
-          count(*) FILTER (WHERE severity = 'warning' AND status = 'OPEN')::int AS warning
-        FROM learning_drift_events
-        WHERE observed_at >= now() - interval '14 days'
+          count(*) FILTER (WHERE severity = 'warning' AND status = 'OPEN')::int AS warning,
+          count(*) FILTER (WHERE severity = 'info' AND status = 'OPEN')::int AS info
+        FROM latest_drift_state
+      `),
+      db.execute<{
+        metric_key: string;
+        segment_key: string;
+        category: string;
+        severity: string;
+        reason_code: string;
+        observed_at: string | Date;
+      }>(sql`
+        WITH latest_drift_state AS (
+          SELECT DISTINCT ON (metric_key, segment_key, category)
+            metric_key,
+            segment_key,
+            category,
+            severity,
+            reason_code,
+            status,
+            observed_at,
+            created_at
+          FROM learning_drift_events
+          ORDER BY metric_key, segment_key, category, observed_at DESC, created_at DESC, id DESC
+        )
+        SELECT
+          metric_key,
+          segment_key,
+          category,
+          severity,
+          reason_code,
+          observed_at
+        FROM latest_drift_state
+        WHERE status = 'OPEN'
+        ORDER BY
+          CASE severity
+            WHEN 'critical' THEN 1
+            WHEN 'warning' THEN 2
+            WHEN 'info' THEN 3
+            ELSE 4
+          END,
+          observed_at DESC,
+          metric_key ASC,
+          segment_key ASC,
+          category ASC
       `),
       db.execute(sql`
         SELECT
@@ -208,7 +272,16 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
         total: toNumber(driftRow.total),
         critical: toNumber(driftRow.critical),
         warning: toNumber(driftRow.warning),
+        info: toNumber(driftRow.info),
       },
+      activeDriftMetrics: (activeDriftRes.rows ?? []).map((row) => ({
+        metricKey: String(row.metric_key ?? "unknown"),
+        segmentKey: String(row.segment_key ?? "global"),
+        category: String(row.category ?? "unknown"),
+        severity: String(row.severity ?? "unknown"),
+        reasonCode: String(row.reason_code ?? "unknown"),
+        observedAt: row.observed_at instanceof Date ? row.observed_at.toISOString() : String(row.observed_at ?? ""),
+      })),
       features: {
         total: toNumber(featureRow.total),
         supplierReliabilityFeatures: toNumber(featureRow.supplier),
