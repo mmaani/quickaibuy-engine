@@ -375,6 +375,14 @@ export type ControlPanelData = {
     recentJobs: Row[];
     recentJobFailures: Row[];
     recentAuditEvents: Row[];
+    recentCanonicalEnforcementViolations: Array<{
+      eventTs: string | null;
+      blockedAction: string | null;
+      violationType: string | null;
+      executionPath: string | null;
+      severity: string | null;
+      reason: string | null;
+    }>;
     recentWorkerActivityTs: string | null;
     recentSuccessCount24h: number | null;
     recentFailureCount24h: number | null;
@@ -1596,6 +1604,22 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     `)
     : [];
 
+  const recentCanonicalEnforcementViolations = auditExists
+    ? await runQuery(`
+      select
+        event_ts as "eventTs",
+        details->>'blockedAction' as "blockedAction",
+        details->>'violationType' as "violationType",
+        details->>'executionPath' as "executionPath",
+        details->>'severity' as "severity",
+        details->>'reason' as "reason"
+      from audit_log
+      where event_type = 'CANONICAL_ENFORCEMENT_BLOCKED'
+      order by event_ts desc
+      limit 25
+    `)
+    : [];
+
   const ordersExists = await tableExists("orders");
   const orderEventsExists = await tableExists("order_events");
   const ordersSummary = ordersExists
@@ -2747,6 +2771,14 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       recentJobs,
       recentJobFailures,
       recentAuditEvents,
+      recentCanonicalEnforcementViolations: recentCanonicalEnforcementViolations.map((row) => ({
+        eventTs: toStr(row.eventTs),
+        blockedAction: toStr(row.blockedAction),
+        violationType: toStr(row.violationType),
+        executionPath: toStr(row.executionPath),
+        severity: toStr(row.severity),
+        reason: toStr(row.reason),
+      })),
       recentWorkerActivityTs,
       recentSuccessCount24h: recentWorkerSuccessCount24h,
       recentFailureCount24h: recentWorkerFailureCount24h,

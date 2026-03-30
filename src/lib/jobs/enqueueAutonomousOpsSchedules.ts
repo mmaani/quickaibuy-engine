@@ -24,8 +24,10 @@ const jobsQueue = new Queue(JOBS_QUEUE_NAME, {
 });
 
 const HOUR_MS = 60 * 60 * 1000;
+const SCHEDULED_AUTONOMOUS_PUBLISH_ENABLED =
+  String(process.env.ENABLE_SCHEDULED_AUTONOMOUS_PUBLISH ?? "false").trim().toLowerCase() === "true";
 
-export const AUTONOMOUS_OPS_SCHEDULES = [
+const BASE_AUTONOMOUS_OPS_SCHEDULES = [
   {
     stage: "diagnostics_refresh",
     jobName: JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
@@ -47,7 +49,11 @@ export const AUTONOMOUS_OPS_SCHEDULES = [
     everyMs: 30 * 60 * 1000,
     payload: { phase: "publish", triggerSource: "schedule" },
   },
-] as const;
+ ] as const;
+
+export const AUTONOMOUS_OPS_SCHEDULES = BASE_AUTONOMOUS_OPS_SCHEDULES.filter((schedule) =>
+  schedule.stage === "publish" ? SCHEDULED_AUTONOMOUS_PUBLISH_ENABLED : true
+);
 
 function isDesiredEntry(entry: RepeatableEntry, schedule: (typeof AUTONOMOUS_OPS_SCHEDULES)[number]) {
   return (
@@ -76,6 +82,19 @@ export async function ensureAutonomousOpsSchedules() {
   ]);
   let createdCount = 0;
   let removedCount = 0;
+
+  const allAutonomousEntries = repeatables.filter(
+    (entry) => entry.name === JOB_NAMES.AUTONOMOUS_OPS_BACKBONE && String(entry.key ?? "").includes("autonomous-ops-")
+  );
+
+  if (!SCHEDULED_AUTONOMOUS_PUBLISH_ENABLED) {
+    for (const entry of allAutonomousEntries) {
+      if (String(entry.key ?? "").includes("autonomous-ops-publish-") && String(entry.key ?? "").trim()) {
+        await jobsQueue.removeRepeatableByKey(String(entry.key));
+        removedCount += 1;
+      }
+    }
+  }
 
   for (const schedule of AUTONOMOUS_OPS_SCHEDULES) {
     const existing = repeatables.filter(
@@ -108,6 +127,7 @@ export async function ensureAutonomousOpsSchedules() {
   return {
     createdCount,
     removedCount,
+    scheduledAutonomousPublishEnabled: SCHEDULED_AUTONOMOUS_PUBLISH_ENABLED,
     schedules: await getAutonomousOpsScheduleSnapshot(),
   };
 }

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
+import { assertControlledMutationContext, assertLearningHubReady } from "@/lib/enforcement/runtimeSovereignty";
 import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
@@ -39,6 +40,21 @@ export async function reevaluateListingForRecovery(
 ): Promise<ReevaluateListingRecoveryResult> {
   const actorId = input.actorId ?? "reevaluateListingForRecovery";
   const actorType = normalizeActorType(input.actorType);
+  await assertControlledMutationContext({
+    blockedAction: "listing_recovery_reevaluate",
+    path: "reevaluateListingForRecovery",
+    actorId,
+    actorType,
+    viaWorkerJob: actorType === "WORKER",
+    controlledRepairPath: String(process.env.CONTROLLED_REPAIR_PATH ?? "false").trim().toLowerCase() === "true",
+  });
+  await assertLearningHubReady({
+    blockedAction: "listing_recovery_reevaluate",
+    path: "reevaluateListingForRecovery",
+    actorId,
+    actorType,
+    requiredDomains: ["supplier_intelligence", "shipping_intelligence", "opportunity_scores", "control_plane_scorecards"],
+  });
   const listingId = String(input.listingId ?? "").trim();
   if (!listingId) return { ok: false, listingId, reason: "listingId required" };
 

@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { REVIEW_ROUTE } from "@/lib/review/console";
 import {
-  PrepareListingPreviewError,
-  prepareListingPreviewForCandidate,
-} from "@/lib/listings/prepareListingPreviews";
-import {
   REVIEW_CONSOLE_REALM,
+  getReviewActorIdFromAuthorizationHeader,
   isAuthorizedReviewAuthorizationHeader,
   isReviewConsoleConfigured,
 } from "@/lib/review/auth";
+import { enqueueAdminMutationJob } from "@/lib/jobs/enqueueAdminMutations";
+import { JOB_NAMES } from "@/lib/jobNames";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,24 +15,15 @@ export const dynamic = "force-dynamic";
 function unauthorizedResponse(): NextResponse {
   return NextResponse.json(
     { ok: false, error: "unauthorized" },
-    {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": `Basic realm="${REVIEW_CONSOLE_REALM}"`,
-        "Cache-Control": "no-store",
-      },
-    }
+    { status: 401, headers: { "WWW-Authenticate": `Basic realm="${REVIEW_CONSOLE_REALM}"`, "Cache-Control": "no-store" } }
   );
 }
 
 function buildRedirectUrl(request: Request): URL {
   const referer = request.headers.get("referer");
   if (referer) {
-    try {
-      return new URL(referer);
-    } catch {}
+    try { return new URL(referer); } catch {}
   }
-
   return new URL(REVIEW_ROUTE, request.url);
 }
 
@@ -44,42 +34,30 @@ function parseForceRefresh(input: FormDataEntryValue | null): boolean {
 
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization");
-  if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(authorization)) {
-    return unauthorizedResponse();
-  }
+  if (!isReviewConsoleConfigured() || !isAuthorizedReviewAuthorizationHeader(authorization)) return unauthorizedResponse();
 
   const formData = await request.formData();
   const candidateId = String(formData.get("candidateId") ?? "").trim();
-  const marketplace = String(formData.get("marketplace") ?? "ebay").trim().toLowerCase() as
-    | "ebay"
-    | "amazon";
+  const marketplace = String(formData.get("marketplace") ?? "ebay").trim().toLowerCase() as "ebay" | "amazon";
   const forceRefresh = parseForceRefresh(formData.get("forceRefresh"));
 
-  if (!candidateId) {
-    return NextResponse.json({ ok: false, error: "candidateId required" }, { status: 400 });
-  }
-  if (marketplace !== "ebay" && marketplace !== "amazon") {
-    return NextResponse.json({ ok: false, error: "invalid marketplace" }, { status: 400 });
-  }
+  if (!candidateId) return NextResponse.json({ ok: false, error: "candidateId required" }, { status: 400 });
+  if (marketplace !== "ebay" && marketplace !== "amazon") return NextResponse.json({ ok: false, error: "invalid marketplace" }, { status: 400 });
+
+  const actorId = getReviewActorIdFromAuthorizationHeader(authorization) ?? "review-console";
+  const job = await enqueueAdminMutationJob({
+    jobName: JOB_NAMES.ADMIN_REVIEW_PREPARE_PREVIEW,
+    actorId,
+    triggerSource: "review-console",
+    controlPath: "api/admin/review/prepare-preview",
+    actionType: "review_prepare_preview",
+    payload: { candidateId, marketplace, forceRefresh },
+    idempotencySuffix: `${candidateId}-${Date.now()}`,
+  });
 
   const redirectUrl = buildRedirectUrl(request);
   redirectUrl.searchParams.set("candidateId", candidateId);
-
-  try {
-    const result = await prepareListingPreviewForCandidate(candidateId, {
-      marketplace,
-      forceRefresh,
-    });
-
-    redirectUrl.searchParams.set("previewUpdated", "1");
-    redirectUrl.searchParams.set("previewMarketplace", result.marketplace);
-    return NextResponse.redirect(redirectUrl, { status: 303 });
-  } catch (error) {
-    if (error instanceof PrepareListingPreviewError) {
-      redirectUrl.searchParams.set("previewError", error.message);
-      return NextResponse.redirect(redirectUrl, { status: 303 });
-    }
-
-    throw error;
-  }
+  redirectUrl.searchParams.set("previewQueued", "1");
+  redirectUrl.searchParams.set("jobId", String(job.id));
+  return NextResponse.redirect(redirectUrl, { status: 303 });
 }

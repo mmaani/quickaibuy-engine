@@ -1225,6 +1225,20 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <DataTable rows={data.workerQueueHealth.recentWorkerFailures} empty="No recent worker failures." />
             <DataTable rows={data.workerQueueHealth.recentJobFailures} empty="No recent job failures." />
           </div>
+          <div className="mt-4">
+            <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-white/55">Canonical enforcement violations (recent)</div>
+            <DataTable
+              rows={data.workerQueueHealth.recentCanonicalEnforcementViolations.map((row) => ({
+                timestamp: row.eventTs ? formatDateTime(row.eventTs) : "unknown",
+                blockedAction: row.blockedAction ?? "unknown",
+                violationType: row.violationType ?? "unknown",
+                executionPath: row.executionPath ?? "unknown",
+                severity: row.severity ?? "unknown",
+                reason: row.reason ?? "unspecified",
+              }))}
+              empty="No canonical enforcement violations recorded recently."
+            />
+          </div>
         </Section>
 
         {!hasCriticalRecoveryBlock ? (

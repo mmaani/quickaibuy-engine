@@ -26,6 +26,12 @@ import { recoverMissedUpstreamFreshness } from "@/lib/jobs/freshnessRecovery";
 import { runContinuousLearningRefresh } from "@/lib/learningHub/continuousLearning";
 import { runListingPerformanceEngine } from "@/lib/listings/performanceEngine";
 import { runAutonomousOperations } from "@/lib/autonomousOps/backbone";
+import { markListingReadyToPublish } from "@/lib/listings/markListingReadyToPublish";
+import { resumePausedListing } from "@/lib/listings/resumePausedListing";
+import { reevaluateListingForRecovery } from "@/lib/listings/recovery";
+import { prepareListingPreviewForCandidate } from "@/lib/listings/prepareListingPreviews";
+import { applyCandidateDecision } from "@/lib/review/applyCandidateDecision";
+import { assertPublishExecutionContext } from "@/lib/enforcement/runtimeSovereignty";
 
 loadRuntimeEnv();
 
@@ -781,13 +787,32 @@ export const jobsWorker = new Worker(
       }
 
       case JOB_NAMES.AUTONOMOUS_OPS_BACKBONE: {
+        const phase =
+          job.data?.phase === "diagnostics_refresh" ||
+          job.data?.phase === "prepare" ||
+          job.data?.phase === "publish"
+            ? job.data.phase
+            : "full";
+        const triggerSource =
+          job.data?.triggerSource === "control-plane" ||
+          job.data?.triggerSource === "schedule" ||
+          job.data?.triggerSource === "script"
+            ? job.data.triggerSource
+            : "system";
+        if (triggerSource === "schedule" && (phase === "publish" || phase === "full")) {
+          await assertPublishExecutionContext({
+            blockedAction: "scheduled_autonomous_publish",
+            path: "jobs.worker/AUTONOMOUS_OPS_BACKBONE",
+            actorId: JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
+            actorType: "WORKER",
+            viaWorkerJob: true,
+            viaBackbone: true,
+            viaControlPlane: false,
+          });
+        }
+
         const result = await runAutonomousOperations({
-          phase:
-            job.data?.phase === "diagnostics_refresh" ||
-            job.data?.phase === "prepare" ||
-            job.data?.phase === "publish"
-              ? job.data.phase
-              : "full",
+          phase,
           actorId: JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
           actorType: "WORKER",
           supplierRefreshLimit: Number(job.data?.supplierRefreshLimit ?? 10),
@@ -795,12 +820,7 @@ export const jobsWorker = new Worker(
           shippingLimit: Number(job.data?.shippingLimit ?? 50),
           prepareLimit: Number(job.data?.prepareLimit ?? 25),
           publishLimit: Number(job.data?.publishLimit ?? 3),
-          executionSource:
-            job.data?.triggerSource === "control-plane" ||
-            job.data?.triggerSource === "schedule" ||
-            job.data?.triggerSource === "script"
-              ? job.data.triggerSource
-              : "system",
+          executionSource: triggerSource,
         });
 
         console.log("[jobs.worker] completed job", {
@@ -1034,6 +1054,84 @@ export const jobsWorker = new Worker(
           durationMs: Date.now() - startedAtMs,
         });
 
+        return result;
+      }
+
+      case JOB_NAMES.ADMIN_REVIEW_DECISION: {
+        const decisionStatus = String(job.data?.decisionStatus ?? "").trim().toUpperCase();
+        const reason = job.data?.reason ? String(job.data.reason) : null;
+        const candidateIds = Array.isArray(job.data?.candidateIds)
+          ? job.data.candidateIds.map((v: unknown) => String(v).trim()).filter(Boolean)
+          : [];
+        const enforceBatchSafeApprove = Boolean(job.data?.enforceBatchSafeApprove);
+        const actorId = String((job.data?.controlPlaneContext as Record<string, unknown> | undefined)?.actorId ?? "admin-review-worker");
+
+        let appliedCount = 0;
+        let skippedCount = 0;
+        const skippedReasons: Record<string, number> = {};
+        for (const candidateId of candidateIds) {
+          const result = await applyCandidateDecision({
+            candidateId,
+            requestedDecisionStatus: decisionStatus as "APPROVED" | "REJECTED" | "RECHECK",
+            reason,
+            actorId,
+            actorType: "WORKER",
+            source: "review-worker",
+            enforceBatchSafeApprove,
+          });
+          if (result.ok) appliedCount += 1;
+          else {
+            skippedCount += 1;
+            const key = result.skipped ?? "unknown";
+            skippedReasons[key] = (skippedReasons[key] ?? 0) + 1;
+          }
+        }
+        const result = { ok: true, appliedCount, skippedCount, skippedReasons, requested: candidateIds.length };
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({ status: "SUCCEEDED", jobName: job.name, jobId: idempotencyKey, durationMs: Date.now() - startedAtMs });
+        return result;
+      }
+
+      case JOB_NAMES.ADMIN_LISTING_PROMOTE_READY: {
+        const listingId = String(job.data?.listingId ?? "").trim();
+        const actorId = String((job.data?.controlPlaneContext as Record<string, unknown> | undefined)?.actorId ?? "admin-listings-worker");
+        const result = await markListingReadyToPublish({ listingId, actorId, actorType: "WORKER" });
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({ status: "SUCCEEDED", jobName: job.name, jobId: idempotencyKey, durationMs: Date.now() - startedAtMs });
+        return result;
+      }
+
+      case JOB_NAMES.ADMIN_LISTING_RESUME: {
+        const listingId = String(job.data?.listingId ?? "").trim();
+        const actorId = String((job.data?.controlPlaneContext as Record<string, unknown> | undefined)?.actorId ?? "admin-listings-worker");
+        const result = await resumePausedListing({ listingId, actorId, actorType: "WORKER" });
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({ status: "SUCCEEDED", jobName: job.name, jobId: idempotencyKey, durationMs: Date.now() - startedAtMs });
+        return result;
+      }
+
+      case JOB_NAMES.ADMIN_LISTING_REEVALUATE: {
+        const listingId = String(job.data?.listingId ?? "").trim();
+        const actorId = String((job.data?.controlPlaneContext as Record<string, unknown> | undefined)?.actorId ?? "admin-listings-worker");
+        const result = await reevaluateListingForRecovery({ listingId, actorId, actorType: "WORKER" });
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({ status: "SUCCEEDED", jobName: job.name, jobId: idempotencyKey, durationMs: Date.now() - startedAtMs });
+        return result;
+      }
+
+      case JOB_NAMES.ADMIN_REVIEW_PREPARE_PREVIEW: {
+        const candidateId = String(job.data?.candidateId ?? "").trim();
+        const marketplace = (String(job.data?.marketplace ?? "ebay").trim().toLowerCase() === "amazon" ? "amazon" : "ebay") as "ebay" | "amazon";
+        const forceRefresh = Boolean(job.data?.forceRefresh);
+        const result = await prepareListingPreviewForCandidate(candidateId, {
+          marketplace,
+          forceRefresh,
+          actorType: "WORKER",
+          actorId: JOB_NAMES.ADMIN_REVIEW_PREPARE_PREVIEW,
+          source: "listing-readiness",
+        });
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({ status: "SUCCEEDED", jobName: job.name, jobId: idempotencyKey, durationMs: Date.now() - startedAtMs });
         return result;
       }
 
