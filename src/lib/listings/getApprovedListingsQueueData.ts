@@ -853,6 +853,7 @@ export async function getListingsQueueDetail(candidateId: string): Promise<Listi
             "LISTING_BLOCKED_SUPPLIER_DRIFT",
             "LISTING_REFRESH_ENQUEUED_FOR_RECOVERY",
             "LISTING_REEVALUATED_AFTER_REFRESH",
+            "LISTING_REEVALUATED_PAUSED_REQUIRES_RESUME",
             "LISTING_REPROMOTION_READY",
             "LISTING_PAUSED_INVENTORY_RISK",
             "LISTING_RESUME_REQUESTED",
