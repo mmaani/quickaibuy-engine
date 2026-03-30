@@ -915,8 +915,16 @@ export async function runProfitEngine(input?: {
       shippingTransparencyState: shippingResolution.shippingTransparencyState,
       shippingOriginValidity: shippingResolution.resolvedOriginValidity,
       priceSeries: marketPriceSeries,
-      issueRate: supplierTelemetry.attempts > 0 ? supplierTelemetry.exactMatchMisses / supplierTelemetry.attempts : 0,
-      issueCount: supplierTelemetry.rateLimitEvents + supplierTelemetry.exactMatchMisses,
+      issueRate: telemetrySignals.some((signal) => {
+        const normalized = signal.toLowerCase();
+        return normalized === "challenge" || normalized === "fallback" || normalized === "rate_limit";
+      })
+        ? 0.2
+        : 0,
+      issueCount: telemetrySignals.filter((signal) => {
+        const normalized = signal.toLowerCase();
+        return normalized === "challenge" || normalized === "fallback" || normalized === "rate_limit";
+      }).length,
       telemetrySignals,
       evaluatedAt: now,
     });
