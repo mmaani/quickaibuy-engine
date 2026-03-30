@@ -20,6 +20,7 @@ import { deriveCanonicalStockFromRaw } from "@/lib/safety/supplierLinkage";
 import { canRewritePinnedSupplierLinkageForListingStatus } from "./linkagePolicy";
 import { selectBestSupplierRowsBeforeListing } from "./supplierSelection";
 import { recordListingPrepareLearning } from "@/lib/learningHub/pipelineWriters";
+import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 
 type PrepareListingPreviewsInput = {
   limit?: number;
@@ -134,35 +135,50 @@ function extractSupplierShipFromCountry(row: CandidatePreviewSourceRow): {
   shipFromCountry: string | null;
   shipFromLocation: string | null;
 } {
+  const normalizedCountry = (value: unknown): string | null => normalizeShipFromCountry(cleanString(value));
   const fromColumns = {
-    supplierWarehouseCountry: cleanString(row.supplierWarehouseCountry),
-    shipFromCountry: cleanString(row.shipFromCountry),
+    supplierWarehouseCountry: normalizedCountry(row.supplierWarehouseCountry),
+    shipFromCountry: normalizedCountry(row.shipFromCountry),
     shipFromLocation: cleanString(row.shipFromLocation),
   };
 
   const payload = objectOrNull(row.supplierRawPayload);
   if (!payload) return fromColumns;
 
-  const shippingEstimate =
+  const shippingEstimateList =
     Array.isArray(payload.shippingEstimates) && payload.shippingEstimates.length > 0
-      ? objectOrNull(payload.shippingEstimates[0])
+      ? payload.shippingEstimates
       : Array.isArray(payload.shipping_estimates) && payload.shipping_estimates.length > 0
-        ? objectOrNull(payload.shipping_estimates[0])
-        : objectOrNull(payload.shipping_estimates);
+        ? payload.shipping_estimates
+        : [];
+  const shippingEstimate =
+    shippingEstimateList
+      .map((entry) => objectOrNull(entry))
+      .find((entry) => Boolean(entry)) ?? objectOrNull(payload.shipping_estimates);
   const shipping = objectOrNull(payload.shipping);
 
   return {
     supplierWarehouseCountry:
       fromColumns.supplierWarehouseCountry ??
-      cleanString(payload.supplierWarehouseCountry) ??
-      cleanString(payload.supplier_warehouse_country) ??
-      cleanString(payload.warehouse_country),
+      normalizedCountry(payload.supplierWarehouseCountry) ??
+      normalizedCountry(payload.supplier_warehouse_country) ??
+      normalizedCountry(payload.warehouse_country) ??
+      normalizedCountry(shippingEstimate?.supplier_warehouse_country) ??
+      normalizedCountry(shippingEstimate?.supplierWarehouseCountry) ??
+      normalizedCountry(shipping?.supplier_warehouse_country) ??
+      normalizedCountry(shipping?.supplierWarehouseCountry),
     shipFromCountry:
       fromColumns.shipFromCountry ??
-      cleanString(payload.shipFromCountry) ??
-      cleanString(payload.ship_from_country) ??
-      cleanString(shippingEstimate?.ship_from_country) ??
-      cleanString(shipping?.ship_from_country),
+      normalizedCountry(payload.shipFromCountry) ??
+      normalizedCountry(payload.ship_from_country) ??
+      normalizedCountry(shippingEstimate?.ship_from_country) ??
+      normalizedCountry(shippingEstimate?.shipFromCountry) ??
+      normalizedCountry(shippingEstimate?.ship_from_location) ??
+      normalizedCountry(shippingEstimate?.shipFromLocation) ??
+      normalizedCountry(shipping?.ship_from_country) ??
+      normalizedCountry(shipping?.shipFromCountry) ??
+      normalizedCountry(shipping?.ship_from_location) ??
+      normalizedCountry(shipping?.shipFromLocation),
     shipFromLocation:
       fromColumns.shipFromLocation ??
       cleanString(payload.shipFromLocation) ??

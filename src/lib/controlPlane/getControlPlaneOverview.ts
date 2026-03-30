@@ -26,6 +26,8 @@ type LatestRunSnapshot = {
   completedStages: string[];
 };
 
+type PauseSource = "runtime" | "latest_run";
+
 type IntegrityHealSnapshot = {
   generatedAt: string | null;
   orphanReadyToPublishClosed: number;
@@ -60,6 +62,7 @@ export type ControlPlaneOverview = {
   };
   summary: AutonomousOpsSummary;
   pauses: Array<{ stage: StageKey; reason: string }>;
+  pauseSource: PauseSource;
   latestRun: LatestRunSnapshot | null;
   latestFullCycleRun: LatestRunSnapshot | null;
   latestIntegrityHeal: IntegrityHealSnapshot | null;
@@ -88,6 +91,54 @@ export type ControlPlaneOverview = {
     primaryFocus: string;
   }>;
 };
+
+const STAGE_KEYS: StageKey[] = [
+  "runtime_diagnostics",
+  "integrity_scan",
+  "integrity_heal",
+  "supplier_refresh",
+  "marketplace_refresh",
+  "shipping_refresh",
+  "match_recompute",
+  "profit_recompute",
+  "listing_prepare",
+  "publish_ready_promotion",
+  "guarded_publish_execution",
+  "health_summary",
+];
+
+function asStageKey(value: string): StageKey | null {
+  return STAGE_KEYS.find((stage) => stage === value) ?? null;
+}
+
+function deriveRunWindowPauses(latestRun: LatestRunSnapshot | null): Array<{ stage: StageKey; reason: string }> {
+  if (!latestRun) return [];
+
+  const pausedStages = latestRun.pausedStages
+    .map((pause) => {
+      const stage = asStageKey(pause.key);
+      if (!stage) return null;
+      return {
+        stage,
+        reason: pause.reason,
+      };
+    })
+    .filter((row): row is { stage: StageKey; reason: string } => Boolean(row));
+
+  if (pausedStages.length) return pausedStages;
+
+  return latestRun.stages
+    .filter((stage) => stage.status === "paused")
+    .map((stage) => {
+      const stageKey = asStageKey(stage.key);
+      if (!stageKey) return null;
+      return {
+        stage: stageKey,
+        reason: stage.reasonCode ?? "PAUSED",
+      };
+    })
+    .filter((row): row is { stage: StageKey; reason: string } => Boolean(row));
+}
 
 function parseLatestRun(details: unknown): LatestRunSnapshot | null {
   if (!details || typeof details !== "object") return null;
@@ -358,7 +409,10 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
     getProductMarketIntelligenceOverview({ windowDays: 90, includeNodes: 12 }).catch(() => null),
     getContinuousLearningScheduleSnapshot().catch(() => null),
   ]);
-  const pauses = Array.from(pauseMap.entries()).map(([stage, reason]) => ({ stage, reason }));
+  const runtimePauses = Array.from(pauseMap.entries()).map(([stage, reason]) => ({ stage, reason }));
+  const runWindowPauses = deriveRunWindowPauses(latestRun);
+  const pauses = runWindowPauses.length ? runWindowPauses : runtimePauses;
+  const pauseSource: PauseSource = runWindowPauses.length ? "latest_run" : "runtime";
   const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun, learningHub);
   const recommendations = buildRecommendations(summary, pauses, latestRun, learningHub);
   const safeToRunFullCycleNow =
@@ -379,6 +433,7 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
     },
     summary,
     pauses,
+    pauseSource,
     latestRun,
     latestFullCycleRun,
     latestIntegrityHeal,

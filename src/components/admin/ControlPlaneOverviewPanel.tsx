@@ -333,6 +333,7 @@ export function ControlPlaneOverviewPanel({
             <div>eBay creds: {data.runtime.hasEbayClientId && data.runtime.hasEbayClientSecret ? "present" : "missing"}</div>
             <div>Latest phase: {latestRun?.phase ?? "unknown"}</div>
             <div>Latest run result: {latestRun?.ok == null ? "unknown" : latestRun.ok ? "ok" : "failed"}</div>
+            <div>Pause truth source: {data.pauseSource === "latest_run" ? "latest autonomous run window" : "runtime recompute"}</div>
             <div>Human work: {data.health.manualWorkLabel}</div>
           </div>
           <div className="mt-4 space-y-2">
