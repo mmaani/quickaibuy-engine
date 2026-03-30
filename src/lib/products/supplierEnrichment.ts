@@ -113,6 +113,57 @@ function dedupeImages(images: string[]): string[] {
   return normalized;
 }
 
+function gatherImagesFromPayload(rawPayload: Record<string, unknown>): string[] {
+  const discovered: string[] = [];
+  const preferredRoots = [
+    rawPayload.images,
+    rawPayload.imageGallery,
+    rawPayload.galleryImages,
+    rawPayload.variantImages,
+    rawPayload.descriptionImages,
+    nestedRecord(rawPayload.description)?.images,
+    nestedRecord(rawPayload.media)?.images,
+  ];
+  const walk = (value: unknown, path: string, depth = 0): void => {
+    if (depth > 5 || value == null) return;
+    if (typeof value === "string") {
+      const lowerPath = path.toLowerCase();
+      if (/(image|img|gallery|media|photo|picture|variant|description)/i.test(lowerPath)) {
+        discovered.push(value);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, idx) => walk(entry, `${path}[${idx}]`, depth + 1));
+      return;
+    }
+    const node = nestedRecord(value);
+    if (!node) return;
+    for (const [key, child] of Object.entries(node)) {
+      walk(child, path ? `${path}.${key}` : key, depth + 1);
+    }
+  };
+
+  preferredRoots.forEach((node, idx) => walk(node, `preferred_${idx}`));
+  walk(rawPayload, "raw_payload");
+  return dedupeImages(discovered);
+}
+
+function imageResolutionHintScore(urls: string[]): number {
+  if (!urls.length) return 0;
+  let high = 0;
+  let medium = 0;
+  for (const url of urls) {
+    if (/(1\d{3}x1\d{3}|s-l(960|1200|1400|1600)|[._-](960|1080|1200|1400|1600)x(960|1080|1200|1400|1600))/i.test(url)) {
+      high += 1;
+    } else if (/(640x640|750x750|800x800|1080x1080|1200x1200|_q9\d|\.webp|\.avif)/i.test(url)) {
+      medium += 1;
+    }
+  }
+  const score = (high * 1 + medium * 0.6) / urls.length;
+  return clamp01(Math.min(1, score));
+}
+
 function computeTitleCompleteness(title: string | null): number {
   if (!title) return 0;
   const compact = title.trim();
@@ -127,6 +178,7 @@ function computeTitleCompleteness(title: string | null): number {
 
 function computeMediaQualityScore(input: {
   imageCount: number;
+  imageUrls: string[];
   titleCompleteness: number;
   actionableSnapshot: boolean;
   telemetrySignals: Set<string>;
@@ -139,6 +191,7 @@ function computeMediaQualityScore(input: {
   if (input.imageCount >= 1) score += 0.35;
   if (input.imageCount >= 3) score += 0.2;
   if (input.imageCount >= 5) score += 0.15;
+  score += imageResolutionHintScore(input.imageUrls) * 0.2;
   score += input.titleCompleteness * 0.2;
   if (input.actionableSnapshot) score += 0.1;
   if (input.telemetrySignals.has("low_quality")) score -= 0.2;
@@ -208,6 +261,14 @@ function deriveShippingDetails(
       asString(shippingNode?.destinationCountry) ??
       asString(shippingNode?.destination_country),
   });
+  const deliveryRegionInference =
+    normalizeShipFromCountry(rawPayload.deliveryEstimateRegion) ??
+    normalizeShipFromCountry(rawPayload.deliveryRegion) ??
+    normalizeShipFromCountry(rawPayload.shippingTransitFrom) ??
+    normalizeShipFromCountry(rawPayload.shippingFromHint) ??
+    normalizeShipFromCountry(rawPayload.logisticsOrigin) ??
+    normalizeShipFromCountry(shippingNode?.deliveryRegion) ??
+    normalizeShipFromCountry(shippingNode?.transitFrom);
 
   const estimate = shippingEstimates.find((candidate) => {
     const label = String(candidate.label ?? "").toLowerCase();
@@ -233,13 +294,20 @@ function deriveShippingDetails(
   const shippingMethod = directMethod ?? label;
   const deliveryEstimateMinDays = directMin ?? estimate?.etaMinDays ?? null;
   const deliveryEstimateMaxDays = directMax ?? estimate?.etaMaxDays ?? null;
-  const shipFromCountry =
-    directShipFromCountry ?? resolvedOrigin.originCountry ?? normalizeShipFromCountry(estimate?.ship_from_country);
+  const shippingOptionOrigin = resolvedOrigin.originCountry ?? normalizeShipFromCountry(estimate?.ship_from_country);
+  const shipFromCountry = directShipFromCountry ?? shippingOptionOrigin ?? deliveryRegionInference;
   const shipFromLocation = directShipFromLocation ?? asString(estimate?.ship_from_location);
   const parseMode = asString(rawPayload.parseMode)?.toLowerCase();
   const evidenceSource = asString(rawPayload.shippingOriginEvidenceSource);
   const shippingOriginEvidenceSource =
     evidenceSource ??
+    (directShipFromCountry != null
+      ? "explicit_ship_from"
+      : shippingOptionOrigin != null
+        ? `origin_resolver:${resolvedOrigin.originSource}`
+        : deliveryRegionInference != null
+          ? "delivery_region_inference"
+          : null) ??
     (resolvedOrigin.originCountry
       ? `origin_resolver:${resolvedOrigin.originSource}`
       : null) ??
@@ -306,6 +374,12 @@ function deriveShippingDetails(
   const shipFromConfidence = clamp01(
     shipFromCountry == null && shipFromLocation == null
       ? 0
+      : directShipFromCountry != null
+        ? 0.95
+      : shippingOptionOrigin != null
+        ? Math.max(0.75, resolvedOrigin.originConfidence)
+      : deliveryRegionInference != null
+        ? 0.66
       : resolvedOrigin.originCountry != null
         ? resolvedOrigin.originConfidence
       : shippingOriginEvidenceSource === "supplier_detail"
@@ -351,7 +425,8 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
   const rawPayload = { ...(input.rawPayload ?? {}) };
   const telemetrySignals = new Set((input.telemetrySignals ?? []).map((value) => String(value).toLowerCase()));
   const cleanedTitle = sanitizeTitle(input.title);
-  const normalizedImageUrls = dedupeImages(input.images);
+  const payloadImages = gatherImagesFromPayload(rawPayload);
+  const normalizedImageUrls = dedupeImages([...(input.images ?? []), ...payloadImages]);
   const imageGalleryCount = normalizedImageUrls.length;
   const primaryImageUrl = normalizedImageUrls[0] ?? null;
   const titleCompleteness = computeTitleCompleteness(cleanedTitle);
@@ -364,6 +439,7 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
   const actionableSnapshot = pageIntegrityActionable && hasRequiredFields && !hasFallback;
   const mediaQualityScore = computeMediaQualityScore({
     imageCount: imageGalleryCount,
+    imageUrls: normalizedImageUrls,
     titleCompleteness,
     actionableSnapshot,
     telemetrySignals,

@@ -101,7 +101,7 @@ function hasShippingEstimateSignal(input: unknown): boolean {
   });
 }
 
-const ORIGIN_PERSISTENCE_THRESHOLD = 0.75;
+const ORIGIN_CONFIDENCE_INFERRED_STRONG = 0.75;
 
 export function classifyShippingGap(row: ShippingBlockedCandidateRow): ShippingGapClassification {
   if (!row.snapshotTs) return "STALE_OR_MISSING_SUPPLIER_SNAPSHOT";
@@ -429,19 +429,42 @@ export async function automateShippingIntelligence(input?: {
       shippingEstimates,
       destinationCountry: "US",
     });
+    const extractionSourcesUsed = Array.from(new Set(resolvedOrigin.evidence.map((entry) => entry.path))).slice(0, 20);
+    const originReason =
+      resolvedOrigin.originCountry != null
+        ? resolvedOrigin.originSource === "explicit"
+          ? "resolved from explicit ship-from evidence"
+          : resolvedOrigin.originValidity === "STRONG_INFERRED"
+            ? "resolved from consistent inferred shipping signals"
+            : "resolved from weak inferred shipping signals"
+        : `origin unresolved (${resolvedOrigin.unresolvedReason ?? "no_reason"})`;
+    const candidateOriginCountry = inferred.originCountry ?? resolvedOrigin.originCountry ?? null;
+    const originConfidence = Math.max(inferred.originConfidence ?? 0, resolvedOrigin.originConfidence ?? 0);
+    const originSource = inferred.originSource ?? resolvedOrigin.originSource;
+
+    console.info(
+      `[shipping_automation][origin_debug] ${JSON.stringify({
+        candidateId: row.candidateId,
+        supplierKey: row.supplierKey,
+        supplierProductId: row.supplierProductId,
+        origin_source: originSource,
+        origin_confidence: originConfidence,
+        origin_reason: originReason,
+        extraction_sources_used: extractionSourcesUsed,
+      })}`
+    );
+
     if (
-      !inferred.originCountry ||
-      !resolvedOrigin.originCountry ||
-      resolvedOrigin.originCountry !== inferred.originCountry ||
-      resolvedOrigin.originConfidence < ORIGIN_PERSISTENCE_THRESHOLD
+      !candidateOriginCountry ||
+      originConfidence < ORIGIN_CONFIDENCE_INFERRED_STRONG
     ) {
       blockedOutcomes.push({
         candidateId: row.candidateId,
         supplierKey: row.supplierKey,
         supplierProductId: row.supplierProductId,
         reason: "INSUFFICIENT_SHIP_FROM_EVIDENCE",
-        detail: inferred.originCountry
-          ? `origin evidence insufficient (resolved=${resolvedOrigin.originCountry ?? "NONE"} confidence=${resolvedOrigin.originConfidence})`
+        detail: candidateOriginCountry
+          ? `origin evidence insufficient (resolved=${resolvedOrigin.originCountry ?? "NONE"} confidence=${originConfidence})`
           : `inference failed to resolve supplier ship-from country (${resolvedOrigin.unresolvedReason ?? "no_reason"})`,
       });
       await writeAuditLog({
@@ -458,7 +481,9 @@ export async function automateShippingIntelligence(input?: {
           inferredConfidence: inferred.confidence,
           inferredOriginCountry: inferred.originCountry,
           originSource: resolvedOrigin.originSource,
-          originConfidence: resolvedOrigin.originConfidence,
+          originConfidence,
+          originReason,
+          extractionSourcesUsed,
           originUnresolvedReason: resolvedOrigin.unresolvedReason,
         },
       });
@@ -483,7 +508,7 @@ export async function automateShippingIntelligence(input?: {
       ) VALUES (
         ${row.supplierKey},
         ${row.supplierProductId},
-        ${inferred.originCountry},
+        ${candidateOriginCountry},
         'US',
         'STANDARD',
         ${String(inferred.shippingCostUsd)},
@@ -541,6 +566,10 @@ export async function automateShippingIntelligence(input?: {
         confidence: inferred.confidence,
         sourceType: inferred.sourceType ?? null,
         rootCause,
+        originSource,
+        originConfidence,
+        originReason,
+        extractionSourcesUsed,
       },
     });
 
