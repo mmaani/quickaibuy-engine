@@ -50,14 +50,18 @@
 │   │   ├── architecture
 │   │   │   └── system-overview.md
 │   │   ├── automation
-│   │   │   └── autonomous-backbone.md
+│   │   │   ├── autonomous-backbone.md
+│   │   │   └── scheduled-learning-orchestration.md
 │   │   ├── control-plane
-│   │   │   └── control-plane-model.md
+│   │   │   ├── control-plane-model.md
+│   │   │   └── live-scorecard-update-model.md
 │   │   ├── data-quality
 │   │   │   ├── data-quality-model.md
 │   │   │   └── drift-and-anomaly.md
 │   │   ├── learning-hub
 │   │   │   ├── ai-evals-and-labeling.md
+│   │   │   ├── continuous-learning.md
+│   │   │   ├── freshness-and-update-policy.md
 │   │   │   ├── learning-loop.md
 │   │   │   ├── product-knowledge-graph.md
 │   │   │   └── product-market-intelligence.md
@@ -406,6 +410,7 @@
 │   │   ├── marketplace_prices_check_duplicates.sql
 │   │   └── marketplace_prices_dedupe.sql
 │   ├── sync_env_from_vercel_and_verify.sh
+│   ├── test_continuous_learning_contracts.ts
 │   ├── test_customer_intelligence.ts
 │   ├── test_ebay_order_sync.ts
 │   ├── test_ebay_search.sh
@@ -463,6 +468,7 @@
 │   │   │   ├── dashboard
 │   │   │   │   └── page.tsx
 │   │   │   └── layout.tsx
+│   │   ├── HomePageClient.tsx
 │   │   ├── _components
 │   │   │   ├── AdminChrome.tsx
 │   │   │   └── RefreshButton.tsx
@@ -588,6 +594,7 @@
 │   │   ├── jobNames.ts
 │   │   ├── jobs
 │   │   │   ├── enqueueAutonomousOpsSchedules.ts
+│   │   │   ├── enqueueContinuousLearningSchedules.ts
 │   │   │   ├── enqueueInventoryRiskScan.ts
 │   │   │   ├── enqueueMarketplacePriceScan.ts
 │   │   │   ├── enqueueOrderOpsSchedules.ts
@@ -609,10 +616,12 @@
 │   │   ├── learningHub
 │   │   │   ├── __tests__
 │   │   │   │   └── productMarketIntelligence.test.ts
+│   │   │   ├── continuousLearning.ts
 │   │   │   ├── contracts.ts
 │   │   │   ├── drift.ts
 │   │   │   ├── evals.ts
 │   │   │   ├── featureStore.ts
+│   │   │   ├── freshness.ts
 │   │   │   ├── pipelineWriters.ts
 │   │   │   ├── productMarketIntelligence.ts
 │   │   │   ├── scorecard.ts
@@ -774,4 +783,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-120 directories, 655 files
+120 directories, 664 files

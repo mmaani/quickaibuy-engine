@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { enqueueContinuousLearningRefresh } from "@/lib/jobs/enqueueContinuousLearningSchedules";
 import { recordMetricSnapshot, recordDriftEvent } from "@/lib/learningHub/drift";
 import { recordEvalLabel } from "@/lib/learningHub/evals";
 import { recordLearningEvidence, upsertLearningFeature } from "@/lib/learningHub/featureStore";
@@ -75,8 +76,8 @@ function inferConfidence(input: {
   return 0.9;
 }
 
-async function writeStageEvidence(input: StageEvidenceInput) {
-  return recordLearningEvidence({
+async function writePipelineLearningEvent(input: StageEvidenceInput) {
+  const result = await recordLearningEvidence({
     evidenceType: input.evidenceType,
     entityType: input.entityType,
     entityId: input.entityId,
@@ -92,6 +93,15 @@ async function writeStageEvidence(input: StageEvidenceInput) {
     diagnostics: input.diagnostics ?? null,
     observedAt: new Date(),
   });
+
+  void enqueueContinuousLearningRefresh({
+    trigger: `event:${input.evidenceType}`,
+    reason: input.source,
+  }).catch(() => {
+    // Best-effort only. Learning refresh must never block safety-critical source flows.
+  });
+
+  return result;
 }
 
 async function writeMetricWithDrift(input: {
@@ -183,7 +193,7 @@ export async function recordSupplierRefreshLearning(input: {
             : 0.28,
   });
 
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "supplier_snapshot",
     entityType: "SUPPLIER_PRODUCT",
     entityId: `${canonicalSupplierKey(input.supplierKey)}:${input.supplierProductId}`,
@@ -201,7 +211,7 @@ export async function recordSupplierRefreshLearning(input: {
     },
   });
 
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "stock_signal",
     entityType: "SUPPLIER_PRODUCT",
     entityId: `${canonicalSupplierKey(input.supplierKey)}:${input.supplierProductId}`,
@@ -239,7 +249,7 @@ export async function recordSupplierDiscoveryLearning(input: {
     top_rejection_reasons: string[];
   }>;
 }) {
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "supplier_snapshot",
     entityType: "PIPELINE_STAGE",
     entityId: "runSupplierDiscover",
@@ -298,7 +308,7 @@ export async function recordShippingAutomationLearning(input: {
     .filter((row) => row.count > 0)
     .map((row) => `${row.rootCause}:${row.count}`);
 
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "shipping_quote",
     entityType: "PIPELINE_STAGE",
     entityId: "shippingAutomation",
@@ -346,7 +356,7 @@ export async function recordMarketplaceScanLearning(input: {
     blockedReasons: queryErrors > 0 ? [`QUERY_ERRORS:${queryErrors}`] : [],
   });
 
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "marketplace_snapshot",
     entityType: "PRODUCT_RAW",
     entityId: input.productRawId ?? `marketplace:${input.platform}:batch`,
@@ -375,7 +385,7 @@ export async function recordMatchLearning(input: {
   skippedNoQualifiedCandidate: number;
 }) {
   const scored = input.active + input.manualReview + input.rejected;
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "match",
     entityType: "PIPELINE_STAGE",
     entityId: "runEbayMatches",
@@ -407,7 +417,7 @@ export async function recordProfitLearning(input: {
   minMatchConfidence: number;
 }) {
   const successRatio = input.scanned > 0 ? input.insertedOrUpdated / input.scanned : 1;
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "candidate_decision",
     entityType: "PIPELINE_STAGE",
     entityId: "runProfitEngine",
@@ -430,7 +440,7 @@ export async function recordListingPrepareLearning(input: {
   skipped: number;
   failed: number;
 }) {
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "listing_decision",
     entityType: "PIPELINE_STAGE",
     entityId: "prepareListingPreviews",
@@ -452,7 +462,7 @@ export async function recordPromotionLearning(input: {
   blocked: number;
   results: Array<{ listingId: string; candidateId: string; ok: boolean; reason: string | null }>;
 }) {
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "listing_decision",
     entityType: "PIPELINE_STAGE",
     entityId: "promoteApprovedPreviewsToReady",
@@ -465,7 +475,7 @@ export async function recordPromotionLearning(input: {
   });
 
   for (const result of input.results) {
-    await writeStageEvidence({
+    await writePipelineLearningEvent({
       evidenceType: "listing_decision",
       entityType: "LISTING",
       entityId: result.listingId,
@@ -486,7 +496,7 @@ export async function recordPublishLearning(input: {
   dryRun: boolean;
   marketplaceKey: string;
 }) {
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "publish_outcome",
     entityType: "PIPELINE_STAGE",
     entityId: "runListingExecution",
@@ -522,7 +532,7 @@ export async function recordOrderSyncLearning(input: {
   unchanged: number;
   failed: number;
 }) {
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "order_outcome",
     entityType: "PIPELINE_STAGE",
     entityId: "syncEbayOrders",
@@ -545,7 +555,7 @@ export async function recordTrackingSyncLearning(input: {
   attemptedLiveCall: boolean;
   reason: string | null;
 }) {
-  await writeStageEvidence({
+  await writePipelineLearningEvent({
     evidenceType: "order_outcome",
     entityType: "ORDER",
     entityId: input.orderId,
@@ -557,6 +567,33 @@ export async function recordTrackingSyncLearning(input: {
     diagnostics: {
       supplierOrderId: input.supplierOrderId,
       attemptedLiveCall: input.attemptedLiveCall,
+    },
+  });
+}
+
+export async function recordCustomerOutcomeLearning(input: {
+  orderId: string;
+  customerId: string;
+  identityConfidence: "HIGH" | "MEDIUM" | "LOW";
+  resolutionMethod: string;
+  orderCount: number;
+  repeatCustomer: boolean;
+}) {
+  await writePipelineLearningEvent({
+    evidenceType: "order_outcome",
+    entityType: "CUSTOMER",
+    entityId: input.customerId,
+    marketplaceKey: "ebay",
+    source: "linkOrderToCanonicalCustomerTx",
+    confidence:
+      input.identityConfidence === "HIGH" ? 0.94 : input.identityConfidence === "MEDIUM" ? 0.72 : 0.45,
+    downstreamOutcome: input.repeatCustomer ? "REPEAT_CUSTOMER_SIGNAL" : "CUSTOMER_ORDER_SIGNAL",
+    diagnostics: {
+      orderId: input.orderId,
+      resolutionMethod: input.resolutionMethod,
+      identityConfidence: input.identityConfidence,
+      orderCount: input.orderCount,
+      repeatCustomer: input.repeatCustomer,
     },
   });
 }

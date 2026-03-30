@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { getLearningFreshnessOverview, type LearningFreshnessOverview } from "@/lib/learningHub/freshness";
 
 export type LearningHubScorecard = {
+  freshness: LearningFreshnessOverview;
   evidence: {
     total: number;
     pass: number;
@@ -46,6 +48,10 @@ export type LearningHubScorecard = {
     graded: number;
     averageGap: number | null;
   };
+  recompute: {
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+  };
 };
 
 function toNumber(value: unknown): number {
@@ -70,6 +76,9 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
       parserRes,
       failureRes,
       evalRes,
+      recomputeRes,
+      recomputeFailRes,
+      freshness,
     ] = await Promise.all([
       db.execute(sql`
         SELECT
@@ -162,6 +171,21 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
         FROM learning_eval_labels
         WHERE created_at >= now() - interval '30 days'
       `),
+      db.execute<{ ts: string | null }>(sql`
+        SELECT max(coalesce(finished_at, started_at)) AS ts
+        FROM worker_runs
+        WHERE worker = 'jobs.worker'
+          AND upper(coalesce(status, '')) = 'SUCCEEDED'
+          AND job_name = 'learning:continuous-refresh'
+      `),
+      db.execute<{ ts: string | null }>(sql`
+        SELECT max(coalesce(finished_at, started_at)) AS ts
+        FROM worker_runs
+        WHERE worker = 'jobs.worker'
+          AND upper(coalesce(status, '')) = 'FAILED'
+          AND job_name = 'learning:continuous-refresh'
+      `),
+      getLearningFreshnessOverview(),
     ]);
 
     const evidenceRow = evidenceRes.rows?.[0] ?? {};
@@ -173,6 +197,7 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
     const evalRow = evalRes.rows?.[0] ?? {};
 
     return {
+      freshness,
       evidence: {
         total: toNumber(evidenceRow.total),
         pass: toNumber(evidenceRow.pass),
@@ -216,6 +241,10 @@ export async function getLearningHubScorecard(): Promise<LearningHubScorecard | 
         pending: toNumber(evalRow.pending),
         graded: toNumber(evalRow.graded),
         averageGap: evalRow.average_gap == null ? null : Number(evalRow.average_gap),
+      },
+      recompute: {
+        lastSuccessAt: recomputeRes.rows?.[0]?.ts ? String(recomputeRes.rows[0].ts) : null,
+        lastFailureAt: recomputeFailRes.rows?.[0]?.ts ? String(recomputeFailRes.rows[0].ts) : null,
       },
     };
   } catch {

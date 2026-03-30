@@ -15,6 +15,7 @@ export const JOB_NAMES = {
   TREND_EXPAND_REFRESH: "trend:expand:refresh",
   PRODUCT_DISCOVER: "product:discover",
   SUPPLIER_DISCOVER: "supplier:discover",
+  CONTINUOUS_LEARNING_REFRESH: "learning:continuous-refresh",
   LISTING_PREPARE: "listing:prepare",
   SCAN_SUPPLIER: "SCAN_SUPPLIER",
   SCAN_MARKETPLACE_PRICE: "SCAN_MARKETPLACE_PRICE",

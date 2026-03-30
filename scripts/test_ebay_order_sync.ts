@@ -162,9 +162,9 @@ async function main() {
   );
   const thirdState = await getOrderState();
 
-  assert(firstChange === "created", `Expected first sync to create order, got ${firstChange}`);
-  assert(secondChange === "unchanged", `Expected unchanged second sync, got ${secondChange}`);
-  assert(thirdChange === "updated", `Expected changed third sync, got ${thirdChange}`);
+  assert(firstChange.changeType === "created", `Expected first sync to create order, got ${firstChange.changeType}`);
+  assert(secondChange.changeType === "unchanged", `Expected unchanged second sync, got ${secondChange.changeType}`);
+  assert(thirdChange.changeType === "updated", `Expected changed third sync, got ${thirdChange.changeType}`);
 
   assert(firstState.items.length === 1, `Expected 1 item after first sync, got ${firstState.items.length}`);
   assert(secondState.items.length === 1, `Expected 1 item after unchanged sync, got ${secondState.items.length}`);

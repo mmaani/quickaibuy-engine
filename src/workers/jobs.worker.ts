@@ -19,9 +19,11 @@ import { runInventoryRiskWorker } from "./inventoryRisk.worker";
 import { ensureInventoryRiskScanSchedule } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { ensureUpstreamRecurringSchedules } from "@/lib/jobs/enqueueUpstreamSchedules";
 import { ensureAutonomousOpsSchedules } from "@/lib/jobs/enqueueAutonomousOpsSchedules";
+import { ensureContinuousLearningSchedules } from "@/lib/jobs/enqueueContinuousLearningSchedules";
 import { ensureOrderOpsSchedules } from "@/lib/jobs/enqueueOrderOpsSchedules";
 import { buildFollowUpJobId } from "@/lib/jobs/followUpJobIds";
 import { recoverMissedUpstreamFreshness } from "@/lib/jobs/freshnessRecovery";
+import { runContinuousLearningRefresh } from "@/lib/learningHub/continuousLearning";
 import { runListingPerformanceEngine } from "@/lib/listings/performanceEngine";
 import { runAutonomousOperations } from "@/lib/autonomousOps/backbone";
 
@@ -59,6 +61,16 @@ void ensureAutonomousOpsSchedules()
   })
   .catch((error) => {
     console.error("[jobs.worker] failed to ensure autonomous ops schedules", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+void ensureContinuousLearningSchedules()
+  .then((result) => {
+    console.log("[jobs.worker] continuous learning schedules ensured", result);
+  })
+  .catch((error) => {
+    console.error("[jobs.worker] failed to ensure continuous learning schedules", {
       error: error instanceof Error ? error.message : String(error),
     });
   });
@@ -438,6 +450,52 @@ export const jobsWorker = new Worker(
         });
 
         return output;
+      }
+
+      case JOB_NAMES.CONTINUOUS_LEARNING_REFRESH: {
+        const triggerSource = String(job.data?.trigger ?? "manual");
+        if (triggerSource === "schedule") {
+          const shouldSkip = await skipIfSameJobActive(job.name, String(job.id ?? idempotencyKey));
+          if (shouldSkip) {
+            const output = { ok: true, skipped: true, reason: "continuous learning refresh already active" };
+            await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+            await logWorkerRun({
+              status: "SUCCEEDED",
+              jobName: job.name,
+              jobId: idempotencyKey,
+              durationMs: Date.now() - startedAtMs,
+            });
+            return output;
+          }
+        }
+
+        const result = await runContinuousLearningRefresh({
+          trigger: triggerSource,
+          forceFull: Boolean(job.data?.forceFull),
+        });
+
+        await writeAuditLog({
+          actorType: "WORKER",
+          actorId: JOB_NAMES.CONTINUOUS_LEARNING_REFRESH,
+          entityType: "SYSTEM",
+          entityId: "continuous-learning",
+          eventType: "CONTINUOUS_LEARNING_REFRESH_COMPLETED",
+          details: {
+            source: "continuous-learning-engine",
+            jobId: String(job.id ?? ""),
+            ...result,
+          },
+        });
+
+        await markJobSucceeded({ jobType: job.name, idempotencyKey, attempt, maxAttempts });
+        await logWorkerRun({
+          status: "SUCCEEDED",
+          jobName: job.name,
+          jobId: idempotencyKey,
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        return result;
       }
 
       case JOB_NAMES.SCAN_MARKETPLACE_PRICE: {

@@ -19,10 +19,8 @@ import { promoteApprovedPreviewsToReady } from "@/lib/listings/promoteReadyBatch
 import { getSupplierRefreshTelemetry } from "@/lib/suppliers/telemetry";
 import { runListingExecution } from "@/workers/listingExecute.worker";
 import { getLearningHubScorecard } from "@/lib/learningHub/scorecard";
-import {
-  recordOperationalSummaryLearning,
-  refreshLearningOperationalFeedback,
-} from "@/lib/learningHub/pipelineWriters";
+import { runContinuousLearningRefresh } from "@/lib/learningHub/continuousLearning";
+import { recordOperationalSummaryLearning } from "@/lib/learningHub/pipelineWriters";
 
 export type AutonomousOpsPhase = "full" | "diagnostics_refresh" | "prepare" | "publish";
 type ActorType = "ADMIN" | "WORKER" | "SYSTEM";
@@ -616,6 +614,12 @@ export async function computePauseMap(runtime: RuntimeDiagnostics, summary: Auto
     pauses.set("listing_prepare", "LEARNING_HUB_CRITICAL_DRIFT");
     pauses.set("guarded_publish_execution", "LEARNING_HUB_CRITICAL_DRIFT");
   }
+  for (const reason of learningHub?.freshness.autonomyPauseReasons ?? []) {
+    pauses.set("match_recompute", reason);
+    pauses.set("profit_recompute", reason);
+    pauses.set("listing_prepare", reason);
+    pauses.set("guarded_publish_execution", reason);
+  }
 
   return pauses;
 }
@@ -1172,7 +1176,10 @@ export async function runAutonomousOperations(input?: {
 
   let finalSummary = initialSummary;
   try {
-    const learningRefresh = await refreshLearningOperationalFeedback();
+    const learningRefresh = await runContinuousLearningRefresh({
+      trigger: `backbone:${phase}`,
+      forceFull: true,
+    });
     finalSummary = await buildOperationalSummary(runtime);
     await recordOperationalSummaryLearning({
       shippingBlocks: finalSummary.shippingBlocks,
@@ -1195,7 +1202,8 @@ export async function runAutonomousOperations(input?: {
         active: finalSummary.pipeline.active,
         shippingBlocks: finalSummary.shippingBlocks,
         manualPurchaseQueueCount: finalSummary.manualPurchaseQueueCount,
-        learningSupplierFeaturesUpdated: Number(learningRefresh.supplierFeaturesUpdated ?? 0),
+        learningStagesCompleted: learningRefresh.stages.filter((stage) => stage.status === "completed").length,
+        learningFreshnessErrors: learningRefresh.freshness.staleDomainCount,
       },
       details: {
         ...finalSummary,

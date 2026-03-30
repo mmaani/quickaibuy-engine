@@ -147,6 +147,10 @@ export function ControlPlaneOverviewPanel({
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Stat
+              label="Freshness stale / warn"
+              value={`${data.learningHub.freshness.staleDomainCount} / ${data.learningHub.freshness.warningDomainCount}`}
+            />
+            <Stat
               label="Shipping quality"
               value={formatPercent(data.learningHub.shippingQuality.passRate)}
             />
@@ -163,6 +167,33 @@ export function ControlPlaneOverviewPanel({
               value={data.learningHub.parserPerformance[0]?.parserVersion ?? "n/a"}
             />
           </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat
+              label="Learning refresh last success"
+              value={formatDateTime(data.learningHub.recompute.lastSuccessAt)}
+            />
+            <Stat
+              label="Learning refresh last failure"
+              value={formatDateTime(data.learningHub.recompute.lastFailureAt)}
+            />
+            <Stat
+              label="Scorecards visibly stale"
+              value={data.learningHub.freshness.staleScorecardsVisible ? "yes" : "no"}
+            />
+            <Stat
+              label="Autonomy pause reasons"
+              value={data.learningHub.freshness.autonomyPauseReasons.length}
+            />
+          </div>
+          {data.continuousLearning.schedule ? (
+            <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Continuous learning cadence</div>
+              <div className="mt-2 text-sm text-white/75">
+                Recurring refresh every {Math.round(data.continuousLearning.schedule.everyMs / (60 * 60 * 1000))}h.
+                Next run {formatDateTime(data.continuousLearning.schedule.nextRun)}.
+              </div>
+            </div>
+          ) : null}
           {data.learningHub.failureSignatures.length ? (
             <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
               <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Top failure signatures</div>
@@ -170,6 +201,18 @@ export function ControlPlaneOverviewPanel({
                 {data.learningHub.failureSignatures.slice(0, compact ? 2 : 4).map((row) => (
                   <div key={row.reason}>
                     {row.reason}: {row.count}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {data.continuousLearning.staleWarnings.length ? (
+            <div className="mt-3 rounded-2xl border border-amber-300/25 bg-amber-500/10 p-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-amber-100/80">Stale knowledge warnings</div>
+              <div className="mt-2 space-y-1 text-sm text-amber-50/90">
+                {data.continuousLearning.staleWarnings.slice(0, compact ? 2 : 6).map((warning) => (
+                  <div key={warning.key}>
+                    {warning.label}: {warning.state} - {warning.warning}
                   </div>
                 ))}
               </div>

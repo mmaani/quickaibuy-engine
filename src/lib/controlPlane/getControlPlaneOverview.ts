@@ -14,6 +14,7 @@ import {
   type StageKey,
 } from "@/lib/autonomousOps/backbone";
 import type { FullCycleRunResult } from "@/lib/autonomousOps/fullCycle";
+import { getContinuousLearningScheduleSnapshot } from "@/lib/jobs/enqueueContinuousLearningSchedules";
 
 type LatestRunSnapshot = {
   generatedAt: string | null;
@@ -77,6 +78,10 @@ export type ControlPlaneOverview = {
   recommendations: AssistantRecommendation[];
   learningHub: LearningHubScorecard | null;
   productMarketIntelligence: ProductMarketIntelligenceOverview | null;
+  continuousLearning: {
+    schedule: Awaited<ReturnType<typeof getContinuousLearningScheduleSnapshot>> | null;
+    staleWarnings: Array<{ key: string; label: string; state: "fresh" | "warn" | "error"; warning: string }>;
+  };
   routeMap: Array<{
     route: string;
     loader: string;
@@ -163,7 +168,8 @@ async function getLatestFullCycleRunDetails(): Promise<unknown | null> {
 function buildAnomalyGroups(
   summary: AutonomousOpsSummary,
   pauses: Array<{ stage: StageKey; reason: string }>,
-  latestRun: LatestRunSnapshot | null
+  latestRun: LatestRunSnapshot | null,
+  learningHub: LearningHubScorecard | null
 ) {
   const groups = [
     {
@@ -206,6 +212,16 @@ function buildAnomalyGroups(
           ? latestRun.failedStages.map((stage) => `${stage.key}: ${stage.reasonCode ?? "FAILED"}`).join("; ")
           : "Latest autonomous run did not report any failed stages.",
     },
+    {
+      key: "learning-staleness",
+      label: "Stale Learning Domains",
+      count: learningHub?.freshness.staleDomainCount ?? 0,
+      detail:
+        learningHub?.freshness.domains
+          .filter((domain) => domain.state === "error")
+          .map((domain) => `${domain.label}: ${domain.visibleWarning}`)
+          .join("; ") ?? "No stale learning domains.",
+    },
   ];
 
   return groups.filter((group) => group.count > 0);
@@ -214,7 +230,8 @@ function buildAnomalyGroups(
 function buildRecommendations(
   summary: AutonomousOpsSummary,
   pauses: Array<{ stage: StageKey; reason: string }>,
-  latestRun: LatestRunSnapshot | null
+  latestRun: LatestRunSnapshot | null,
+  learningHub: LearningHubScorecard | null
 ): AssistantRecommendation[] {
   const recommendations: AssistantRecommendation[] = [];
 
@@ -293,6 +310,15 @@ function buildRecommendations(
     });
   }
 
+  const staleWarnings = learningHub?.freshness.domains.filter((domain) => domain.state !== "fresh") ?? [];
+  if (staleWarnings.length > 0) {
+    recommendations.push({
+      title: "Visible learning staleness is active",
+      detail: staleWarnings.map((domain) => `${domain.label}: ${domain.state}`).join(", "),
+      severity: staleWarnings.some((domain) => domain.state === "error") ? "critical" : "warning",
+    });
+  }
+
   if (summary.manualPurchaseQueueCount > 0) {
     recommendations.push({
       title: "Human work is ready in purchase review",
@@ -327,13 +353,14 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   const latestFullCycleRunDetails = await getLatestFullCycleRunDetails();
   const latestFullCycleRun = parseLatestRun(latestFullCycleRunDetails);
   const latestIntegrityHeal = extractLatestIntegrityHeal(latestRunDetails);
-  const [learningHub, productMarketIntelligence] = await Promise.all([
+  const [learningHub, productMarketIntelligence, continuousLearningSchedule] = await Promise.all([
     getLearningHubScorecard(),
     getProductMarketIntelligenceOverview({ windowDays: 90, includeNodes: 12 }).catch(() => null),
+    getContinuousLearningScheduleSnapshot().catch(() => null),
   ]);
   const pauses = Array.from(pauseMap.entries()).map(([stage, reason]) => ({ stage, reason }));
-  const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun);
-  const recommendations = buildRecommendations(summary, pauses, latestRun);
+  const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun, learningHub);
+  const recommendations = buildRecommendations(summary, pauses, latestRun, learningHub);
   const safeToRunFullCycleNow =
     runtime.hasEbayClientId &&
     runtime.hasEbayClientSecret &&
@@ -368,6 +395,18 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
     recommendations,
     learningHub,
     productMarketIntelligence,
+    continuousLearning: {
+      schedule: continuousLearningSchedule,
+      staleWarnings:
+        learningHub?.freshness.domains
+          .filter((domain) => domain.state !== "fresh")
+          .map((domain) => ({
+            key: domain.key,
+            label: domain.label,
+            state: domain.state,
+            warning: domain.visibleWarning,
+          })) ?? [],
+    },
     routeMap: [
       {
         route: "/dashboard",

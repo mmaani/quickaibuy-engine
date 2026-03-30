@@ -4,7 +4,7 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { orderEvents, orderItems, orders } from "@/lib/db/schema";
 import { fetchEbayOrders, type NormalizedEbayOrder } from "./ebayFetchOrders";
 import { linkOrderToCanonicalCustomerTx } from "./customerIntelligence";
-import { recordOrderSyncLearning } from "@/lib/learningHub/pipelineWriters";
+import { recordCustomerOutcomeLearning, recordOrderSyncLearning } from "@/lib/learningHub/pipelineWriters";
 
 export type ListingLinkage = {
   listingId: string | null;
@@ -39,6 +39,15 @@ export type OrderItemComparable = {
 };
 
 export type OrderSyncChange = "created" | "updated" | "unchanged";
+
+export type CustomerLearningSignal = {
+  orderId: string;
+  customerId: string;
+  identityConfidence: "HIGH" | "MEDIUM" | "LOW";
+  resolutionMethod: string;
+  orderCount: number;
+  repeatCustomer: boolean;
+};
 
 export type SyncEbayOrdersResult = {
   ok: boolean;
@@ -244,7 +253,7 @@ async function resolveListingLinkages(
 export async function upsertNormalizedEbayOrder(
   order: NormalizedEbayOrder,
   listingLinkages: Map<string, ListingLinkage>
-): Promise<OrderSyncChange> {
+): Promise<{ changeType: OrderSyncChange; customerSignal: CustomerLearningSignal }> {
   return db.transaction(async (tx) => {
     const existing = await tx
       .select({
@@ -410,7 +419,7 @@ export async function upsertNormalizedEbayOrder(
       );
     }
 
-    await linkOrderToCanonicalCustomerTx(tx, {
+    const customerResolution = await linkOrderToCanonicalCustomerTx(tx, {
       orderId,
       marketplace: "ebay",
       customerExternalId: order.buyerUsername,
@@ -423,6 +432,13 @@ export async function upsertNormalizedEbayOrder(
       orderTotal: order.totalPrice == null ? null : String(order.totalPrice),
       orderCurrency: newCurrency,
     });
+
+    const customerStats = await tx.execute<{ orderCount: number }>(sql`
+      SELECT count(*)::int AS "orderCount"
+      FROM customer_orders
+      WHERE customer_id = ${customerResolution.customerId}
+    `);
+    const orderCount = Number(customerStats.rows?.[0]?.orderCount ?? 0);
 
     if (createOrderSyncedEvent) {
       await tx.insert(orderEvents).values({
@@ -447,7 +463,17 @@ export async function upsertNormalizedEbayOrder(
       });
     }
 
-    return changeType;
+    return {
+      changeType,
+      customerSignal: {
+        orderId,
+        customerId: customerResolution.customerId,
+        identityConfidence: customerResolution.identityConfidence,
+        resolutionMethod: customerResolution.resolutionMethod,
+        orderCount,
+        repeatCustomer: orderCount >= 2,
+      },
+    };
   });
 }
 
@@ -474,10 +500,12 @@ export async function syncEbayOrders(input?: {
 
   for (const order of fetched.orders) {
     try {
-      const change = await upsertNormalizedEbayOrder(order, linkages);
-      if (change === "created") created++;
-      else if (change === "updated") updated++;
+      const { changeType, customerSignal } = await upsertNormalizedEbayOrder(order, linkages);
+      if (changeType === "created") created++;
+      else if (changeType === "updated") updated++;
       else unchanged++;
+
+      await recordCustomerOutcomeLearning(customerSignal);
     } catch (error) {
       failed++;
       await writeAuditLog({
