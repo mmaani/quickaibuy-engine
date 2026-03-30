@@ -6,6 +6,7 @@ import { validateProfitSafety } from "@/lib/profit/priceGuard";
 import { enqueueMarketplacePriceScan } from "@/lib/jobs/enqueueMarketplacePriceScan";
 import { enqueueSupplierDiscoverRefresh } from "@/lib/jobs/enqueueSupplierDiscover";
 import { isPausedListingStatus } from "./statuses";
+import { recomputeListingPhase1Diagnostics } from "./listingPhase1Diagnostics";
 
 export type ReevaluateListingRecoveryInput = {
   listingId: string;
@@ -89,6 +90,12 @@ export async function reevaluateListingForRecovery(
   }
 
   if (isPausedListingStatus(listingStatus)) {
+    await recomputeListingPhase1Diagnostics({
+      listingId,
+      actorId,
+      actorType,
+    });
+
     await writeAuditLog({
       actorType,
       actorId,
@@ -137,6 +144,12 @@ export async function reevaluateListingForRecovery(
   });
 
   if (!priceGuard.allow) {
+    await recomputeListingPhase1Diagnostics({
+      listingId,
+      actorId,
+      actorType,
+    });
+
     const staleMarketplace = priceGuard.reasons.includes("STALE_MARKETPLACE_SNAPSHOT");
     const staleSupplier = priceGuard.reasons.includes("STALE_SUPPLIER_SNAPSHOT");
     const supplierDrift =
@@ -241,6 +254,12 @@ export async function reevaluateListingForRecovery(
       decision: "READY_FOR_REPROMOTION",
       priceGuard,
     },
+  });
+
+  await recomputeListingPhase1Diagnostics({
+    listingId,
+    actorId,
+    actorType,
   });
 
   return {

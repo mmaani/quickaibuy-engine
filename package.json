@@ -53,6 +53,7 @@
     "check:upstream-schedules": "node --import tsx scripts/check_upstream_schedules.ts",
     "check:worker-run-truth": "node --import tsx scripts/check_worker_run_truth.ts",
     "check:schema-drift": "node --import tsx scripts/check_schema_drift.ts",
+    "ops:listing-phase1-recheck": "node --import tsx scripts/run_listing_phase1_recheck.ts",
     "enqueue:listing-optimize": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/enqueue_listing_optimize.ts",
     "worker:railway-env:build": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/build_railway_worker_env.ts",
     "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts"

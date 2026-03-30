@@ -466,6 +466,16 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="Commercial state" value={detail.item.commercialState ?? "-"} />
                     <KeyValue label="First-sale score" value={detail.item.firstSaleScore ?? "-"} />
                     <KeyValue label="First-sale candidate" value={detail.item.firstSaleCandidate ? "YES" : "NO"} />
+                    <KeyValue label="Kill score" value={detail.item.killScore == null ? "-" : detail.item.killScore.toFixed(4)} />
+                    <KeyValue label="Kill decision" value={detail.item.killDecision ?? "-"} />
+                    <KeyValue label="Kill reason codes" value={detail.item.killReasonCodes.length ? detail.item.killReasonCodes.join(", ") : "-"} />
+                    <KeyValue label="Kill evaluated at" value={formatDateTime(detail.item.killEvaluatedAt)} />
+                    <KeyValue label="Evolution status" value={detail.item.listingEvolutionStatus ?? "-"} />
+                    <KeyValue label="Evolution reason" value={detail.item.listingEvolutionReason ?? "-"} />
+                    <KeyValue label="Evolution attempts" value={String(detail.item.evolutionAttemptCount)} />
+                    <KeyValue label="Last evolution at" value={formatDateTime(detail.item.lastEvolutionAt)} />
+                    <KeyValue label="Evolution candidate" value={detail.item.listingEvolutionHasCandidate ? "YES" : "NO"} />
+                    <KeyValue label="Evolution candidate summary" value={detail.item.listingEvolutionCandidateSummary ?? "-"} />
                     <KeyValue label="Missing fields" value={detail.item.previewMissingFields.length ? detail.item.previewMissingFields.join(", ") : "None"} />
                     <KeyValue label="Payload gate errors" value={detail.item.payloadGateErrors.length ? detail.item.payloadGateErrors.join(" | ") : "None"} />
                     <KeyValue label="Learning pause active" value={learningPaused ? "YES (LEARNING_HUB_CRITICAL_DRIFT)" : "NO"} />

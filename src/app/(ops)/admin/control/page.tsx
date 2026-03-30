@@ -1209,6 +1209,25 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
           </div>
         </Section>
 
+        <Section title="Phase 1 Listing Diagnostics (Read-only)">
+          <p className="mb-3 text-sm text-white/70">
+            Self-Kill and Listing Evolution are diagnostic-only in this phase. No automatic lifecycle mutation is performed from these labels.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="kill keep" value={data.phase1Diagnostics.killDecisions.keep ?? "-"} />
+            <StatCard label="kill manual_review" value={data.phase1Diagnostics.killDecisions.manualReview ?? "-"} />
+            <StatCard label="kill evolve_first" value={data.phase1Diagnostics.killDecisions.evolveFirst ?? "-"} />
+            <StatCard label="kill auto_kill (diag)" value={data.phase1Diagnostics.killDecisions.autoKillDiagnostic ?? "-"} />
+            <StatCard label="kill evaluated rows" value={data.phase1Diagnostics.killDecisions.evaluatedRows ?? "-"} />
+            <StatCard label="evolution candidate_ready" value={data.phase1Diagnostics.evolution.candidateReady ?? "-"} />
+            <StatCard label="evolution blocked trust" value={data.phase1Diagnostics.evolution.blockedSupplierTrust ?? "-"} />
+            <StatCard label="evolution blocked pricing" value={data.phase1Diagnostics.evolution.blockedPricing ?? "-"} />
+            <StatCard label="evolution cooldown" value={data.phase1Diagnostics.evolution.cooldown ?? "-"} />
+            <StatCard label="evolution attempt limit" value={data.phase1Diagnostics.evolution.attemptLimit ?? "-"} />
+            <StatCard label="evolution has payload" value={data.phase1Diagnostics.evolution.hasCandidatePayload ?? "-"} />
+          </div>
+        </Section>
+
         <Section title="Worker Health">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="upstream schedules configured" value={`${data.workerQueueHealth.configuredStages}`} />

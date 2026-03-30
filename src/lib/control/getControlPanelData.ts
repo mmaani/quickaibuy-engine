@@ -276,6 +276,23 @@ export type ControlPanelData = {
       response: boolean;
     };
   };
+  phase1Diagnostics: {
+    killDecisions: {
+      keep: number | null;
+      manualReview: number | null;
+      evolveFirst: number | null;
+      autoKillDiagnostic: number | null;
+      evaluatedRows: number | null;
+    };
+    evolution: {
+      candidateReady: number | null;
+      blockedSupplierTrust: number | null;
+      blockedPricing: number | null;
+      cooldown: number | null;
+      attemptLimit: number | null;
+      hasCandidatePayload: number | null;
+    };
+  };
   listingLifecycle: {
     statusCounts: Row[];
     readyToPublishBacklog: number | null;
@@ -1218,6 +1235,27 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
           limit 3
         `)
       : [];
+  const phase1DiagnosticsSummary =
+    listingsExists
+      ? (
+          await runQuery(`
+            select
+              count(*) filter (where upper(coalesce(kill_decision, '')) = 'KEEP')::int as kill_keep,
+              count(*) filter (where upper(coalesce(kill_decision, '')) = 'MANUAL_REVIEW')::int as kill_manual_review,
+              count(*) filter (where upper(coalesce(kill_decision, '')) = 'EVOLVE_FIRST')::int as kill_evolve_first,
+              count(*) filter (where upper(coalesce(kill_decision, '')) = 'AUTO_KILL')::int as kill_auto_kill,
+              count(*) filter (where kill_evaluated_at is not null)::int as kill_evaluated_rows,
+              count(*) filter (where upper(coalesce(listing_evolution_status, '')) = 'CANDIDATE_READY')::int as evolution_candidate_ready,
+              count(*) filter (where upper(coalesce(listing_evolution_status, '')) = 'BLOCKED_SUPPLIER_TRUST')::int as evolution_blocked_supplier_trust,
+              count(*) filter (where upper(coalesce(listing_evolution_status, '')) = 'BLOCKED_PRICING_PRIMARY')::int as evolution_blocked_pricing,
+              count(*) filter (where upper(coalesce(listing_evolution_status, '')) = 'COOLDOWN')::int as evolution_cooldown,
+              count(*) filter (where upper(coalesce(listing_evolution_status, '')) = 'ATTEMPT_LIMIT_REACHED')::int as evolution_attempt_limit,
+              count(*) filter (where listing_evolution_candidate_payload is not null)::int as evolution_has_candidate_payload
+            from listings
+            where lower(coalesce(marketplace_key, '')) = 'ebay'
+          `)
+        )[0] ?? {}
+      : {};
   const inventoryRiskSummary =
     listingsExists && listingsHasResponse
       ? (
@@ -2856,6 +2894,23 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       sourceWired: {
         listings: listingsExists,
         response: listingsExists && listingsHasResponse,
+      },
+    },
+    phase1Diagnostics: {
+      killDecisions: {
+        keep: toNum(phase1DiagnosticsSummary.kill_keep),
+        manualReview: toNum(phase1DiagnosticsSummary.kill_manual_review),
+        evolveFirst: toNum(phase1DiagnosticsSummary.kill_evolve_first),
+        autoKillDiagnostic: toNum(phase1DiagnosticsSummary.kill_auto_kill),
+        evaluatedRows: toNum(phase1DiagnosticsSummary.kill_evaluated_rows),
+      },
+      evolution: {
+        candidateReady: toNum(phase1DiagnosticsSummary.evolution_candidate_ready),
+        blockedSupplierTrust: toNum(phase1DiagnosticsSummary.evolution_blocked_supplier_trust),
+        blockedPricing: toNum(phase1DiagnosticsSummary.evolution_blocked_pricing),
+        cooldown: toNum(phase1DiagnosticsSummary.evolution_cooldown),
+        attemptLimit: toNum(phase1DiagnosticsSummary.evolution_attempt_limit),
+        hasCandidatePayload: toNum(phase1DiagnosticsSummary.evolution_has_candidate_payload),
       },
     },
     listingLifecycle: {

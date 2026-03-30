@@ -82,6 +82,15 @@ type ListingQueueRow = {
   supplier_reeval_current_landed_cost_usd: string | number | null;
   supplier_reeval_best_landed_cost_usd: string | number | null;
   supplier_reeval_evaluated_ts: string | null;
+  kill_score: string | number | null;
+  kill_decision: string | null;
+  kill_reason_codes: string[] | null;
+  kill_evaluated_at: string | null;
+  listing_evolution_status: string | null;
+  listing_evolution_reason: string | null;
+  evolution_attempt_count: number | string | null;
+  last_evolution_at: string | null;
+  listing_evolution_candidate_payload: unknown;
 };
 
 export type ListingsQueueFilters = {
@@ -185,6 +194,16 @@ export type QueueListItem = {
   firstSaleScore: number | null;
   firstSaleCandidate: boolean;
   payloadGateErrors: string[];
+  killScore: number | null;
+  killDecision: string | null;
+  killReasonCodes: string[];
+  killEvaluatedAt: string | null;
+  listingEvolutionStatus: string | null;
+  listingEvolutionReason: string | null;
+  evolutionAttemptCount: number;
+  lastEvolutionAt: string | null;
+  listingEvolutionHasCandidate: boolean;
+  listingEvolutionCandidateSummary: string | null;
 };
 
 export type QueueOverview = {
@@ -388,6 +407,18 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
   const supplierTrustRaw = toNumber(row.supplier_trust_score);
   const supplierTrustScore =
     supplierTrustRaw == null ? null : Math.round((supplierTrustRaw <= 1 ? supplierTrustRaw * 100 : supplierTrustRaw));
+  const candidatePayload = asObject(row.listing_evolution_candidate_payload);
+  const candidateType = stringOrNull(candidatePayload?.candidateType);
+  const proposedChanges = Array.isArray(candidatePayload?.proposedChanges)
+    ? (candidatePayload?.proposedChanges as unknown[])
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean)
+        .slice(0, 2)
+    : [];
+  const listingEvolutionCandidateSummary =
+    candidateType && proposedChanges.length
+      ? `${candidateType}: ${proposedChanges.join(", ")}`
+      : candidateType ?? null;
 
   return {
     id: row.id,
@@ -473,6 +504,16 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     firstSaleScore: toNumber(perfReadiness?.firstSaleScore),
     firstSaleCandidate: perfReadiness?.firstSaleCandidate === true,
     payloadGateErrors,
+    killScore: toNumber(row.kill_score),
+    killDecision: row.kill_decision ?? null,
+    killReasonCodes: row.kill_reason_codes ?? [],
+    killEvaluatedAt: row.kill_evaluated_at ?? null,
+    listingEvolutionStatus: row.listing_evolution_status ?? null,
+    listingEvolutionReason: row.listing_evolution_reason ?? null,
+    evolutionAttemptCount: Math.max(0, Number(row.evolution_attempt_count ?? 0)),
+    lastEvolutionAt: row.last_evolution_at ?? null,
+    listingEvolutionHasCandidate: candidatePayload != null,
+    listingEvolutionCandidateSummary,
   };
 }
 
@@ -753,6 +794,15 @@ export async function getApprovedQueueItems(filters: ListingsQueueFilters): Prom
       l.response -> 'supplierReevaluation' ->> 'currentLandedCostUsd' AS supplier_reeval_current_landed_cost_usd,
       l.response -> 'supplierReevaluation' ->> 'bestLandedCostUsd' AS supplier_reeval_best_landed_cost_usd,
       l.response -> 'supplierReevaluation' ->> 'evaluatedAt' AS supplier_reeval_evaluated_ts,
+      l.kill_score AS kill_score,
+      l.kill_decision AS kill_decision,
+      l.kill_reason_codes AS kill_reason_codes,
+      l.kill_evaluated_at AS kill_evaluated_at,
+      l.listing_evolution_status AS listing_evolution_status,
+      l.listing_evolution_reason AS listing_evolution_reason,
+      l.evolution_attempt_count AS evolution_attempt_count,
+      l.last_evolution_at AS last_evolution_at,
+      l.listing_evolution_candidate_payload AS listing_evolution_candidate_payload,
       l.created_at AS listing_created_at,
       l.updated_at AS listing_updated_at,
       (COALESCE(dup.conflict_count, 0) > 0) AS duplicate_detected,
