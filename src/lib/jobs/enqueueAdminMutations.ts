@@ -7,7 +7,7 @@ const jobsQueue = new Queue(JOBS_QUEUE_NAME, { connection: bullConnection, prefi
 
 type TriggerSource = "control-plane" | "review-console";
 
-export async function enqueueAdminMutationJob(input: {
+async function enqueueAdminMutationJobInternal(input: {
   jobName:
     | typeof JOB_NAMES.ADMIN_REVIEW_DECISION
     | typeof JOB_NAMES.ADMIN_LISTING_PROMOTE_READY
@@ -50,4 +50,95 @@ export async function enqueueAdminMutationJob(input: {
   });
 
   return job;
+}
+
+export async function enqueueReviewDecisionJob(input: {
+  actorId: string;
+  triggerSource: TriggerSource;
+  payload: {
+    decisionStatus: string;
+    reason: string | null;
+    candidateIds: string[];
+    enforceBatchSafeApprove: boolean;
+  };
+  mode: "single" | "batch";
+  idempotencySuffix?: string;
+}) {
+  return enqueueAdminMutationJobInternal({
+    jobName: JOB_NAMES.ADMIN_REVIEW_DECISION,
+    actorId: input.actorId,
+    triggerSource: input.triggerSource,
+    controlPath: "api/admin/review/decision",
+    actionType: input.mode === "batch" ? "candidate_review_decision_batch" : "candidate_review_decision_single",
+    payload: input.payload,
+    idempotencySuffix: input.idempotencySuffix,
+  });
+}
+
+export async function enqueueReviewPreparePreviewJob(input: {
+  actorId: string;
+  triggerSource: TriggerSource;
+  payload: { candidateId: string; marketplace: "ebay" | "amazon"; forceRefresh: boolean };
+  idempotencySuffix?: string;
+}) {
+  return enqueueAdminMutationJobInternal({
+    jobName: JOB_NAMES.ADMIN_REVIEW_PREPARE_PREVIEW,
+    actorId: input.actorId,
+    triggerSource: input.triggerSource,
+    controlPath: "api/admin/review/prepare-preview",
+    actionType: "review_prepare_preview",
+    payload: input.payload,
+    idempotencySuffix: input.idempotencySuffix,
+  });
+}
+
+export async function enqueueListingPromoteReadyJob(input: {
+  actorId: string;
+  triggerSource: TriggerSource;
+  payload: { listingId: string; candidateId: string };
+  idempotencySuffix?: string;
+}) {
+  return enqueueAdminMutationJobInternal({
+    jobName: JOB_NAMES.ADMIN_LISTING_PROMOTE_READY,
+    actorId: input.actorId,
+    triggerSource: input.triggerSource,
+    controlPath: "api/admin/listings/promote-ready",
+    actionType: "listing_promote_ready",
+    payload: input.payload,
+    idempotencySuffix: input.idempotencySuffix,
+  });
+}
+
+export async function enqueueListingResumeJob(input: {
+  actorId: string;
+  triggerSource: TriggerSource;
+  payload: { listingId: string; candidateId: string };
+  idempotencySuffix?: string;
+}) {
+  return enqueueAdminMutationJobInternal({
+    jobName: JOB_NAMES.ADMIN_LISTING_RESUME,
+    actorId: input.actorId,
+    triggerSource: input.triggerSource,
+    controlPath: "api/admin/listings/resume",
+    actionType: "listing_resume",
+    payload: input.payload,
+    idempotencySuffix: input.idempotencySuffix,
+  });
+}
+
+export async function enqueueListingReevaluateJob(input: {
+  actorId: string;
+  triggerSource: TriggerSource;
+  payload: { listingId: string; candidateId: string };
+  idempotencySuffix?: string;
+}) {
+  return enqueueAdminMutationJobInternal({
+    jobName: JOB_NAMES.ADMIN_LISTING_REEVALUATE,
+    actorId: input.actorId,
+    triggerSource: input.triggerSource,
+    controlPath: "api/admin/listings/re-evaluate",
+    actionType: "listing_reevaluate_recovery",
+    payload: input.payload,
+    idempotencySuffix: input.idempotencySuffix,
+  });
 }

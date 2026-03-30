@@ -88,12 +88,12 @@ EXECUTION FLOW MAP:
 
 - Flow I — generic queue endpoint `/api/queue/enqueue`
   - ENTRY: API caller with pipeline-admin auth
-  - CONTROL PLANE: no (generic API, not constrained by action model)
+  - CONTROL PLANE: no (generic API)
   - BACKBONE: no
-  - WORKER: yes
-  - LEARNING HUB: job-dependent / optional
-  - OUTPUT: arbitrary allowed job enqueue + audit row
-  - Classification: non-canonical (bypass risk)
+  - WORKER: no (retired surface, no enqueue path)
+  - LEARNING HUB: no
+  - OUTPUT: hard-blocked canonical enforcement violation (`GENERIC_ENQUEUE_SURFACE_RETIRED`)
+  - Classification: retired / blocked
 
 5) remaining script execution paths
 
@@ -118,7 +118,20 @@ EXECUTION FLOW MAP:
 Required classification summary:
 - canonical: queue worker processing itself (`jobs.worker` consume path) and control-plane overview read path
 - partially canonical: ops CLI, control actions, typed enqueue helpers, pipeline run APIs
-- non-canonical: generic queue enqueue API + direct mutation/direct runtime scripts
+- non-canonical: direct mutation/direct runtime scripts
+
+GENERIC ENQUEUE SURFACE AUDIT (Phase 3):
+
+| Caller path | Submitted job/action | Current purpose | Replacement exists? | Risk level |
+|---|---|---|---|---|
+| `src/app/api/queue/enqueue/route.ts` external pipeline-admin caller | Arbitrary `name` + `payload` job enqueue | Legacy generic queue submit surface | Yes (`/api/admin/control/run-action`, `/api/admin/pipeline/run-*`, explicit `enqueue*` wrappers) | CRITICAL |
+| `src/*` internal callers | None found (no in-repo route/script caller references `/api/queue/enqueue`) | N/A | Yes | LOW |
+| Hidden/non-admin callers | Potential external client only (pipeline-admin auth required) | Not discoverable in repo; governance ambiguity existed by design | Yes | HIGH |
+
+Policy ambiguity removed in Phase 3:
+- Generic job-name submission governance is retired.
+- Control-plane submission is action-keyed and wrapper-backed only.
+- Unknown submission attempts are hard-blocked and emitted as `CANONICAL_ENFORCEMENT_BLOCKED`.
 
 ENFORCEMENT GAPS:
 
@@ -136,9 +149,10 @@ ENFORCEMENT GAPS:
 
 3) Generic arbitrary enqueue surface
 - Location: `src/app/api/queue/enqueue/route.ts`
-- Violation: broad job submission endpoint can enqueue multiple job types without control-plane action-level policy
-- Risk: HIGH
-- Exact path: API -> `jobNameFromUnknown` -> queue add -> worker mutation
+- Prior violation (before Phase 3): broad job submission endpoint could enqueue multiple job types without control-plane action-level policy
+- Current status: retired with explicit hard block + canonical violation audit visibility
+- Residual risk: LOW (legacy external callers now fail-closed)
+- Exact path now: API -> `CANONICAL_ENFORCEMENT_BLOCKED` audit -> HTTP 410
 
 4) Learning Hub enforcement not mandatory on all mutation paths
 - Location: direct scripts and some queue jobs that mutate pipeline state but do not gate on learning freshness before mutation
@@ -185,11 +199,11 @@ ENFORCEMENT DESIGN:
 
 3) Queue sovereignty hardening
 - Where: `/api/queue/enqueue/route.ts`
-- How: strict job allowlist with source tags, deprecate generic free-form job submission
+- How: retire generic free-form submission and enforce hard-block
 - Enforcement:
-  - HARD BLOCK unknown or non-operator-approved job names
-  - VALIDATION requiring provenance metadata (`source`, `actor`, `reasonCode`)
-- Failure surfacing: 400 with structured reason; audit event includes attempted job
+  - HARD BLOCK all submissions on this route
+  - ACTION-KEYED model remains available only through explicit control-plane wrappers/routes
+- Failure surfacing: 410 with structured reason + audit `CANONICAL_ENFORCEMENT_BLOCKED` record for control-plane visibility
 
 4) Learning Hub mandatory gate for mutation paths
 - Where: shared pre-mutation validator used by backbone stage mutators + publish/approve/promote operations

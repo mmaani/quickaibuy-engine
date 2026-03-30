@@ -7,8 +7,7 @@ import {
   isAuthorizedReviewAuthorizationHeader,
   isReviewConsoleConfigured,
 } from "@/lib/review/auth";
-import { enqueueAdminMutationJob } from "@/lib/jobs/enqueueAdminMutations";
-import { JOB_NAMES } from "@/lib/jobNames";
+import { enqueueReviewDecisionJob } from "@/lib/jobs/enqueueAdminMutations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,12 +65,10 @@ export async function POST(request: Request) {
 
     if (batchCandidateIds.length > 0) {
       const uniqueCandidateIds = Array.from(new Set(batchCandidateIds));
-      const job = await enqueueAdminMutationJob({
-        jobName: JOB_NAMES.ADMIN_REVIEW_DECISION,
+      const job = await enqueueReviewDecisionJob({
         actorId,
         triggerSource: "review-console",
-        controlPath: "api/admin/review/decision",
-        actionType: "candidate_review_decision_batch",
+        mode: "batch",
         payload: {
           decisionStatus,
           reason,
@@ -91,12 +88,10 @@ export async function POST(request: Request) {
     const candidateId = String(formData.get("candidateId") ?? "").trim();
     if (!candidateId) return redirectWithError(request, "Candidate ID is required for a review decision.");
 
-    const job = await enqueueAdminMutationJob({
-      jobName: JOB_NAMES.ADMIN_REVIEW_DECISION,
+    const job = await enqueueReviewDecisionJob({
       actorId,
       triggerSource: "review-console",
-      controlPath: "api/admin/review/decision",
-      actionType: "candidate_review_decision_single",
+      mode: "single",
       payload: {
         decisionStatus,
         reason,

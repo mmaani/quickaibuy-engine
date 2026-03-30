@@ -6,8 +6,7 @@ import {
   isAuthorizedReviewAuthorizationHeader,
   isReviewConsoleConfigured,
 } from "@/lib/review/auth";
-import { enqueueAdminMutationJob } from "@/lib/jobs/enqueueAdminMutations";
-import { JOB_NAMES } from "@/lib/jobNames";
+import { enqueueReviewPreparePreviewJob } from "@/lib/jobs/enqueueAdminMutations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,12 +44,9 @@ export async function POST(request: Request) {
   if (marketplace !== "ebay" && marketplace !== "amazon") return NextResponse.json({ ok: false, error: "invalid marketplace" }, { status: 400 });
 
   const actorId = getReviewActorIdFromAuthorizationHeader(authorization) ?? "review-console";
-  const job = await enqueueAdminMutationJob({
-    jobName: JOB_NAMES.ADMIN_REVIEW_PREPARE_PREVIEW,
+  const job = await enqueueReviewPreparePreviewJob({
     actorId,
     triggerSource: "review-console",
-    controlPath: "api/admin/review/prepare-preview",
-    actionType: "review_prepare_preview",
     payload: { candidateId, marketplace, forceRefresh },
     idempotencySuffix: `${candidateId}-${Date.now()}`,
   });
