@@ -77,16 +77,29 @@ function extractShippingEstimateBounds(rawPayload: unknown): {
   shippingDaysMax: number | null;
 } {
   const payload = objectOrNull(rawPayload);
+  const shipping = objectOrNull(payload?.shipping);
   const directMin =
     toPositiveInt(payload?.deliveryEstimateMinDays) ??
     toPositiveInt(payload?.delivery_estimate_min_days) ??
     toPositiveInt(payload?.shippingTimeMinDays) ??
-    toPositiveInt(payload?.shipping_time_min_days);
+    toPositiveInt(payload?.shipping_time_min_days) ??
+    toPositiveInt(shipping?.deliveryEstimateMinDays) ??
+    toPositiveInt(shipping?.delivery_estimate_min_days) ??
+    toPositiveInt(shipping?.shippingTimeMinDays) ??
+    toPositiveInt(shipping?.shipping_time_min_days) ??
+    toPositiveInt(shipping?.etaMinDays) ??
+    toPositiveInt(shipping?.eta_min_days);
   const directMax =
     toPositiveInt(payload?.deliveryEstimateMaxDays) ??
     toPositiveInt(payload?.delivery_estimate_max_days) ??
     toPositiveInt(payload?.shippingTimeMaxDays) ??
-    toPositiveInt(payload?.shipping_time_max_days);
+    toPositiveInt(payload?.shipping_time_max_days) ??
+    toPositiveInt(shipping?.deliveryEstimateMaxDays) ??
+    toPositiveInt(shipping?.delivery_estimate_max_days) ??
+    toPositiveInt(shipping?.shippingTimeMaxDays) ??
+    toPositiveInt(shipping?.shipping_time_max_days) ??
+    toPositiveInt(shipping?.etaMaxDays) ??
+    toPositiveInt(shipping?.eta_max_days);
 
   if (directMin && directMax) {
     return {
@@ -106,15 +119,26 @@ function extractShippingEstimateBounds(rawPayload: unknown): {
       (toPositiveInt((entry as Record<string, unknown>).etaMinDays) ||
         toPositiveInt((entry as Record<string, unknown>).etaMaxDays) ||
         toPositiveInt((entry as Record<string, unknown>).eta_min_days) ||
-        toPositiveInt((entry as Record<string, unknown>).eta_max_days))
+        toPositiveInt((entry as Record<string, unknown>).eta_max_days) ||
+        toPositiveInt((entry as Record<string, unknown>).deliveryEstimateMinDays) ||
+        toPositiveInt((entry as Record<string, unknown>).deliveryEstimateMaxDays) ||
+        toPositiveInt((entry as Record<string, unknown>).delivery_estimate_min_days) ||
+        toPositiveInt((entry as Record<string, unknown>).delivery_estimate_max_days))
   ) as Record<string, unknown> | undefined;
 
   return {
     shippingDaysMin:
-      toPositiveInt(firstEstimate?.etaMinDays) ?? toPositiveInt(firstEstimate?.eta_min_days),
+      toPositiveInt(firstEstimate?.etaMinDays) ??
+      toPositiveInt(firstEstimate?.eta_min_days) ??
+      toPositiveInt(firstEstimate?.deliveryEstimateMinDays) ??
+      toPositiveInt(firstEstimate?.delivery_estimate_min_days),
     shippingDaysMax:
       toPositiveInt(firstEstimate?.etaMaxDays) ??
       toPositiveInt(firstEstimate?.eta_max_days) ??
+      toPositiveInt(firstEstimate?.deliveryEstimateMaxDays) ??
+      toPositiveInt(firstEstimate?.delivery_estimate_max_days) ??
+      toPositiveInt(firstEstimate?.deliveryEstimateMinDays) ??
+      toPositiveInt(firstEstimate?.delivery_estimate_min_days) ??
       toPositiveInt(firstEstimate?.etaMinDays) ??
       toPositiveInt(firstEstimate?.eta_min_days),
   };

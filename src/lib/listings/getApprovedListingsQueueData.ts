@@ -143,6 +143,7 @@ export type QueueListItem = {
   commercialState: string | null;
   firstSaleScore: number | null;
   firstSaleCandidate: boolean;
+  payloadGateErrors: string[];
 };
 
 export type QueueOverview = {
@@ -303,6 +304,13 @@ function evaluatePreviewReadiness(row: ListingQueueRow): {
       const reason = String(imageNormalization?.blockingReason ?? "").trim();
       missing.push(reason ? `${code}: ${reason}` : code);
     }
+    const payloadGate = asObject(response?.payloadGate);
+    if (Array.isArray(payloadGate?.errors)) {
+      for (const entry of payloadGate.errors) {
+        const reason = String(entry ?? "").trim();
+        if (reason) missing.push(reason);
+      }
+    }
   }
 
   return {
@@ -324,6 +332,11 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
   const inventoryRisk = asObject(listingResponse?.inventoryRisk);
   const riskAction = String(inventoryRisk?.action ?? "").toUpperCase();
   const perfReadiness = asObject(asObject(listingResponse?.listingPerformance)?.readiness);
+  const payloadGateErrors = Array.isArray(asObject(listingResponse?.payloadGate)?.errors)
+    ? (asObject(listingResponse?.payloadGate)?.errors as unknown[])
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean)
+    : [];
   const pauseReason = Array.isArray(inventoryRisk?.signals)
     ? (inventoryRisk?.signals as Array<Record<string, unknown>>)
         .map((signal) => String(signal.code ?? "").trim())
@@ -391,6 +404,7 @@ function mapQueueRow(row: ListingQueueRow): QueueListItem {
     commercialState: stringOrNull(perfReadiness?.commercialState),
     firstSaleScore: toNumber(perfReadiness?.firstSaleScore),
     firstSaleCandidate: perfReadiness?.firstSaleCandidate === true,
+    payloadGateErrors,
   };
 }
 

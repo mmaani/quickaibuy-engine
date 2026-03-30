@@ -126,6 +126,32 @@ function triageLabel(row: QueueListItem): { label: string; tone: string } {
   return { label: "Needs automation", tone: "text-white/70" };
 }
 
+function hasLearningCriticalPause(pauses: Array<{ stage: string; reason: string }>): boolean {
+  return pauses.some((pause) => pause.reason === "LEARNING_HUB_CRITICAL_DRIFT");
+}
+
+function describeBlockingState(row: QueueListItem, learningPaused: boolean): string {
+  const payloadBlocked = row.previewStatus === "INCOMPLETE" && row.previewMissingFields.length > 0;
+  if (learningPaused && payloadBlocked) return "Blocked by both learning pause and payload completeness";
+  if (learningPaused) return "Blocked by learning pause";
+  if (payloadBlocked) return "Blocked by payload completeness";
+  return "No active learning/payload block";
+}
+
+function describeNextAction(row: QueueListItem, learningPaused: boolean): string {
+  const payloadBlocked = row.previewStatus === "INCOMPLETE" && row.previewMissingFields.length > 0;
+  if (learningPaused && payloadBlocked) {
+    return "Resolve learning-hub drift first, then run canonical preview refresh/re-evaluate to clear payload completeness gates.";
+  }
+  if (learningPaused) {
+    return "Wait for learning-hub freshness recovery and rerun canonical autonomous cycle from /admin/control.";
+  }
+  if (payloadBlocked) {
+    return "Run canonical preview refresh/re-evaluate after supplier normalization evidence is available.";
+  }
+  return row.recoveryNextAction;
+}
+
 export default async function ListingsPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   const resolvedSearchParams = await searchParams;
   const filters = getListingsQueueFiltersFromSearchParams(resolvedSearchParams);
@@ -150,6 +176,7 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
     getControlPlaneOverview(),
   ]);
   const blockedRecoveryCount = rows.filter((row) => isRecoveryBlocked(row.recoveryState)).length;
+  const learningPaused = hasLearningCriticalPause(controlPlane.pauses);
   const reevaluationCount = rows.filter((row) => row.reEvaluationNeeded).length;
   const repromotionCount = rows.filter((row) => row.rePromotionReady).length;
   const autoPausedCount = rows.filter((row) => row.pausedByInventoryRisk).length;
@@ -410,6 +437,10 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
                     <KeyValue label="First-sale score" value={detail.item.firstSaleScore ?? "-"} />
                     <KeyValue label="First-sale candidate" value={detail.item.firstSaleCandidate ? "YES" : "NO"} />
                     <KeyValue label="Missing fields" value={detail.item.previewMissingFields.length ? detail.item.previewMissingFields.join(", ") : "None"} />
+                    <KeyValue label="Payload gate errors" value={detail.item.payloadGateErrors.length ? detail.item.payloadGateErrors.join(" | ") : "None"} />
+                    <KeyValue label="Learning pause active" value={learningPaused ? "YES (LEARNING_HUB_CRITICAL_DRIFT)" : "NO"} />
+                    <KeyValue label="Blocking classifier" value={describeBlockingState(detail.item, learningPaused)} />
+                    <KeyValue label="Canonical next action" value={describeNextAction(detail.item, learningPaused)} />
                     <KeyValue label="Latest listing row" value={detail.item.listingId ? `${detail.item.listingId} (${detail.item.listingStatus ?? "-"})` : "None"} />
                     <KeyValue label="Paused by inventory risk" value={detail.item.pausedByInventoryRisk ? "YES" : "NO"} />
                     <KeyValue label="Pause reason" value={detail.item.pauseReason || "-"} />
