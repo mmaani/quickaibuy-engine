@@ -260,3 +260,20 @@ test("safe stock outranks controlled-risk low stock when economics are close", (
 
   assert.equal(chooseBestSupplierOption([safeUs, lowStockIntl]).supplierProductId, "supplier-safe-us");
 });
+
+test("higher supplier trust outranks lower trust when economics are close", () => {
+  const lowTrust = buildOption({
+    supplierProductId: "supplier-low-trust",
+    supplierTrustScore: 52,
+    supplierTrustBand: "BLOCK",
+    supplierReliabilityScore: 0.88,
+  });
+  const highTrust = buildOption({
+    supplierProductId: "supplier-high-trust",
+    supplierTrustScore: 91,
+    supplierTrustBand: "SAFE",
+    supplierReliabilityScore: 0.86,
+  });
+
+  assert.equal(chooseBestSupplierOption([lowTrust, highTrust]).supplierProductId, "supplier-high-trust");
+});

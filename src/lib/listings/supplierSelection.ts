@@ -57,6 +57,15 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   const marginComponent = Math.max(0, Math.min(0.18, marginPct / 220));
   const mediaComponent = Math.max(0, Math.min(0.12, mediaQuality * 0.12));
   const stockReliabilityComponent = Math.max(0, Math.min(0.12, availabilityConfidence * 0.12));
+  const trustScore = toNum(payload?.supplierTrustScore ?? payload?.supplier_trust_score);
+  const trustBand = String(payload?.supplierTrustBand ?? payload?.supplier_trust_band ?? "")
+    .trim()
+    .toUpperCase();
+  const trustComponent =
+    trustScore == null
+      ? 0
+      : Math.max(0, Math.min(0.22, (trustScore > 1 ? trustScore / 100 : trustScore) * 0.22));
+  const trustPenalty = trustBand === "BLOCK" ? 0.2 : trustBand === "REVIEW" ? 0.08 : 0;
   const intelligence = computeSupplierIntelligenceSignal({
     supplierKey: String(row.supplierKey ?? payload?.supplierKey ?? ""),
     destinationCountry,
@@ -99,12 +108,14 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
       marginComponent +
       mediaComponent +
       stockReliabilityComponent +
+      trustComponent +
       supplierIntelligenceComponent -
       rateLimitPenalty +
       originComponent +
       shippingComponent +
       usPriorityComponent -
       lowStockPenalty -
+      trustPenalty -
       shippingPenalty -
       aliExpressPenalty
     ).toFixed(6)
