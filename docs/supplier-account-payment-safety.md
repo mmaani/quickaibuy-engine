@@ -29,12 +29,50 @@ The following suppliers are present for sourcing or discovery, but are not curre
 - Transaction alerts monitored: `TBD`
 - Operational owner: `TBD`
 
+### AliExpress
+
+- Account created: `Yes`
+- Account owner: `quickaibuy@gmail.com`
+- Business verification complete: `TBD`
+- Payment method configured on supplier site: `TBD`
+  Only store a descriptor such as `corporate card label` or `PayPal Business`; never store raw payment details here.
+- Test order completed: `TBD`
+- Refund/dispute process known: `TBD`
+- Transaction alerts monitored: `TBD`
+- Operational owner: `TBD`
+
+### Alibaba
+
+- Account created: `Yes`
+- Account owner: `quickaibuy@gmail.com`
+- Business verification complete: `TBD`
+- Payment method configured on supplier site: `TBD`
+  Only store a descriptor such as `corporate card label` or `PayPal Business`; never store raw payment details here.
+- Test order completed: `TBD`
+- Refund/dispute process known: `TBD`
+- Transaction alerts monitored: `TBD`
+- Operational owner: `TBD`
+
+### Temu
+
+- Account created: `Yes`
+- Account owner: `quickaibuy@gmail.com`
+- Business verification complete: `TBD`
+- Payment method configured on supplier site: `TBD`
+  Only store a descriptor such as `corporate card label` or `PayPal Business`; never store raw payment details here.
+- Test order completed: `TBD`
+- Refund/dispute process known: `TBD`
+- Transaction alerts monitored: `TBD`
+- Operational owner: `TBD`
+
 ## Ownership and monitoring record
 
 Use this section for operational metadata only:
 
 - Active supplier account: `CJ Dropshipping`
 - Account owner: `TBD`
+- Discovery-only supplier accounts: `AliExpress`, `Alibaba`, `Temu`
+- Discovery-only supplier account owner: `quickaibuy@gmail.com`
 - Payment method descriptor: `TBD`
   Example of acceptable detail: `Finance-issued virtual card label` or `PayPal Business`.
   Example of forbidden detail: full card number, expiry, security code, or billing address secrets.
