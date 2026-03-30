@@ -17,6 +17,7 @@ type TestOption = CandidateSelectionFields & {
   shippingSourceType: string | null;
   shippingMethod: string | null;
   shippingValidity: string;
+  shippingErrorReason: string | null;
   deliveryEstimateMinDays: number | null;
   shippingDriftDetected: boolean;
   sourceQuality: string | null;
@@ -34,6 +35,22 @@ type TestOption = CandidateSelectionFields & {
   reason: string;
   marketDepth: Record<string, unknown>;
   aiValidation: unknown;
+  pipeline: CandidateSelectionFields["pipeline"] & {
+    flags: string[];
+    matchPreferred: boolean;
+    matchExceptionEligible: boolean;
+    qualityAccepted: boolean;
+    marginAccepted: boolean;
+    roiAccepted: boolean;
+    hardExcluded: boolean;
+    recommended: boolean;
+    listingEligible: boolean;
+    requiresManualReview: boolean;
+  };
+  reliabilityAdjustedProfit: CandidateSelectionFields["reliabilityAdjustedProfit"] & {
+    penaltyUsd: number;
+    reliabilityScore: number;
+  };
 };
 
 function buildOption(overrides: Partial<TestOption>): TestOption {
