@@ -44,6 +44,7 @@ This folder is no longer the operator-facing command surface by default. Human o
 - `scripts/queue_namespace_diagnostics.ts`
 - `scripts/check_schema_drift.ts`
 - `scripts/check_migration_ledger.ts`
+- `scripts/verify_blocked_candidate_recovery.ts` (read-only candidate recovery verifier; accepts candidate IDs and defaults to known blocked IDs)
 
 ### Canonical mutation and repair
 
