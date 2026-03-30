@@ -1,0 +1,1672 @@
+{
+  "audit_log": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "event_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "actor_type",
+      "type": "text"
+    },
+    {
+      "column": "actor_id",
+      "type": "text"
+    },
+    {
+      "column": "entity_type",
+      "type": "text"
+    },
+    {
+      "column": "entity_id",
+      "type": "text"
+    },
+    {
+      "column": "event_type",
+      "type": "text"
+    },
+    {
+      "column": "details",
+      "type": "jsonb"
+    }
+  ],
+  "customer_orders": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "customer_id",
+      "type": "uuid"
+    },
+    {
+      "column": "order_id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace",
+      "type": "text"
+    },
+    {
+      "column": "merge_source",
+      "type": "text"
+    },
+    {
+      "column": "identity_confidence",
+      "type": "text"
+    },
+    {
+      "column": "resolution_method",
+      "type": "text"
+    },
+    {
+      "column": "buyer_email_normalized",
+      "type": "text"
+    },
+    {
+      "column": "customer_external_id",
+      "type": "text"
+    },
+    {
+      "column": "buyer_name_snapshot",
+      "type": "text"
+    },
+    {
+      "column": "city_snapshot",
+      "type": "text"
+    },
+    {
+      "column": "state_snapshot",
+      "type": "text"
+    },
+    {
+      "column": "country_snapshot",
+      "type": "text"
+    },
+    {
+      "column": "order_created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "order_total",
+      "type": "numeric"
+    },
+    {
+      "column": "order_currency",
+      "type": "text"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "customers": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace",
+      "type": "text"
+    },
+    {
+      "column": "customer_external_id",
+      "type": "text"
+    },
+    {
+      "column": "buyer_name",
+      "type": "text"
+    },
+    {
+      "column": "buyer_email_normalized",
+      "type": "text"
+    },
+    {
+      "column": "city",
+      "type": "text"
+    },
+    {
+      "column": "state",
+      "type": "text"
+    },
+    {
+      "column": "country",
+      "type": "text"
+    },
+    {
+      "column": "first_order_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "last_order_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "order_count",
+      "type": "integer"
+    },
+    {
+      "column": "total_spent",
+      "type": "numeric"
+    },
+    {
+      "column": "currency",
+      "type": "text"
+    },
+    {
+      "column": "revenue_policy",
+      "type": "text"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "ebay_image_normalizations": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "source_url",
+      "type": "text"
+    },
+    {
+      "column": "source_hash",
+      "type": "text"
+    },
+    {
+      "column": "eps_url",
+      "type": "text"
+    },
+    {
+      "column": "provider",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "failure_code",
+      "type": "text"
+    },
+    {
+      "column": "failure_reason",
+      "type": "text"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "jobs": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "job_type",
+      "type": "text"
+    },
+    {
+      "column": "idempotency_key",
+      "type": "text"
+    },
+    {
+      "column": "payload",
+      "type": "jsonb"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "priority",
+      "type": "integer"
+    },
+    {
+      "column": "attempt",
+      "type": "integer"
+    },
+    {
+      "column": "max_attempts",
+      "type": "integer"
+    },
+    {
+      "column": "scheduled_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "started_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "finished_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "last_error",
+      "type": "text"
+    }
+  ],
+  "lead_submissions": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "full_name",
+      "type": "text"
+    },
+    {
+      "column": "company",
+      "type": "text"
+    },
+    {
+      "column": "email",
+      "type": "text"
+    },
+    {
+      "column": "interest",
+      "type": "text"
+    },
+    {
+      "column": "message",
+      "type": "text"
+    },
+    {
+      "column": "source_page",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "email_notification_status",
+      "type": "text"
+    },
+    {
+      "column": "whatsapp_notification_status",
+      "type": "text"
+    },
+    {
+      "column": "email_notification_error",
+      "type": "text"
+    },
+    {
+      "column": "whatsapp_notification_error",
+      "type": "text"
+    },
+    {
+      "column": "notified_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "metadata",
+      "type": "jsonb"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "learning_drift_events": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "metric_key",
+      "type": "text"
+    },
+    {
+      "column": "segment_key",
+      "type": "text"
+    },
+    {
+      "column": "category",
+      "type": "text"
+    },
+    {
+      "column": "severity",
+      "type": "text"
+    },
+    {
+      "column": "baseline_value",
+      "type": "numeric"
+    },
+    {
+      "column": "observed_value",
+      "type": "numeric"
+    },
+    {
+      "column": "delta_value",
+      "type": "numeric"
+    },
+    {
+      "column": "reason_code",
+      "type": "text"
+    },
+    {
+      "column": "action_hint",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "diagnostics",
+      "type": "jsonb"
+    },
+    {
+      "column": "observed_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "learning_eval_labels": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "label_type",
+      "type": "text"
+    },
+    {
+      "column": "entity_type",
+      "type": "text"
+    },
+    {
+      "column": "entity_id",
+      "type": "text"
+    },
+    {
+      "column": "predicted_label",
+      "type": "text"
+    },
+    {
+      "column": "predicted_confidence",
+      "type": "numeric"
+    },
+    {
+      "column": "observed_label",
+      "type": "text"
+    },
+    {
+      "column": "observed_confidence",
+      "type": "numeric"
+    },
+    {
+      "column": "quality_gap",
+      "type": "numeric"
+    },
+    {
+      "column": "grading_status",
+      "type": "text"
+    },
+    {
+      "column": "grading_notes",
+      "type": "text"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "learning_evidence_events": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "evidence_type",
+      "type": "text"
+    },
+    {
+      "column": "entity_type",
+      "type": "text"
+    },
+    {
+      "column": "entity_id",
+      "type": "text"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "source",
+      "type": "text"
+    },
+    {
+      "column": "parser_version",
+      "type": "text"
+    },
+    {
+      "column": "confidence",
+      "type": "numeric"
+    },
+    {
+      "column": "freshness_seconds",
+      "type": "integer"
+    },
+    {
+      "column": "validation_status",
+      "type": "text"
+    },
+    {
+      "column": "blocked_reasons",
+      "type": "ARRAY"
+    },
+    {
+      "column": "downstream_outcome",
+      "type": "text"
+    },
+    {
+      "column": "diagnostics",
+      "type": "jsonb"
+    },
+    {
+      "column": "observed_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "learning_features": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "feature_key",
+      "type": "text"
+    },
+    {
+      "column": "subject_type",
+      "type": "text"
+    },
+    {
+      "column": "subject_key",
+      "type": "text"
+    },
+    {
+      "column": "feature_value",
+      "type": "numeric"
+    },
+    {
+      "column": "confidence",
+      "type": "numeric"
+    },
+    {
+      "column": "sample_size",
+      "type": "integer"
+    },
+    {
+      "column": "trend_direction",
+      "type": "text"
+    },
+    {
+      "column": "evidence_window_start",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "evidence_window_end",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "metadata",
+      "type": "jsonb"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "learning_metric_snapshots": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "metric_key",
+      "type": "text"
+    },
+    {
+      "column": "segment_key",
+      "type": "text"
+    },
+    {
+      "column": "metric_value",
+      "type": "numeric"
+    },
+    {
+      "column": "sample_size",
+      "type": "integer"
+    },
+    {
+      "column": "snapshot_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "metadata",
+      "type": "jsonb"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "listing_daily_caps": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "cap_date",
+      "type": "date"
+    },
+    {
+      "column": "cap_limit",
+      "type": "integer"
+    },
+    {
+      "column": "cap_used",
+      "type": "integer"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "listings": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "candidate_id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "title",
+      "type": "text"
+    },
+    {
+      "column": "price",
+      "type": "numeric"
+    },
+    {
+      "column": "quantity",
+      "type": "integer"
+    },
+    {
+      "column": "payload",
+      "type": "jsonb"
+    },
+    {
+      "column": "response",
+      "type": "jsonb"
+    },
+    {
+      "column": "idempotency_key",
+      "type": "text"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "publish_marketplace",
+      "type": "text"
+    },
+    {
+      "column": "publish_started_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "publish_finished_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "published_external_id",
+      "type": "text"
+    },
+    {
+      "column": "publish_attempt_count",
+      "type": "integer"
+    },
+    {
+      "column": "last_publish_error",
+      "type": "text"
+    },
+    {
+      "column": "listing_date",
+      "type": "date"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "supplier_product_id",
+      "type": "text"
+    },
+    {
+      "column": "linkage_source",
+      "type": "text"
+    },
+    {
+      "column": "linkage_verified_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "linkage_deterministic",
+      "type": "boolean"
+    },
+    {
+      "column": "supplier_link_locked",
+      "type": "boolean"
+    },
+    {
+      "column": "supplier_stock_status",
+      "type": "text"
+    },
+    {
+      "column": "supplier_stock_qty",
+      "type": "integer"
+    },
+    {
+      "column": "stock_verified_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "stock_source",
+      "type": "text"
+    },
+    {
+      "column": "stock_check_required",
+      "type": "boolean"
+    }
+  ],
+  "manual_overrides": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "control_key",
+      "type": "text"
+    },
+    {
+      "column": "is_enabled",
+      "type": "boolean"
+    },
+    {
+      "column": "note",
+      "type": "text"
+    },
+    {
+      "column": "changed_by",
+      "type": "text"
+    },
+    {
+      "column": "changed_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "marketplace_prices": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_listing_id",
+      "type": "text"
+    },
+    {
+      "column": "product_page_url",
+      "type": "text"
+    },
+    {
+      "column": "currency",
+      "type": "text"
+    },
+    {
+      "column": "price",
+      "type": "numeric"
+    },
+    {
+      "column": "shipping_price",
+      "type": "numeric"
+    },
+    {
+      "column": "is_prime",
+      "type": "boolean"
+    },
+    {
+      "column": "availability_status",
+      "type": "text"
+    },
+    {
+      "column": "seller_id",
+      "type": "text"
+    },
+    {
+      "column": "seller_name",
+      "type": "text"
+    },
+    {
+      "column": "raw_payload",
+      "type": "jsonb"
+    },
+    {
+      "column": "snapshot_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "product_raw_id",
+      "type": "uuid"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "supplier_product_id",
+      "type": "text"
+    },
+    {
+      "column": "trend_mode",
+      "type": "boolean"
+    },
+    {
+      "column": "search_query",
+      "type": "text"
+    },
+    {
+      "column": "matched_title",
+      "type": "text"
+    },
+    {
+      "column": "title_similarity_score",
+      "type": "numeric"
+    },
+    {
+      "column": "keyword_score",
+      "type": "numeric"
+    },
+    {
+      "column": "final_match_score",
+      "type": "numeric"
+    },
+    {
+      "column": "image_url",
+      "type": "text"
+    }
+  ],
+  "matches": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "supplier_product_id",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_listing_id",
+      "type": "text"
+    },
+    {
+      "column": "match_type",
+      "type": "text"
+    },
+    {
+      "column": "confidence",
+      "type": "numeric"
+    },
+    {
+      "column": "evidence",
+      "type": "jsonb"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "first_seen_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "last_seen_ts",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "order_events": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "order_id",
+      "type": "uuid"
+    },
+    {
+      "column": "event_type",
+      "type": "text"
+    },
+    {
+      "column": "event_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "details",
+      "type": "jsonb"
+    }
+  ],
+  "order_items": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "order_id",
+      "type": "uuid"
+    },
+    {
+      "column": "listing_id",
+      "type": "uuid"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "supplier_product_id",
+      "type": "text"
+    },
+    {
+      "column": "quantity",
+      "type": "integer"
+    },
+    {
+      "column": "item_price",
+      "type": "numeric"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "linkage_source",
+      "type": "text"
+    },
+    {
+      "column": "linkage_verified_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "linkage_deterministic",
+      "type": "boolean"
+    },
+    {
+      "column": "supplier_link_locked",
+      "type": "boolean"
+    },
+    {
+      "column": "supplier_stock_status",
+      "type": "text"
+    },
+    {
+      "column": "supplier_stock_qty",
+      "type": "integer"
+    },
+    {
+      "column": "stock_verified_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "stock_source",
+      "type": "text"
+    },
+    {
+      "column": "stock_check_required",
+      "type": "boolean"
+    }
+  ],
+  "orders": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "listing_id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "order_id",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "quantity",
+      "type": "integer"
+    },
+    {
+      "column": "total_amount",
+      "type": "numeric"
+    },
+    {
+      "column": "currency",
+      "type": "text"
+    },
+    {
+      "column": "raw_payload",
+      "type": "jsonb"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "marketplace",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_order_id",
+      "type": "text"
+    },
+    {
+      "column": "buyer_name",
+      "type": "text"
+    },
+    {
+      "column": "buyer_country",
+      "type": "text"
+    },
+    {
+      "column": "total_price",
+      "type": "numeric"
+    }
+  ],
+  "product_candidates": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "candidate_id",
+      "type": "uuid"
+    },
+    {
+      "column": "product_title",
+      "type": "text"
+    },
+    {
+      "column": "marketplace",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_listing_id",
+      "type": "text"
+    },
+    {
+      "column": "price",
+      "type": "numeric"
+    },
+    {
+      "column": "currency",
+      "type": "text"
+    },
+    {
+      "column": "product_url",
+      "type": "text"
+    },
+    {
+      "column": "source",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "discovered_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "meta",
+      "type": "jsonb"
+    }
+  ],
+  "products_raw": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "supplier_product_id",
+      "type": "text"
+    },
+    {
+      "column": "source_url",
+      "type": "text"
+    },
+    {
+      "column": "title",
+      "type": "text"
+    },
+    {
+      "column": "images",
+      "type": "jsonb"
+    },
+    {
+      "column": "variants",
+      "type": "jsonb"
+    },
+    {
+      "column": "currency",
+      "type": "text"
+    },
+    {
+      "column": "price_min",
+      "type": "numeric"
+    },
+    {
+      "column": "price_max",
+      "type": "numeric"
+    },
+    {
+      "column": "availability_status",
+      "type": "text"
+    },
+    {
+      "column": "shipping_estimates",
+      "type": "jsonb"
+    },
+    {
+      "column": "raw_payload",
+      "type": "jsonb"
+    },
+    {
+      "column": "snapshot_ts",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "profitable_candidates": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "supplier_product_id",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "marketplace_listing_id",
+      "type": "text"
+    },
+    {
+      "column": "calc_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "supplier_snapshot_id",
+      "type": "uuid"
+    },
+    {
+      "column": "market_price_snapshot_id",
+      "type": "uuid"
+    },
+    {
+      "column": "estimated_fees",
+      "type": "jsonb"
+    },
+    {
+      "column": "estimated_shipping",
+      "type": "numeric"
+    },
+    {
+      "column": "estimated_cogs",
+      "type": "numeric"
+    },
+    {
+      "column": "estimated_profit",
+      "type": "numeric"
+    },
+    {
+      "column": "margin_pct",
+      "type": "numeric"
+    },
+    {
+      "column": "roi_pct",
+      "type": "numeric"
+    },
+    {
+      "column": "risk_flags",
+      "type": "ARRAY"
+    },
+    {
+      "column": "decision_status",
+      "type": "text"
+    },
+    {
+      "column": "reason",
+      "type": "text"
+    },
+    {
+      "column": "approved_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "approved_by",
+      "type": "text"
+    },
+    {
+      "column": "listing_eligible",
+      "type": "boolean"
+    },
+    {
+      "column": "listing_eligible_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "listing_block_reason",
+      "type": "text"
+    }
+  ],
+  "query_budgets": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "source",
+      "type": "text"
+    },
+    {
+      "column": "period",
+      "type": "text"
+    },
+    {
+      "column": "max_queries",
+      "type": "integer"
+    },
+    {
+      "column": "used_queries",
+      "type": "integer"
+    },
+    {
+      "column": "reset_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "query_cache": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "keyword",
+      "type": "text"
+    },
+    {
+      "column": "marketplace",
+      "type": "text"
+    },
+    {
+      "column": "last_run_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "query_tasks": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "candidate_id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace",
+      "type": "text"
+    },
+    {
+      "column": "priority_score",
+      "type": "numeric"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "queued_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "started_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "finished_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "last_error",
+      "type": "text"
+    }
+  ],
+  "seller_account_metrics": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "marketplace_key",
+      "type": "text"
+    },
+    {
+      "column": "feedback_score",
+      "type": "integer"
+    },
+    {
+      "column": "source",
+      "type": "text"
+    },
+    {
+      "column": "raw_payload",
+      "type": "jsonb"
+    },
+    {
+      "column": "fetched_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "supplier_orders": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "order_id",
+      "type": "uuid"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "attempt_no",
+      "type": "integer"
+    },
+    {
+      "column": "supplier_order_ref",
+      "type": "text"
+    },
+    {
+      "column": "purchase_status",
+      "type": "text"
+    },
+    {
+      "column": "tracking_number",
+      "type": "text"
+    },
+    {
+      "column": "tracking_status",
+      "type": "text"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "manual_note",
+      "type": "text"
+    },
+    {
+      "column": "purchase_recorded_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "tracking_recorded_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "tracking_carrier",
+      "type": "text"
+    },
+    {
+      "column": "tracking_sync_last_attempt_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "tracking_synced_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "tracking_sync_error",
+      "type": "text"
+    },
+    {
+      "column": "tracking_sync_last_response",
+      "type": "jsonb"
+    }
+  ],
+  "supplier_shipping_quotes": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "supplier_key",
+      "type": "text"
+    },
+    {
+      "column": "supplier_product_id",
+      "type": "text"
+    },
+    {
+      "column": "origin_country",
+      "type": "text"
+    },
+    {
+      "column": "destination_country",
+      "type": "text"
+    },
+    {
+      "column": "destination_region",
+      "type": "text"
+    },
+    {
+      "column": "service_level",
+      "type": "text"
+    },
+    {
+      "column": "shipping_cost",
+      "type": "numeric"
+    },
+    {
+      "column": "currency",
+      "type": "text"
+    },
+    {
+      "column": "estimated_min_days",
+      "type": "integer"
+    },
+    {
+      "column": "estimated_max_days",
+      "type": "integer"
+    },
+    {
+      "column": "confidence",
+      "type": "numeric"
+    },
+    {
+      "column": "source_type",
+      "type": "text"
+    },
+    {
+      "column": "weight_tier",
+      "type": "text"
+    },
+    {
+      "column": "size_tier",
+      "type": "text"
+    },
+    {
+      "column": "last_verified_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "created_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "updated_at",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "trend_candidates": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "trend_signal_id",
+      "type": "uuid"
+    },
+    {
+      "column": "candidate_type",
+      "type": "text"
+    },
+    {
+      "column": "candidate_value",
+      "type": "text"
+    },
+    {
+      "column": "region",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "created_ts",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "meta",
+      "type": "jsonb"
+    },
+    {
+      "column": "priority_score",
+      "type": "numeric"
+    }
+  ],
+  "trend_signals": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "source",
+      "type": "text"
+    },
+    {
+      "column": "signal_type",
+      "type": "text"
+    },
+    {
+      "column": "signal_value",
+      "type": "text"
+    },
+    {
+      "column": "region",
+      "type": "text"
+    },
+    {
+      "column": "score",
+      "type": "numeric"
+    },
+    {
+      "column": "raw_payload",
+      "type": "jsonb"
+    },
+    {
+      "column": "captured_ts",
+      "type": "timestamp without time zone"
+    }
+  ],
+  "worker_runs": [
+    {
+      "column": "id",
+      "type": "uuid"
+    },
+    {
+      "column": "worker",
+      "type": "text"
+    },
+    {
+      "column": "job_name",
+      "type": "text"
+    },
+    {
+      "column": "job_id",
+      "type": "text"
+    },
+    {
+      "column": "status",
+      "type": "text"
+    },
+    {
+      "column": "duration_ms",
+      "type": "integer"
+    },
+    {
+      "column": "ok",
+      "type": "boolean"
+    },
+    {
+      "column": "error",
+      "type": "text"
+    },
+    {
+      "column": "stats",
+      "type": "jsonb"
+    },
+    {
+      "column": "started_at",
+      "type": "timestamp without time zone"
+    },
+    {
+      "column": "finished_at",
+      "type": "timestamp without time zone"
+    }
+  ]
+}
