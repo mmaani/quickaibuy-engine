@@ -52,7 +52,11 @@ export type MarketplaceCandidate = {
   searchQuery?: string | null;
   titleSimilarityScore?: number | null;
   keywordScore?: number | null;
+  semanticSimilarityScore?: number | null;
+  productTruthScore?: number | null;
+  priceSanityScore?: number | null;
   finalMatchScore?: number | null;
+  matchEvidence?: Record<string, unknown> | null;
 };
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
