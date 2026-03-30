@@ -398,21 +398,25 @@ function buildRecommendations(
 export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   const runtime = await getRuntimeDiagnostics();
   const summary = await buildOperationalSummary(runtime);
-  const pauseMap = await computePauseMap(runtime, summary);
-  const latestRunDetails = await getLatestAutonomousRunDetails();
-  const latestRun = parseLatestRun(latestRunDetails);
-  const latestFullCycleRunDetails = await getLatestFullCycleRunDetails();
-  const latestFullCycleRun = parseLatestRun(latestFullCycleRunDetails);
-  const latestIntegrityHeal = extractLatestIntegrityHeal(latestRunDetails);
   const [learningHub, productMarketIntelligence, continuousLearningSchedule] = await Promise.all([
     getLearningHubScorecard(),
     getProductMarketIntelligenceOverview({ windowDays: 90, includeNodes: 12 }).catch(() => null),
     getContinuousLearningScheduleSnapshot().catch(() => null),
   ]);
+  const pauseMap = await computePauseMap(runtime, summary, learningHub);
+  const latestRunDetails = await getLatestAutonomousRunDetails();
+  const latestRun = parseLatestRun(latestRunDetails);
+  const latestFullCycleRunDetails = await getLatestFullCycleRunDetails();
+  const latestFullCycleRun = parseLatestRun(latestFullCycleRunDetails);
+  const latestIntegrityHeal = extractLatestIntegrityHeal(latestRunDetails);
   const runtimePauses = Array.from(pauseMap.entries()).map(([stage, reason]) => ({ stage, reason }));
   const runWindowPauses = deriveRunWindowPauses(latestRun);
-  const pauses = runWindowPauses.length ? runWindowPauses : runtimePauses;
-  const pauseSource: PauseSource = runWindowPauses.length ? "latest_run" : "runtime";
+  const hasOpenCriticalDrift = Number(learningHub?.openDrift.critical ?? 0) > 0;
+  const reconciledRunWindowPauses = runWindowPauses.filter(
+    (pause) => pause.reason !== "LEARNING_HUB_CRITICAL_DRIFT" || hasOpenCriticalDrift
+  );
+  const pauses = reconciledRunWindowPauses.length ? reconciledRunWindowPauses : runtimePauses;
+  const pauseSource: PauseSource = reconciledRunWindowPauses.length ? "latest_run" : "runtime";
   const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun, learningHub);
   const recommendations = buildRecommendations(summary, pauses, latestRun, learningHub);
   const safeToRunFullCycleNow =

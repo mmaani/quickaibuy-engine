@@ -657,9 +657,13 @@ export async function buildOperationalSummary(runtime: RuntimeDiagnostics): Prom
   };
 }
 
-export async function computePauseMap(runtime: RuntimeDiagnostics, summary: AutonomousOpsSummary) {
+export async function computePauseMap(
+  runtime: RuntimeDiagnostics,
+  summary: AutonomousOpsSummary,
+  learningHubScorecard?: Awaited<ReturnType<typeof getLearningHubScorecard>>
+) {
   const pauses = new Map<StageKey, string>();
-  const learningHub = await getLearningHubScorecard();
+  const learningHub = learningHubScorecard ?? (await getLearningHubScorecard());
   const publishFailureSpike = Number(summary.publish.failed24h ?? 0) >= Number(process.env.AUTONOMOUS_PUBLISH_FAILURE_SPIKE_THRESHOLD ?? 3);
   const staleSpike =
     Number(summary.marketplaceReliability.staleMarketplaceCandidates ?? 0) >=
