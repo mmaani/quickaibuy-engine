@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { jobsQueue, jobNameFromUnknown } from "@/src/lib/bull";
 import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
-import { pool } from "@/lib/db";
-import { BULL_PREFIX, JOBS_QUEUE_NAME, JOB_NAMES } from "@/lib/jobNames";
+import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,89 +19,37 @@ export async function POST(req: Request) {
 
   const bodyRaw: unknown = await req.json().catch(() => ({}));
   const body = isRecord(bodyRaw) ? bodyRaw : {};
-
-  let name: string;
-  try {
-    name = jobNameFromUnknown(body.name);
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Invalid job name",
-      },
-      { status: 400 }
-    );
-  }
-
-  const payload = isRecord(body.payload) ? body.payload : {};
-  const source = typeof body.source === "string" ? body.source.trim().toLowerCase() : "";
-  if (source !== "control-plane") {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "canonical enqueue enforcement: source must be 'control-plane'",
-      },
-      { status: 400 }
-    );
-  }
-
-  const allowedControlPlaneJobs = new Set<string>([
-    JOB_NAMES.SUPPLIER_DISCOVER,
-    JOB_NAMES.SCAN_MARKETPLACE_PRICE,
-    JOB_NAMES.MATCH_PRODUCT,
-    JOB_NAMES.EVAL_PROFIT,
-    JOB_NAMES.LISTING_OPTIMIZE,
-    JOB_NAMES.INVENTORY_RISK_SCAN,
-    JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
-  ]);
-  if (!allowedControlPlaneJobs.has(name)) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `canonical enqueue enforcement: job '${name}' is not allowed from control-plane API`,
-      },
-      { status: 400 }
-    );
-  }
-  const idempotencyKey =
+  const attemptedName = typeof body.name === "string" ? body.name : null;
+  const attemptedAction = typeof body.actionKey === "string" ? body.actionKey : null;
+  const attemptedSource = typeof body.source === "string" ? body.source : null;
+  const attemptedIdempotencyKey =
     typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()
       ? body.idempotencyKey.trim()
-      : undefined;
+      : null;
 
-  await pool.query(
-    `
-      INSERT INTO audit_log (actor_type, actor_id, entity_type, entity_id, event_type, details)
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-    `,
-    [
-      "api",
-      auth.actorId ?? "queue.enqueue",
-      "job",
-      idempotencyKey ?? null,
-      "ENQUEUE",
-      JSON.stringify({ name, payload, queue: JOBS_QUEUE_NAME, prefix: BULL_PREFIX }),
-    ]
-  );
-
-  const job = await jobsQueue.add(name, payload, {
-    jobId: idempotencyKey,
-    attempts: 3,
-    backoff: {
-      type: "exponential",
-      delay: 2000,
+  await writeAuditLog({
+    actorType: "ADMIN",
+    actorId: auth.actorId ?? "queue.enqueue",
+    entityType: "CONTROL_PLANE",
+    entityId: "/api/queue/enqueue",
+    eventType: "CANONICAL_ENFORCEMENT_BLOCKED",
+    details: {
+      code: "GENERIC_ENQUEUE_SURFACE_RETIRED",
+      severity: "CRITICAL",
+      violationType: "generic_queue_enqueue_blocked",
+      blockedAction: attemptedAction ?? attemptedName ?? "unknown",
+      executionPath: "api/queue/enqueue",
+      reason: "generic enqueue API retired; action-keyed control-plane wrappers are mandatory",
+      attemptedName,
+      attemptedAction,
+      attemptedSource,
+      attemptedIdempotencyKey,
     },
-    removeOnComplete: {
-      age: 3600,
-      count: 5000,
-    },
-    removeOnFail: false,
   });
 
   return NextResponse.json({
-    ok: true,
-    queue: JOBS_QUEUE_NAME,
-    prefix: BULL_PREFIX,
-    name,
-    jobId: job.id,
-  });
+    ok: false,
+    error: "canonical enqueue enforcement: /api/queue/enqueue is retired; use typed control-plane action wrappers",
+    code: "GENERIC_ENQUEUE_SURFACE_RETIRED",
+  }, { status: 410 });
 }

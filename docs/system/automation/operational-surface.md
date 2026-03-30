@@ -2,6 +2,8 @@
 
 Summary: QuickAIBuy now has one explicit operator-facing command model. `pnpm ops:full-cycle` is the canonical daily operating path, `/admin/control` is the aligned control-plane surface, and direct legacy scripts are either engineering-only or retired.
 
+Canonical queue governance note: `/api/queue/enqueue` is retired as a generic submission API and now hard-blocks all requests. Action-keyed control-plane wrappers/endpoints are the only allowed enqueue model.
+
 ## Canonical command model
 
 | Intent | Canonical command or surface | Classification |

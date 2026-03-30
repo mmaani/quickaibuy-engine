@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { LISTINGS_ROUTE } from "@/lib/listings/getApprovedListingsQueueData";
-import { enqueueAdminMutationJob } from "@/lib/jobs/enqueueAdminMutations";
-import { JOB_NAMES } from "@/lib/jobNames";
+import { enqueueListingResumeJob } from "@/lib/jobs/enqueueAdminMutations";
 import {
   REVIEW_CONSOLE_REALM,
   getReviewActorIdFromAuthorizationHeader,
@@ -37,12 +36,9 @@ export async function POST(request: Request) {
   if (!listingId) return NextResponse.json({ ok: false, error: "listingId required" }, { status: 400 });
 
   const actorId = getReviewActorIdFromAuthorizationHeader(authorization) ?? "admin-listings";
-  const job = await enqueueAdminMutationJob({
-    jobName: JOB_NAMES.ADMIN_LISTING_RESUME,
+  const job = await enqueueListingResumeJob({
     actorId,
     triggerSource: "review-console",
-    controlPath: "api/admin/listings/resume",
-    actionType: "listing_resume",
     payload: { listingId, candidateId },
     idempotencySuffix: `${listingId}-${Date.now()}`,
   });
