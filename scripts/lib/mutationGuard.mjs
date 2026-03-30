@@ -13,6 +13,8 @@ function buildBlockedMessage(scriptName, context, missing) {
 
 export function assertMutationAllowed(scriptName, options = {}) {
   const context = getDbTargetContext(options);
+  const controlledRepairPath =
+    String(process.env.CONTROLLED_REPAIR_PATH ?? "false").trim().toLowerCase() === "true";
 
   if (options.requireDev === true) {
     if (context.classification !== "DEV") {
@@ -25,6 +27,14 @@ export function assertMutationAllowed(scriptName, options = {}) {
   if (!context.mutationSafety.allowed) {
     throw new Error(
       buildBlockedMessage(scriptName, context, context.mutationSafety.missing)
+    );
+  }
+
+  if (!controlledRepairPath) {
+    throw new Error(
+      buildBlockedMessage(scriptName, context, [
+        "CONTROLLED_REPAIR_PATH=true required for mutation scripts",
+      ])
     );
   }
 

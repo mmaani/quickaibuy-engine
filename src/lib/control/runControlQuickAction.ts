@@ -2,32 +2,32 @@ import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { enqueueInventoryRiskScan } from "@/lib/jobs/enqueueInventoryRiskScan";
 import { runContinuousLearningRefresh } from "@/lib/learningHub/continuousLearning";
 import { syncEbayOrders } from "@/lib/orders/syncEbayOrders";
-import { runAutonomousOperations } from "@/lib/autonomousOps/backbone";
-import { runCanonicalFullCycle } from "@/lib/autonomousOps/fullCycle";
+import { enqueueAutonomousOpsBackbone } from "@/lib/jobs/enqueueAutonomousOpsBackbone";
 
 export async function runControlQuickAction(action: string, actorId: string): Promise<string> {
   let message = "Action completed.";
 
   if (action === "autonomous-refresh") {
-    const result = await runAutonomousOperations({
+    const job = await enqueueAutonomousOpsBackbone({
       phase: "diagnostics_refresh",
-      actorId: `admin-control:${actorId}`,
-      actorType: "ADMIN",
+      triggerSource: "control-plane",
+      idempotencySuffix: `admin-${Date.now()}`,
     });
-    message = `Autonomous diagnostics/refresh completed. ok=${result.ok}. pauses=${result.pauses.length}.`;
+    message = `Autonomous diagnostics/refresh enqueued (${String(job.id)}).`;
   } else if (action === "autonomous-prepare") {
-    const result = await runAutonomousOperations({
+    const job = await enqueueAutonomousOpsBackbone({
       phase: "prepare",
-      actorId: `admin-control:${actorId}`,
-      actorType: "ADMIN",
+      triggerSource: "control-plane",
+      idempotencySuffix: `admin-${Date.now()}`,
     });
-    message = `Autonomous prepare cycle completed. ok=${result.ok}. ready_to_publish=${result.summary.pipeline.readyToPublish}.`;
+    message = `Autonomous prepare cycle enqueued (${String(job.id)}).`;
   } else if (action === "autonomous-full") {
-    const result = await runCanonicalFullCycle({
-      actorId: `admin-control:${actorId}`,
-      actorType: "ADMIN",
+    const job = await enqueueAutonomousOpsBackbone({
+      phase: "full",
+      triggerSource: "control-plane",
+      idempotencySuffix: `admin-${Date.now()}`,
     });
-    message = `Canonical full cycle completed via pnpm ops:full-cycle. ok=${result.ok}. pauses=${result.pauses.length}, ready_to_publish=${result.summary.pipeline.readyToPublish}.`;
+    message = `Canonical full cycle enqueued (${String(job.id)}).`;
   } else if (action === "learning-refresh") {
     const result = await runContinuousLearningRefresh({
       trigger: `admin_control:${actorId}`,

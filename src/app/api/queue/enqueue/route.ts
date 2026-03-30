@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { jobsQueue, jobNameFromUnknown } from "@/src/lib/bull";
 import { requirePipelineAdmin } from "@/lib/admin/requirePipelineAdmin";
 import { pool } from "@/lib/db";
-import { BULL_PREFIX, JOBS_QUEUE_NAME } from "@/lib/jobNames";
+import { BULL_PREFIX, JOBS_QUEUE_NAME, JOB_NAMES } from "@/lib/jobNames";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +36,35 @@ export async function POST(req: Request) {
   }
 
   const payload = isRecord(body.payload) ? body.payload : {};
+  const source = typeof body.source === "string" ? body.source.trim().toLowerCase() : "";
+  if (source !== "control-plane") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "canonical enqueue enforcement: source must be 'control-plane'",
+      },
+      { status: 400 }
+    );
+  }
+
+  const allowedControlPlaneJobs = new Set<string>([
+    JOB_NAMES.SUPPLIER_DISCOVER,
+    JOB_NAMES.SCAN_MARKETPLACE_PRICE,
+    JOB_NAMES.MATCH_PRODUCT,
+    JOB_NAMES.EVAL_PROFIT,
+    JOB_NAMES.LISTING_OPTIMIZE,
+    JOB_NAMES.INVENTORY_RISK_SCAN,
+    JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
+  ]);
+  if (!allowedControlPlaneJobs.has(name)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `canonical enqueue enforcement: job '${name}' is not allowed from control-plane API`,
+      },
+      { status: 400 }
+    );
+  }
   const idempotencyKey =
     typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()
       ? body.idempotencyKey.trim()

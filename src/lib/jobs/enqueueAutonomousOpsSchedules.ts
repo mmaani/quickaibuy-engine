@@ -31,21 +31,21 @@ export const AUTONOMOUS_OPS_SCHEDULES = [
     jobName: JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
     jobId: "autonomous-ops-diagnostics-refresh-v1-6h",
     everyMs: 6 * HOUR_MS,
-    payload: { phase: "diagnostics_refresh" },
+    payload: { phase: "diagnostics_refresh", triggerSource: "schedule" },
   },
   {
     stage: "prepare",
     jobName: JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
     jobId: "autonomous-ops-prepare-v1-2h",
     everyMs: 2 * HOUR_MS,
-    payload: { phase: "prepare" },
+    payload: { phase: "prepare", triggerSource: "schedule" },
   },
   {
     stage: "publish",
     jobName: JOB_NAMES.AUTONOMOUS_OPS_BACKBONE,
     jobId: "autonomous-ops-publish-v1-30m",
     everyMs: 30 * 60 * 1000,
-    payload: { phase: "publish" },
+    payload: { phase: "publish", triggerSource: "schedule" },
   },
 ] as const;
 
