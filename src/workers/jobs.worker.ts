@@ -421,7 +421,7 @@ export const jobsWorker = new Worker(
         const refreshSupplierKey = String(job.data?.supplierKey ?? "").trim().toLowerCase();
         const refreshSupplierProductId = String(job.data?.supplierProductId ?? "").trim();
         const targetedRefresh = Boolean(refreshSupplierKey && refreshSupplierProductId);
-        const result = targetedRefresh
+        const refreshResult = targetedRefresh
           ? await refreshSingleSupplierProduct({
               supplierKey: refreshSupplierKey,
               supplierProductId: refreshSupplierProductId,
@@ -429,7 +429,29 @@ export const jobsWorker = new Worker(
               updateExisting: true,
               searchLimit: Math.max(30, limitPerKeyword * 3),
             })
-          : await runSupplierDiscover(limitPerKeyword);
+          : null;
+        const discoverResult = targetedRefresh ? null : await runSupplierDiscover(limitPerKeyword);
+        const result = refreshResult ?? discoverResult;
+        const targetedRefreshDetails = refreshResult
+          ? {
+              supplierKey: refreshSupplierKey,
+              supplierProductId: refreshSupplierProductId,
+              refreshed: refreshResult.refreshed,
+              refreshedSnapshotId: refreshResult.refreshedSnapshotId,
+              refreshMode: refreshResult.refreshMode,
+              exactMatchFound: refreshResult.exactMatchFound,
+              availabilityStatus: refreshResult.availabilityStatus,
+            }
+          : null;
+        const discoverDetails = discoverResult
+          ? {
+              processedCandidates: discoverResult.processedCandidates,
+              insertedCount: discoverResult.insertedCount,
+              keywords: discoverResult.keywords,
+              sources: discoverResult.sources,
+              sourceBreakdown: discoverResult.sourceBreakdown,
+            }
+          : null;
 
         await writeAuditLog({
           actorType: "WORKER",
@@ -441,36 +463,20 @@ export const jobsWorker = new Worker(
             source: "supplier-discover",
             jobId: String(job.id ?? ""),
             targetedRefresh,
-            ...(targetedRefresh
-              ? {
-                  supplierKey: refreshSupplierKey,
-                  supplierProductId: refreshSupplierProductId,
-                  refreshed: result.refreshed,
-                  refreshedSnapshotId: result.refreshedSnapshotId,
-                  refreshMode: result.refreshMode,
-                  searchLimit: result.searchLimit,
-                  lookupCount: result.lookupCount,
-                  crawlStatus: result.crawlStatus,
-                }
-              : {
-                  processedCandidates: result.processedCandidates,
-                  insertedCount: result.insertedCount,
-                  keywords: result.keywords,
-                  sources: result.sources,
-                  sourceBreakdown: result.sourceBreakdown,
-                }),
+            ...(targetedRefreshDetails ?? {}),
+            ...(discoverDetails ?? {}),
           },
         });
 
-        if (targetedRefresh && result.refreshed && result.refreshedSnapshotId) {
+        if (refreshResult?.refreshed && refreshResult.refreshedSnapshotId) {
           await handleMarketplaceScanJob({
             limit: Number(job.data?.marketplaceLimit ?? 120),
-            productRawId: result.refreshedSnapshotId,
+            productRawId: refreshResult.refreshedSnapshotId,
             platform: "ebay",
           });
           await handleMatchProductsJob({
             limit: Number(job.data?.matchLimit ?? 80),
-            productRawId: result.refreshedSnapshotId,
+            productRawId: refreshResult.refreshedSnapshotId,
           });
           await runProfitEngine({
             limit: Number(job.data?.profitLimit ?? 80),

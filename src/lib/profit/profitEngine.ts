@@ -537,8 +537,6 @@ export async function runProfitEngine(input?: {
     const supplierDriftExceeded =
       supplierPriceDriftPct != null && Math.abs(supplierPriceDriftPct) > SUPPLIER_DRIFT_MANUAL_REVIEW_PCT;
     const shippingDriftDetected = shippingPriceDriftPct != null && Math.abs(shippingPriceDriftPct) >= 8;
-    const staleMarketplaceSnapshot = marketplaceSnapshotAgeHours != null &&
-      marketplaceSnapshotAgeHours > maxMarketplaceSnapshotAgeHours;
     const supplierImages = Array.isArray(row.supplierImages)
       ? row.supplierImages.filter((value): value is string => typeof value === "string")
       : [];
