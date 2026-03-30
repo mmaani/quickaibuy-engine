@@ -11,7 +11,7 @@ This runbook defines the production-safe Railway deployment shape for the persis
 - Start command:
 
 ```bash
-pnpm preflight:worker-runtime && pnpm worker:jobs:prod
+pnpm preflight:worker-runtime && pnpm worker:jobs
 ```
 
 `jobs.worker` is a long-running BullMQ consumer, not an HTTP app. The Railway service should stay private and should not expose a domain.
@@ -193,7 +193,7 @@ Tracked files and scripts:
 Example local workflow in Codespaces:
 
 ```bash
-pnpm worker:railway-env:build -- --from .env.local,.env.vercel --out railway_worker.env
+pnpm worker:railway-env:build -- --from .env.prod,.env.vercel --out railway_worker.env
 pnpm worker:railway-env:validate railway_worker.env
 ```
 
@@ -216,7 +216,7 @@ It also warns when supplier-provider credentials are absent, because worker star
 5. Generate the candidate env file locally:
 
 ```bash
-pnpm worker:railway-env:build -- --from .env.local,.env.vercel --out railway_worker.env
+pnpm worker:railway-env:build -- --from .env.prod,.env.vercel --out railway_worker.env
 pnpm worker:railway-env:validate railway_worker.env
 ```
 
@@ -257,9 +257,9 @@ pnpm lint
 pnpm build
 pnpm exec tsc --noEmit
 pnpm worker:railway-env:validate railway_worker.env
-DOTENV_CONFIG_PATH=.env.vercel node --import dotenv/config --import tsx scripts/check_worker_run_truth.ts
-DOTENV_CONFIG_PATH=.env.vercel node --import dotenv/config --import tsx scripts/check_upstream_schedules.ts
-DOTENV_CONFIG_PATH=.env.vercel node --import dotenv/config --import tsx scripts/check_revenue_enablement_truth.ts
+DOTENV_CONFIG_PATH=.env.prod node --import dotenv/config --import tsx scripts/check_worker_run_truth.ts
+DOTENV_CONFIG_PATH=.env.prod node --import dotenv/config --import tsx scripts/check_upstream_schedules.ts
+DOTENV_CONFIG_PATH=.env.prod node --import dotenv/config --import tsx scripts/check_revenue_enablement_truth.ts
 ```
 
 Success criteria:

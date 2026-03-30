@@ -48,16 +48,14 @@ pnpm worker:engine:prod
 ```
 
 - `pnpm worker:jobs`: generic BullMQ jobs consumer; consumes queued jobs such as `supplier-discover`.
-- `pnpm worker:engine:dev`: engine/runtime worker boot path with `.env.local`; not the generic queue consumer.
-- `pnpm worker:engine:prod`: same engine/runtime worker boot path with `.env.vercel`; not the generic queue consumer.
+- `pnpm worker:engine:dev`: engine/runtime worker boot path after `pnpm env:dev`; not the generic queue consumer.
+- `pnpm worker:engine:prod`: same engine/runtime boot path after `ALLOW_PROD_ENV_SWITCH=true pnpm env:prod`; not the generic queue consumer.
 
 Canonical upstream runtime truth for dashboard/control is:
 - queue: `JOBS_QUEUE_NAME` with namespace `BULL_PREFIX`
 - consumer: `src/workers/jobs.worker.ts`
 - durable run evidence: `worker_runs` (worker = `jobs.worker`)
 - queued-job evidence: `jobs` ledger
-
-`pnpm worker:engine` is an alias for `pnpm worker:engine:dev`.
 
 ## Which worker should I run?
 
@@ -149,7 +147,7 @@ vercel link
 ## Safe rerun order
 
 1. `pnpm preflight:runtime-deps:dev` (or `:prod` if intentionally targeting production env file)
-2. `pnpm worker:jobs` (for queued job consumption)
+2. `pnpm worker:jobs` (for queued job consumption under the current active runtime env)
 3. `pnpm worker:engine:dev` (or `:prod`) for engine/runtime boot-path validation
 4. order-specific checks
 

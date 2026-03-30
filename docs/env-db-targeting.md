@@ -7,7 +7,7 @@
 - `.env` is the generated active env file used by default local tooling.
 - `.env.local` is kept in sync as a generated compatibility mirror for Next.js, which loads it ahead of `.env`.
 - `.env.active.json` records which source file generated `.env`.
-- `.env.vercel` and `codex*.private` files are not part of the canonical runtime path and should not be relied on for normal local operations.
+- `.env.vercel`, `codex*.private`, and `railway_worker.env` are compatibility/export surfaces and should not be relied on for normal local operations.
 
 Default resolution order:
 

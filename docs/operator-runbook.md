@@ -19,10 +19,21 @@ The runbook assumes operators may have zero technical experience. Procedures mus
 
 When operators run workers from the terminal, use this command mapping:
 - `pnpm worker:jobs`: generic BullMQ queue consumer (including queued `supplier-discover` jobs).
-- `pnpm worker:engine:dev`: engine/runtime boot path using `.env.local`; not the generic queue consumer.
-- `pnpm worker:engine:prod`: same engine/runtime boot path using `.env.vercel`; not the generic queue consumer.
+- `pnpm worker:engine:dev`: engine/runtime boot path after `pnpm env:dev`; not the generic queue consumer.
+- `pnpm worker:engine:prod`: engine/runtime boot path after `ALLOW_PROD_ENV_SWITCH=true pnpm env:prod`; not the generic queue consumer.
 
 If your goal is to consume queued jobs, run `pnpm worker:jobs`.
+
+## Canonical command model
+
+- Daily operation: `pnpm ops:full-cycle`
+- Scoped backbone phases: `pnpm ops:autonomous diagnostics_refresh|prepare|publish`
+- Learning refresh: `pnpm ops:learning-refresh`
+- Supplier wave / discovery rebuild: `pnpm ops:supplier-wave`
+- Runtime diagnostics: `pnpm runtime:diag`
+- Live integrity diagnostics: `pnpm check:live-integrity`
+
+Do not run direct prepare/promote/publish scripts manually for routine operation.
 
 ## Section 1 — Daily Operating Flow
 

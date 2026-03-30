@@ -17,11 +17,9 @@
     "lint": "eslint .",
     "test": "node --import tsx --test src/lib/**/__tests__/*.test.ts",
     "test:listings": "node --import tsx --test src/lib/listings/__tests__/*.test.ts",
-    "worker:engine": "pnpm worker:engine:dev",
     "worker:engine:dev": "pnpm env:dev && NODE_OPTIONS=--no-deprecation node --import tsx scripts/run_worker_engine_with_preflight.ts",
     "worker:engine:prod": "ALLOW_PROD_ENV_SWITCH=true pnpm env:prod && NODE_OPTIONS=--no-deprecation node --import tsx scripts/run_worker_engine_with_preflight.ts",
     "worker:jobs": "NODE_OPTIONS=--no-deprecation node --import tsx src/workers/jobs.worker.ts",
-    "worker:jobs:prod": "NODE_OPTIONS=--no-deprecation node --import tsx src/workers/jobs.worker.ts",
     "trend:expand:test": "node --import tsx scripts/test_trend_expand.mjs",
     "product:discover:test": "node --import tsx scripts/test_product_discover.mjs",
     "query:allocate:test": "node --import tsx scripts/test_query_budget_allocator.mjs",
@@ -36,9 +34,8 @@
     "check:live-integrity": "node --import tsx scripts/check_live_state_integrity.ts",
     "ops:autonomous": "node --import tsx scripts/run_autonomous_operations.ts",
     "ops:full-cycle": "node --import tsx scripts/run_full_cycle.ts",
+    "ops:learning-refresh": "node --import tsx scripts/run_learning_refresh.ts",
     "ops:supplier-wave": "node --import tsx scripts/run_supplier_wave_regeneration.ts",
-    "worker:jobs:run": "pnpm worker:jobs",
-    "supplier:discover:run": "pnpm enqueue:supplier-discover",
     "verify:profit-pipeline": "node --import tsx scripts/verify_profit_pipeline.ts",
     "preflight:runtime-deps": "pnpm preflight:runtime-deps:dev",
     "preflight:runtime-deps:dev": "pnpm env:dev && node --import tsx scripts/preflight_runtime_dependencies.ts",
@@ -58,8 +55,7 @@
     "check:schema-drift": "node --import tsx scripts/check_schema_drift.ts",
     "enqueue:listing-optimize": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/enqueue_listing_optimize.ts",
     "worker:railway-env:build": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/build_railway_worker_env.ts",
-    "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts",
-    "resolve:shipping-orphan": "node --import tsx scripts/run_shipping_orphan_resolution.ts"
+    "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts"
   },
   "dependencies": {
     "bullmq": "^5.70.2",

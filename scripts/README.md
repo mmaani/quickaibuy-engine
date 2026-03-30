@@ -1,148 +1,104 @@
-# QuickAIBuy Scripts Governance (v1)
+# QuickAIBuy Operational Script Surface
 
-This index defines the canonical script model for operational safety.
+This folder is no longer the operator-facing command surface by default. Human operators should start from `package.json` commands and `/admin/control`, then drop into `scripts/` only for diagnostics or explicitly documented engineering repair work.
 
-## Prefix contract
+## Canonical operator commands
 
-- `check_*` → read-only diagnostics (prod-safe: usually **yes**)
-- `enqueue_*` → queue mutation (prod-safe: **guarded**)
-- `run_*` → runtime/worker execution wrappers (prod-safe: **guarded**)
-- `mutate_*` → explicit DB/repo state mutation (prod-safe: **no**, guarded)
-- `debug_*` / `inspect_*` → ad hoc diagnostics (prod-safe: **operator discretion**)
-
-## Mandatory preflight for high-risk scripts
-
-High-risk mutate/migrate scripts require:
-
-- `ALLOW_MUTATION_SCRIPTS=true`
-- if DB target is `PROD`, also `ALLOW_PROD_DB_MUTATION=true`
-- if DB target is `PROD`, also `CONFIRM_PROD_DB_TARGET=YES`
-
-Shared shell guard helper: `scripts/lib/preflightMutation.sh`.
-
-## Active env and DB targeting
-
-- `.env.dev` → development/local snapshot
-- `.env.prod` → production-aligned snapshot
-- `.env` → generated active env file
-- `.env.local` → generated compatibility mirror for Next.js/local tooling that still auto-loads `.env.local`
-- `.env.vercel` / `codex*.private` → non-canonical secret/export surfaces; do not treat them as the normal local runtime source
-- `pnpm env:dev` / `pnpm env:prod` / `pnpm env:status`
-- `pnpm runtime:diag`
-- `pnpm db:status` / `pnpm db:assert-dev` / `pnpm db:assert-prod`
-
-See [docs/env-db-targeting.md](/workspaces/quickaibuy-engine/docs/env-db-targeting.md).
-
-## Canonical operating mode on `main`
-
-- `main` is the operating branch.
-- Branch choice does not override runtime target; active runtime still comes from `.env` and DB target classification.
-- Daily operation uses one canonical command: `pnpm ops:full-cycle`.
-- `pnpm ops:autonomous` remains the lower-level backbone phase runner, not the daily operator command.
-
-## Canonical command map
-
-| Intent | Canonical command | Risk | Prod-safe | Owner thread |
-|---|---|---:|---|---|
-| Run the canonical daily operating cycle | `pnpm ops:full-cycle` | HIGH | Guarded | Production Operating Mode + Canonical Full-Cycle Launcher |
-| Run the backbone phase runner directly | `pnpm ops:autonomous [full\|diagnostics_refresh\|prepare\|publish]` | HIGH | Guarded | Autonomous Operations Backbone |
-| Run runtime diagnostics | `pnpm runtime:diag` | MED | Yes | Platform Setup / Infrastructure |
-| Run live integrity diagnostics | `pnpm check:live-integrity` | MED | Yes | Platform Setup / Infrastructure |
-| Execute one SQL migration file | `node scripts/mutate_execute_sql_file.mjs migrations/<file>.sql` | HIGH | No (guarded) | Platform Setup / Infrastructure |
-| Run trend-candidates migration | `bash scripts/run_trend_candidates_migration.sh` | HIGH | No (guarded) | Platform Setup / Infrastructure |
-| Run matches migration | `bash scripts/run_matches_migration.sh` | HIGH | No (guarded) | Platform Setup / Infrastructure |
-| Run controlled listing gate migration | `bash scripts/run_controlled_listing_gate_migration.sh` | HIGH | No (guarded) | Platform Setup / Infrastructure |
-| Mark stale `PUBLISH_IN_PROGRESS` listings as failed | `pnpm exec tsx scripts/mutate_listings_mark_stale_publish_failed.ts` | HIGH | No (guarded) | Platform Setup / Infrastructure |
-| Enqueue inventory risk scan | `pnpm exec tsx scripts/enqueue_inventory_risk_scan.ts` | HIGH | Guarded | Platform Setup / Infrastructure |
-| Enqueue listing prepare | `pnpm exec tsx scripts/enqueue_listing_prepare.ts` | HIGH | Guarded | Platform Setup / Infrastructure |
-| Enqueue listing optimize | `pnpm enqueue:listing-optimize` | HIGH | Guarded | Railway Deployment for jobs.worker |
-| Queue namespace diagnostics | `pnpm exec tsx scripts/queue_namespace_diagnostics.ts` | MED | Yes | Platform Setup / Infrastructure |
-| Inventory-risk schedule check | `pnpm exec tsx scripts/check_inventory_risk_schedule.ts` | MED | Yes | Platform Setup / Infrastructure |
-| Worker runtime dependency preflight | `pnpm preflight:worker-runtime` | MED | Yes | Railway Deployment for jobs.worker |
-| Canonical runtime/env diagnostics | `pnpm runtime:diag` | MED | Yes | Platform Setup / Infrastructure |
-| Live listing integrity check | `pnpm check:live-integrity` | MED | Yes | Platform Setup / Infrastructure |
-| Runtime dashboard checks | `bash scripts/check_monitoring_dashboard_v1.sh` | MED | Yes | Platform Setup / Infrastructure |
-
-## Renamed high-risk scripts
-
-These ambiguous scripts were renamed to explicit-risk names:
-
-- `scripts/push_pipeline_to_main.sh` → `scripts/mutate_git_push_pipeline_to_main.sh`
-- `scripts/run_sql_file.mjs` → `scripts/mutate_execute_sql_file.mjs`
-- `scripts/cleanup_stale_publish_in_progress.ts` → `scripts/mutate_listings_mark_stale_publish_failed.ts`
-
-## Dangerous scripts (do not run casually)
-
-- `scripts/mutate_git_push_pipeline_to_main.sh`
-  - stages all files, commits, and pushes to `main`
-  - requires `ALLOW_MUTATION_SCRIPTS=true` and `CONFIRM_PUSH_MAIN=YES`
-- `scripts/mutate_execute_sql_file.mjs`
-  - runs arbitrary SQL against configured DB
-- `scripts/run_*migration*.sh`
-  - executes schema/data migrations
-
-## Deprecation policy
-
-- New scripts must use a governance prefix above.
-- Do not add `_v2`, `_v3`, `_latest` variants without explicit deprecation plan and canonical replacement entry in this README.
-- Prefer one canonical script per operational intent.
-
-## Current deprecation candidates
-
-- `scripts/workers/delete_orphan_listing_previews.mjs`
-  - destructive orphan cleanup bypasses shared listing integrity helpers
-- `scripts/recover_first_listing_candidate.ts`
-  - mixed `.env.local`/`.env.vercel` fallback behavior is outside the active env model
-- `scripts/run_marketplace_scan_monitoring_latest.ts`
-  - versioned duplicate of the canonical monitoring command
-- `scripts/enqueue_listing_prepare.ts`
-  - routine listing progression is now owned by `pnpm ops:autonomous`
-- `scripts/enqueue_listing_prepare_approved.ts`
-  - prepare-only behavior is superseded by the autonomous prepare phase
-- `scripts/promote_listing_previews_ready.ts`
-  - ready-promotion is now part of the autonomous prepare cycle
-- `scripts/publish_one_ready_listing.ts`
-  - one-off publish is not the canonical control-plane path
-- `scripts/run_shipping_orphan_resolution.ts`
-  - shipping recovery now lives in shared automation helpers plus the autonomous backbone
-
-## Removed in favor of Learning Hub canonical writers
-
-- `scripts/backfill_shipping_intelligence.ts`
-  - replaced by canonical shipping evidence writes in pipeline stages plus Learning Hub feedback aggregation
-- `scripts/backfill_supplier_snapshot_quality.ts`
-  - replaced by canonical supplier evidence writes and parser quality features
-- `scripts/check_supplier_quality_metrics.ts`
-  - replaced by Learning Hub scorecards in the control plane
-- `scripts/check_match_quality.ts`
-  - replaced by Learning Hub match evidence + scorecard surfacing
-
-## Sensitive-file operating policy
-
-- Canonical: `.env`, `.env.active.json`, `.env.dev`, `.env.prod`
-- Compatibility-only: `.env.local`
-- Should not be present in normal working exports: `.env.vercel`, `codex*.private`
-- `pnpm runtime:diag` is the authoritative operator view for this classification.
-
-
-## Phase 2 canonicalization (duplicate wrappers and versioned variants)
-
-The following scripts are kept for one transition phase as **deprecated warning wrappers** to avoid breaking existing operational flows.
-
-| Canonical command | Deprecated command | Replacement path |
+| Intent | Canonical command | Notes |
 |---|---|---|
-| `pnpm ops:autonomous` | `pnpm exec tsx scripts/enqueue_listing_prepare.ts`, `pnpm exec tsx scripts/enqueue_listing_prepare_approved.ts`, `pnpm exec tsx scripts/promote_listing_previews_ready.ts`, `pnpm exec tsx scripts/publish_one_ready_listing.ts`, `pnpm exec tsx scripts/run_shipping_orphan_resolution.ts` | Use the canonical autonomous backbone for routine diagnostics, healing, refresh, prepare, shipping recovery, and guarded publish flow. |
-| `node scripts/check_audit_log.mjs` | `bash scripts/run_check_audit_log.sh` | Run canonical command directly. |
-| `node scripts/check_marketplace_price_urls.mjs` | `bash scripts/run_check_marketplace_price_urls.sh` | Run canonical command directly. |
-| `node --import dotenv/config scripts/check_marketplace_prices.mjs` | `bash scripts/run_check_marketplace_prices.sh` | Run canonical command directly. |
-| `node scripts/check_match_duplicates.mjs` | `bash scripts/run_check_match_duplicates.sh` | Run canonical command directly. |
-| `node scripts/check_matches.mjs` | `bash scripts/run_check_matches.sh`, `node scripts/check_matches_latest.mjs` | Use `check_matches.mjs` for canonical match diagnostics. |
-| `node scripts/check_profit_duplicates.mjs` | `bash scripts/run_check_profit_duplicates.sh` | Run canonical command directly. |
-| `node scripts/check_profitable_candidates.mjs` | `bash scripts/run_check_profitable_candidates.sh`, `node scripts/workers/check_profitable_candidates_latest.mjs` | Use top-level profitable candidate diagnostic. |
-| `node scripts/check_trend_candidates.mjs` | `bash scripts/run_check_trend_candidates.sh` | Run canonical command directly. |
-| `node scripts/check_trend_candidates_for_signal.mjs <trendSignalId>` | `bash scripts/run_check_trend_candidates_for_signal.sh <trendSignalId>` | Run canonical command directly. |
-| `node scripts/check_trend_signals.mjs` | `bash scripts/run_check_trend_signals.sh` | Run canonical command directly. |
-| `bash scripts/run_controlled_listing_gate_migration.sh` | `bash scripts/run_controlled_listing_gate_migration_v2.sh`, `bash scripts/run_controlled_listing_gate_migration_v3.sh` | Use canonical migration wrapper; `v2` wrapper temporarily runs legacy normalization + canonical migration. |
-| `pnpm exec tsx scripts/run_marketplace_scan_monitoring.ts` | `pnpm exec tsx scripts/run_marketplace_scan_monitoring_latest.ts` | Use non-versioned monitoring command. |
-| `node scripts/check_listing_previews_ready_source.mjs` | `node scripts/workers/check_listing_previews_latest.mjs` | Use listing preview readiness source diagnostic. |
-README is fine
+| Daily operation | `pnpm ops:full-cycle` | Primary production operating command. |
+| Backbone phase run | `pnpm ops:autonomous [full\|diagnostics_refresh\|prepare\|publish]` | Lower-level canonical phase runner. |
+| Learning refresh | `pnpm ops:learning-refresh` | Canonical Learning Hub refresh. |
+| Supplier wave refresh | `pnpm ops:supplier-wave` | Canonical supplier discovery plus rebuild wave. |
+| Runtime diagnostics | `pnpm runtime:diag` | Canonical env/runtime classification. |
+| Live integrity diagnostics | `pnpm check:live-integrity` | Canonical listing/integrity scan. |
+| Worker start | `pnpm worker:jobs` | Canonical BullMQ consumer. |
+| Engine boot-path check | `pnpm worker:engine:dev` / `pnpm worker:engine:prod` | For runtime boot-path verification, not daily operation. |
+
+## Production-safe command boundary
+
+- Operators should not run `scripts/run_*_direct*`, `scripts/publish_*`, `scripts/promote_*`, or ad hoc `enqueue_*` entrypoints manually unless the command is explicitly documented as canonical above.
+- `pnpm ops:full-cycle` is the default human command.
+- `/admin/control` quick actions are aligned to the same shared runtime/library functions that back canonical CLI commands.
+
+## Classification model
+
+### Canonical operational commands
+
+- `scripts/run_full_cycle.ts`
+- `scripts/run_autonomous_operations.ts`
+- `scripts/run_learning_refresh.ts`
+- `scripts/run_supplier_wave_regeneration.ts`
+- `scripts/runtime_diagnostics.ts`
+- `scripts/check_live_state_integrity.ts`
+- `src/workers/jobs.worker.ts`
+- `scripts/run_worker_engine_with_preflight.ts`
+
+### Canonical diagnostics
+
+- `scripts/probe_runtime.ts`
+- `scripts/check_inventory_risk_schedule.ts`
+- `scripts/check_upstream_schedules.ts`
+- `scripts/check_worker_run_truth.ts`
+- `scripts/check_runtime_db_fingerprint.mjs`
+- `scripts/queue_namespace_diagnostics.ts`
+- `scripts/check_schema_drift.ts`
+- `scripts/check_migration_ledger.ts`
+
+### Canonical mutation and repair
+
+- `scripts/mutate_execute_sql_file.mjs`
+- `scripts/run_controlled_listing_gate_migration.sh`
+- `scripts/mutate_listings_mark_stale_publish_failed.ts`
+
+### Retained low-level engineering utilities
+
+- `scripts/run_shipping_orphan_resolution.ts`
+- `scripts/enqueue_listing_prepare.ts`
+- `scripts/enqueue_supplier_discover.ts`
+- `scripts/enqueue_inventory_risk_scan.ts`
+- `scripts/enqueue_profit_eval.ts`
+- `scripts/enqueue_listing_optimize.ts`
+- `scripts/approve_profitable_candidate.ts`
+- `scripts/reject_profitable_candidate.ts`
+- `scripts/promote_single_listing_ready.ts`
+- `scripts/run_single_listing_publish.ts`
+- `scripts/run_first_guarded_live_publish.ts`
+- `scripts/run_listing_execution_direct.ts`
+- `scripts/run_marketplace_scan_direct.ts`
+- `scripts/run_product_matcher_direct.ts`
+- `scripts/run_profit_engine_direct.ts`
+
+These remain for engineering or incident-response work only. They are not daily-operation commands.
+
+### Deprecated legacy paths still present
+
+- `scripts/enqueue_listing_prepare.ts`
+  Uses hardcoded `.env.local` loading and duplicates canonical `pnpm ops:autonomous prepare`.
+- `scripts/run_listing_prepare_direct.ts`
+- `scripts/run_listing_prepare_direct.sh`
+- `scripts/run_listing_monitor_direct.ts`
+
+These should not gain new callers.
+
+## Sensitive env surface
+
+- Canonical runtime files: `.env`, `.env.active.json`, `.env.dev`, `.env.prod`
+- Compatibility-only: `.env.local`
+- Sensitive compatibility/export surfaces: `.env.vercel`, `codex*.private`, `railway_worker.env`
+
+Use:
+
+- `pnpm env:dev`
+- `ALLOW_PROD_ENV_SWITCH=true pnpm env:prod`
+- `pnpm env:status`
+- `pnpm db:status`
+- `pnpm runtime:diag`
+
+## Retirement policy
+
+- Deleted duplicate warning wrappers and versioned aliases must not be recreated.
+- New operational entrypoints must land behind an existing canonical package command unless there is a documented reason they are engineering-only.
+- Do not add `_latest`, `_v2`, `_v3`, or duplicate shell wrappers around existing Node/TS scripts.
+
+See [operational-surface.md](/workspaces/quickaibuy-engine/docs/system/automation/operational-surface.md) for the full inventory and command model.

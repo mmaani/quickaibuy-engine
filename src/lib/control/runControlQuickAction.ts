@@ -1,5 +1,6 @@
 import { writeAuditLog } from "@/lib/audit/writeAuditLog";
 import { enqueueInventoryRiskScan } from "@/lib/jobs/enqueueInventoryRiskScan";
+import { runContinuousLearningRefresh } from "@/lib/learningHub/continuousLearning";
 import { syncEbayOrders } from "@/lib/orders/syncEbayOrders";
 import { runAutonomousOperations } from "@/lib/autonomousOps/backbone";
 import { runCanonicalFullCycle } from "@/lib/autonomousOps/fullCycle";
@@ -27,6 +28,15 @@ export async function runControlQuickAction(action: string, actorId: string): Pr
       actorType: "ADMIN",
     });
     message = `Canonical full cycle completed via pnpm ops:full-cycle. ok=${result.ok}. pauses=${result.pauses.length}, ready_to_publish=${result.summary.pipeline.readyToPublish}.`;
+  } else if (action === "learning-refresh") {
+    const result = await runContinuousLearningRefresh({
+      trigger: `admin_control:${actorId}`,
+      forceFull: true,
+    });
+    const totalDomains = result.freshness.domains.length;
+    const freshDomains =
+      totalDomains - result.freshness.staleDomainCount - result.freshness.warningDomainCount;
+    message = `Learning refresh completed via pnpm ops:learning-refresh. ok=${result.ok}. freshness=${freshDomains}/${totalDomains} fresh.`;
   } else if (action === "order-sync") {
     const result = await syncEbayOrders({
       limit: Number(process.env.ORDER_SYNC_FETCH_LIMIT ?? 50),

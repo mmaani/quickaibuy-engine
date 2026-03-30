@@ -12,7 +12,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "pnpm preflight:worker-runtime && pnpm worker:jobs:prod",
+    "startCommand": "pnpm preflight:worker-runtime && pnpm worker:jobs",
     "restartPolicyType": "ALWAYS",
     "restartPolicyMaxRetries": 10
   }

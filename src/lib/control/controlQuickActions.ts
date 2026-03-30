@@ -4,6 +4,7 @@ export const CONTROL_QUICK_ACTIONS = [
   { key: "autonomous-refresh", label: "Run autonomous diagnostics + refresh" },
   { key: "autonomous-prepare", label: "Run autonomous prepare cycle" },
   { key: "autonomous-full", label: "Run canonical full cycle" },
+  { key: "learning-refresh", label: "Run learning refresh" },
   { key: "order-sync", label: "Run eBay order sync" },
   { key: "inventory-risk-scan", label: "Run inventory risk scan" },
 ] as const;

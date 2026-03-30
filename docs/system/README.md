@@ -10,6 +10,9 @@ Use these docs as retrieval-safe references aligned to implemented code paths.
 - The canonical runtime is the active `.env` file plus DB target classification.
 - The canonical daily operator command is `pnpm ops:full-cycle`.
 - Manual human work remains supplier purchase/payment and exceptional investigations only.
+- The operational command model and script classification live in:
+  - `docs/system/automation/operational-surface.md`
+  - `scripts/README.md`
 - Continuous learning is documented in:
   - `docs/system/learning-hub/continuous-learning.md`
   - `docs/system/learning-hub/freshness-and-update-policy.md`
