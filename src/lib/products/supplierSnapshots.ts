@@ -161,12 +161,13 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     actionableSnapshot: enrichment.actionableSnapshot,
     supplierRowDecision: enrichment.supplierRowDecision,
   });
+  const sanitizedRawPayloadRecord = sanitizedRawPayload as Record<string, unknown>;
   const canonicalMedia =
-    typeof sanitizedRawPayload.media === "object" &&
-    sanitizedRawPayload.media &&
-    !Array.isArray(sanitizedRawPayload.media)
+    typeof sanitizedRawPayloadRecord.media === "object" &&
+    sanitizedRawPayloadRecord.media &&
+    !Array.isArray(sanitizedRawPayloadRecord.media)
       ? {
-          ...(sanitizedRawPayload.media as Record<string, unknown>),
+          ...(sanitizedRawPayloadRecord.media as Record<string, unknown>),
           images: enrichedImages,
           imageCount: enrichment.imageGalleryCount,
           videoUrls: canonicalVideoUrls,
