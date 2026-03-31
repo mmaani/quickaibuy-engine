@@ -777,10 +777,16 @@ export async function runProfitEngine(input?: {
             : null,
           videoUrls: Array.isArray(supplierRawPayload.videoUrls)
             ? (supplierRawPayload.videoUrls as unknown[]).slice(0, 12)
+            : Array.isArray(supplierRawPayload.videos)
+              ? (supplierRawPayload.videos as unknown[]).slice(0, 12)
             : null,
           videoCount:
             supplierRawPayload.videoCount ??
-            (Array.isArray(supplierRawPayload.videoUrls) ? supplierRawPayload.videoUrls.length : null),
+            (Array.isArray(supplierRawPayload.videoUrls)
+              ? supplierRawPayload.videoUrls.length
+              : Array.isArray(supplierRawPayload.videos)
+                ? supplierRawPayload.videos.length
+                : null),
           mediaQualityScore: supplierRawPayload.mediaQualityScore ?? null,
           media:
             supplierRawPayload.media && typeof supplierRawPayload.media === "object" && !Array.isArray(supplierRawPayload.media)
@@ -790,11 +796,16 @@ export async function runProfitEngine(input?: {
                   imageCount: supplierImages.length || null,
                   videoCount:
                     supplierRawPayload.videoCount ??
-                    (Array.isArray(supplierRawPayload.videoUrls) ? supplierRawPayload.videoUrls.length : null),
+                    (Array.isArray(supplierRawPayload.videoUrls)
+                      ? supplierRawPayload.videoUrls.length
+                      : Array.isArray(supplierRawPayload.videos)
+                        ? supplierRawPayload.videos.length
+                        : null),
                   present:
                     supplierImages.length > 0 ||
                     Boolean(
-                      Array.isArray(supplierRawPayload.videoUrls) && supplierRawPayload.videoUrls.length > 0
+                      (Array.isArray(supplierRawPayload.videoUrls) && supplierRawPayload.videoUrls.length > 0) ||
+                        (Array.isArray(supplierRawPayload.videos) && supplierRawPayload.videos.length > 0)
                     ),
                 },
         }

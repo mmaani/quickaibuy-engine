@@ -664,7 +664,16 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     supplierImages.length;
   const supplierVideoCount =
     asFiniteNumber(supplierPayload?.videoCount) ??
-    asFiniteNumber(supplierMediaNode?.videoCount);
+    asFiniteNumber(supplierMediaNode?.videoCount) ??
+    (Array.isArray(supplierPayload?.videoUrls)
+      ? supplierPayload.videoUrls.length
+      : Array.isArray(supplierPayload?.videos)
+        ? supplierPayload.videos.length
+        : Array.isArray(supplierMediaNode?.videoUrls)
+          ? (supplierMediaNode.videoUrls as unknown[]).length
+          : Array.isArray(supplierMediaNode?.videos)
+            ? (supplierMediaNode.videos as unknown[]).length
+            : null);
   const supplierMediaPresent =
     extractImageUrl(supplierImages, supplierPayload) != null ||
     supplierImageCount > 0 ||

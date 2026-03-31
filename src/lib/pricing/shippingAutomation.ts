@@ -143,7 +143,9 @@ function summarizeMediaEvidence(rawPayload: unknown): {
     asFiniteNumber(media?.videoCount) ??
     Math.max(
       Array.isArray(payload.videoUrls) ? payload.videoUrls.length : 0,
-      Array.isArray(media?.videoUrls) ? (media?.videoUrls as unknown[]).length : 0
+      Array.isArray(payload.videos) ? payload.videos.length : 0,
+      Array.isArray(media?.videoUrls) ? (media?.videoUrls as unknown[]).length : 0,
+      Array.isArray(media?.videos) ? (media?.videos as unknown[]).length : 0
     );
   return {
     mediaPresent: imageCount > 0 || videoCount > 0,

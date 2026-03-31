@@ -5,7 +5,7 @@ import {
   normalizeAvailabilityConfidence,
   normalizeAvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
-import { buildSupplierEnrichment } from "@/lib/products/supplierEnrichment";
+import { buildSupplierEnrichment, gatherVideoUrlsFromPayload } from "@/lib/products/supplierEnrichment";
 import { resolveSupplierQualityPayload } from "@/lib/products/supplierQuality";
 
 function normalizeSupplierKey(value: string | null | undefined): string {
@@ -107,6 +107,7 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     shippingEstimates: persistedShippingEstimates,
     telemetrySignals: product.telemetrySignals,
   });
+  const canonicalVideoUrls = gatherVideoUrlsFromPayload(product.raw ?? {});
   const sanitizedRawPayload = sanitizeForMediaStorageMode({
     ...product.raw,
     jobType: "supplier:discover",
@@ -131,6 +132,8 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     primaryImageUrl: enrichment.primaryImageUrl,
     normalizedImageUrls: enrichment.normalizedImageUrls,
     imageGalleryCount: enrichment.imageGalleryCount,
+    videoUrls: canonicalVideoUrls,
+    videoCount: canonicalVideoUrls.length,
     cleanedTitle: enrichment.cleanedTitle,
     titleCompleteness: enrichment.titleCompleteness,
     mediaQualityScore: enrichment.mediaQualityScore,
@@ -158,6 +161,27 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     actionableSnapshot: enrichment.actionableSnapshot,
     supplierRowDecision: enrichment.supplierRowDecision,
   });
+  const canonicalMedia =
+    typeof sanitizedRawPayload.media === "object" &&
+    sanitizedRawPayload.media &&
+    !Array.isArray(sanitizedRawPayload.media)
+      ? {
+          ...(sanitizedRawPayload.media as Record<string, unknown>),
+          images: enrichedImages,
+          imageCount: enrichment.imageGalleryCount,
+          videoUrls: canonicalVideoUrls,
+          videoCount: canonicalVideoUrls.length,
+          present: enrichedImages.length > 0 || canonicalVideoUrls.length > 0,
+          qualityScore: enrichment.mediaQualityScore,
+        }
+      : {
+          images: enrichedImages,
+          imageCount: enrichment.imageGalleryCount,
+          videoUrls: canonicalVideoUrls,
+          videoCount: canonicalVideoUrls.length,
+          present: enrichedImages.length > 0 || canonicalVideoUrls.length > 0,
+          qualityScore: enrichment.mediaQualityScore,
+        };
   const resolvedSnapshotQuality =
     product.snapshotQuality === "HIGH" ||
     quality.snapshotQuality === "HIGH"
@@ -182,6 +206,9 @@ export function supplierProductToRawInsert(product: SupplierProduct): InsertRawP
     shippingEstimates: persistedShippingEstimates,
     rawPayload: {
       ...sanitizedRawPayload,
+      videoUrls: canonicalVideoUrls,
+      videoCount: canonicalVideoUrls.length,
+      media: canonicalMedia,
       snapshotQuality: resolvedSnapshotQuality,
     },
     snapshotTs,

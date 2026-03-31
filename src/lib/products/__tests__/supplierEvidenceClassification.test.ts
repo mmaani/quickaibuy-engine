@@ -142,6 +142,24 @@ test("nested media arrays count as canonical media evidence", () => {
   assert.equal(result.codes.includes("MEDIA_MISSING"), false);
 });
 
+test("legacy CJ videos field counts as media evidence", () => {
+  const result = classifySupplierEvidence({
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.91,
+    shippingEstimates: [{ label: "CJ warehouse delivery", etaMinDays: 2, etaMaxDays: 6 }],
+    shippingConfidence: 0.86,
+    sourceQuality: "HIGH",
+    rawPayload: {
+      shippingSignal: "DIRECT",
+      actionableSnapshot: true,
+      videos: ["https://cdn.example.com/demo.mp4"],
+    },
+    telemetrySignals: ["parsed"],
+  });
+
+  assert.equal(result.codes.includes("MEDIA_MISSING"), false);
+});
+
 
 test("parser extracts ship-from and destination-aware shipping evidence", () => {
   const shipping = extractShippingEvidence(

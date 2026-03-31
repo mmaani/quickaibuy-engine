@@ -101,11 +101,29 @@ function normalizeImageUrl(url: string): string | null {
   return normalized;
 }
 
+function normalizeVideoUrl(url: string): string | null {
+  const normalized = String(url ?? "").trim().replace(/^http:\/\//i, "https://");
+  if (!/^https?:\/\//i.test(normalized)) return null;
+  return normalized;
+}
+
 function dedupeImages(images: string[]): string[] {
   const seen = new Set<string>();
   const normalized: string[] = [];
   for (const image of images) {
     const value = normalizeImageUrl(image);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    normalized.push(value);
+  }
+  return normalized;
+}
+
+function dedupeVideos(videos: string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const video of videos) {
+    const value = normalizeVideoUrl(video);
     if (!value || seen.has(value)) continue;
     seen.add(value);
     normalized.push(value);
@@ -149,6 +167,43 @@ function gatherImagesFromPayload(rawPayload: Record<string, unknown>): string[] 
   return dedupeImages(discovered);
 }
 
+export function gatherVideoUrlsFromPayload(rawPayload: Record<string, unknown>): string[] {
+  const discovered: string[] = [];
+  const preferredRoots = [
+    rawPayload.video,
+    rawPayload.videoUrl,
+    rawPayload.goodsVideo,
+    rawPayload.productVideo,
+    rawPayload.videoUrls,
+    rawPayload.videos,
+    rawPayload.videoUrlList,
+    nestedRecord(rawPayload.media)?.video,
+    nestedRecord(rawPayload.media)?.videoUrl,
+    nestedRecord(rawPayload.media)?.videoUrls,
+    nestedRecord(rawPayload.media)?.videos,
+  ];
+  const walk = (value: unknown, path: string, depth = 0): void => {
+    if (depth > 5 || value == null) return;
+    if (typeof value === "string") {
+      if (/video|media/i.test(path)) discovered.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, idx) => walk(entry, `${path}[${idx}]`, depth + 1));
+      return;
+    }
+    const node = nestedRecord(value);
+    if (!node) return;
+    for (const [key, child] of Object.entries(node)) {
+      walk(child, path ? `${path}.${key}` : key, depth + 1);
+    }
+  };
+
+  preferredRoots.forEach((node, idx) => walk(node, `preferred_video_${idx}`));
+  walk(rawPayload, "raw_payload");
+  return dedupeVideos(discovered);
+}
+
 function imageResolutionHintScore(urls: string[]): number {
   if (!urls.length) return 0;
   let high = 0;
@@ -179,6 +234,7 @@ function computeTitleCompleteness(title: string | null): number {
 function computeMediaQualityScore(input: {
   imageCount: number;
   imageUrls: string[];
+  videoCount: number;
   titleCompleteness: number;
   actionableSnapshot: boolean;
   telemetrySignals: Set<string>;
@@ -191,6 +247,7 @@ function computeMediaQualityScore(input: {
   if (input.imageCount >= 1) score += 0.35;
   if (input.imageCount >= 3) score += 0.2;
   if (input.imageCount >= 5) score += 0.15;
+  if (input.videoCount >= 1) score += 0.12;
   score += imageResolutionHintScore(input.imageUrls) * 0.2;
   score += input.titleCompleteness * 0.2;
   if (input.actionableSnapshot) score += 0.1;
@@ -219,6 +276,25 @@ function deriveShippingDetails(
   shippingGuarantees: string | null;
 } {
   const shippingNode = nestedRecord(rawPayload.shipping);
+  const shippingOptions = Array.isArray(shippingNode?.options)
+    ? (shippingNode.options as Record<string, unknown>[])
+    : Array.isArray(shippingNode?.routes)
+      ? (shippingNode.routes as Record<string, unknown>[])
+      : [];
+  const structuredOption =
+    shippingOptions.find((option) => {
+      const record = nestedRecord(option);
+      if (!record) return false;
+      return (
+        asString(record.label) != null ||
+        asString(record.method) != null ||
+        asString(record.cost) != null ||
+        asPositiveNumber(record.etaMinDays) != null ||
+        asPositiveNumber(record.etaMaxDays) != null ||
+        normalizeShipFromCountry(record.shipFromCountry) != null ||
+        normalizeShipFromCountry(record.ship_from_country) != null
+      );
+    }) ?? null;
   const directConfidence = normalizeAvailabilityConfidence(rawPayload.shippingConfidence);
   const rawShippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
   const directMethod =
@@ -226,25 +302,46 @@ function deriveShippingDetails(
     asString(rawPayload.shippingBadge) ??
     asString(rawPayload.shippingEvidenceText) ??
     asString(shippingNode?.method) ??
-    asString(shippingNode?.summary);
-  const directPrice = asString(rawPayload.shippingPriceExplicit) ?? asString(shippingNode?.price);
-  const directCurrency = asString(rawPayload.shippingCurrency) ?? asString(shippingNode?.currency);
-  const directFree = asBoolean(rawPayload.freeShippingExplicit) ?? asBoolean(shippingNode?.freeShipping);
-  const directMin = asPositiveNumber(rawPayload.deliveryEstimateMinDays) ?? asPositiveNumber(shippingNode?.etaMinDays);
-  const directMax = asPositiveNumber(rawPayload.deliveryEstimateMaxDays) ?? asPositiveNumber(shippingNode?.etaMaxDays);
+    asString(shippingNode?.summary) ??
+    asString(structuredOption?.label) ??
+    asString(structuredOption?.method);
+  const directPrice =
+    asString(rawPayload.shippingPriceExplicit) ??
+    asString(shippingNode?.price) ??
+    asString(structuredOption?.cost);
+  const directCurrency =
+    asString(rawPayload.shippingCurrency) ??
+    asString(shippingNode?.currency) ??
+    asString(structuredOption?.currency);
+  const directFree =
+    asBoolean(rawPayload.freeShippingExplicit) ??
+    asBoolean(shippingNode?.freeShipping) ??
+    asBoolean(structuredOption?.freeShipping);
+  const directMin =
+    asPositiveNumber(rawPayload.deliveryEstimateMinDays) ??
+    asPositiveNumber(shippingNode?.etaMinDays) ??
+    asPositiveNumber(structuredOption?.etaMinDays);
+  const directMax =
+    asPositiveNumber(rawPayload.deliveryEstimateMaxDays) ??
+    asPositiveNumber(shippingNode?.etaMaxDays) ??
+    asPositiveNumber(structuredOption?.etaMaxDays);
   const directShipFromCountry =
     normalizeShipFromCountry(rawPayload.shipFromCountry) ??
     normalizeShipFromCountry(rawPayload.ship_from_country) ??
     normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
     normalizeShipFromCountry(rawPayload.supplier_warehouse_country) ??
     normalizeShipFromCountry(shippingNode?.shipFromCountry) ??
-    normalizeShipFromCountry(shippingNode?.ship_from_country);
+    normalizeShipFromCountry(shippingNode?.ship_from_country) ??
+    normalizeShipFromCountry(structuredOption?.shipFromCountry) ??
+    normalizeShipFromCountry(structuredOption?.ship_from_country);
   const directShipFromLocation =
     asString(rawPayload.shipFromLocation) ??
     asString(rawPayload.ship_from_location) ??
     asString(rawPayload.shipsFromHint) ??
     asString(shippingNode?.shipFromLocation) ??
-    asString(shippingNode?.ship_from_location);
+    asString(shippingNode?.ship_from_location) ??
+    asString(structuredOption?.shipFromLocation) ??
+    asString(structuredOption?.ship_from_location);
   const directSupplierWarehouseCountry =
     normalizeShipFromCountry(rawPayload.supplierWarehouseCountry) ??
     normalizeShipFromCountry(rawPayload.supplier_warehouse_country);
@@ -426,6 +523,7 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
   const telemetrySignals = new Set((input.telemetrySignals ?? []).map((value) => String(value).toLowerCase()));
   const cleanedTitle = sanitizeTitle(input.title);
   const payloadImages = gatherImagesFromPayload(rawPayload);
+  const payloadVideos = gatherVideoUrlsFromPayload(rawPayload);
   const normalizedImageUrls = dedupeImages([...(input.images ?? []), ...payloadImages]);
   const imageGalleryCount = normalizedImageUrls.length;
   const primaryImageUrl = normalizedImageUrls[0] ?? null;
@@ -440,6 +538,7 @@ export function buildSupplierEnrichment(input: SupplierEnrichmentInput): Supplie
   const mediaQualityScore = computeMediaQualityScore({
     imageCount: imageGalleryCount,
     imageUrls: normalizedImageUrls,
+    videoCount: payloadVideos.length,
     titleCompleteness,
     actionableSnapshot,
     telemetrySignals,

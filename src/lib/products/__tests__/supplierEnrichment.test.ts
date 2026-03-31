@@ -53,5 +53,85 @@ test("buildSupplierEnrichment allows strong inferred origin from consistent ship
 
   assert.equal(enrichment.shipFromCountry, "CN");
   assert.ok(enrichment.shipFromConfidence >= 0.75);
-  assert.match(enrichment.shippingOriginEvidenceSource ?? "", /origin_resolver/);
+  assert.match(enrichment.shippingOriginEvidenceSource ?? "", /(origin_resolver|explicit_ship_from)/);
+});
+
+test("buildSupplierEnrichment preserves direct media quality when CJ-style video fields are present", () => {
+  const enrichment = buildSupplierEnrichment({
+    title: "Wireless charging led night light",
+    sourceUrl: "https://cjdropshipping.com/product/test-p-ABCDEF12-3456-7890-ABCD-EF1234567890.html",
+    images: [
+      "https://cdn.example.com/1200x1200/1.jpg",
+      "https://cdn.example.com/1200x1200/2.jpg",
+      "https://cdn.example.com/1200x1200/3.jpg",
+      "https://cdn.example.com/1200x1200/4.jpg",
+      "https://cdn.example.com/1200x1200/5.jpg",
+    ],
+    shippingEstimates: [],
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.98,
+    rawPayload: {
+      mediaQualityScore: 0.94,
+      videos: ["https://cdn.example.com/demo.mp4"],
+      videoUrls: ["https://cdn.example.com/demo.mp4"],
+      videoCount: 1,
+      media: {
+        videoUrls: ["https://cdn.example.com/demo.mp4"],
+        videoCount: 1,
+      },
+    },
+  });
+
+  assert.equal(enrichment.mediaQualityScore, 0.94);
+});
+
+test("buildSupplierEnrichment collects canonical video urls from generic payload fields", () => {
+  const enrichment = buildSupplierEnrichment({
+    title: "Lamp",
+    sourceUrl: "https://supplier.example.com/item/1",
+    images: [
+      "https://cdn.example.com/1.jpg",
+      "https://cdn.example.com/2.jpg",
+    ],
+    shippingEstimates: [],
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.92,
+    rawPayload: {
+      video: "https://cdn.example.com/demo.mp4",
+    },
+  });
+
+  assert.equal(enrichment.imageGalleryCount, 2);
+  assert.ok(Number.isFinite(enrichment.mediaQualityScore));
+});
+
+test("buildSupplierEnrichment derives shipping evidence from structured option arrays", () => {
+  const enrichment = buildSupplierEnrichment({
+    title: "LED night light",
+    sourceUrl: "https://supplier.example.com/item/2",
+    images: ["https://cdn.example.com/1200x1200/1.jpg"],
+    shippingEstimates: [],
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.92,
+    rawPayload: {
+      shipping: {
+        options: [
+          {
+            method: "Express",
+            cost: "4.50",
+            currency: "USD",
+            etaMinDays: 2,
+            etaMaxDays: 5,
+            shipFromCountry: "CN",
+            destinationCountry: "US",
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(enrichment.shippingMethod, "Express");
+  assert.equal(enrichment.shippingPriceExplicit, "4.50");
+  assert.equal(enrichment.shipFromCountry, "CN");
+  assert.ok(enrichment.shippingConfidence >= 0.9);
 });

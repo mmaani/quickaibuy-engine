@@ -203,6 +203,15 @@ function normalizeVideoUrls(detail: CjProductDetailData): string[] {
   return Array.from(new Set(raw)).slice(0, 5);
 }
 
+function computeCjMediaQualityScore(imageCount: number, videoCount: number): number {
+  if (imageCount >= 5 && videoCount > 0) return 0.94;
+  if (imageCount >= 5) return 0.88;
+  if (imageCount >= 3 && videoCount > 0) return 0.86;
+  if (imageCount >= 3) return 0.78;
+  if (imageCount > 0 || videoCount > 0) return 0.64;
+  return 0.3;
+}
+
 function parseVariantValues(expandField: string | undefined): string[] {
   if (!expandField) return [];
   try {
@@ -433,6 +442,7 @@ function buildCjDetailShippingEvidence(
   signal: "PRESENT" | "PARTIAL" | "MISSING";
   evidenceText: string | null;
   shipFromCountry: string | null;
+  shippingConfidence: number;
 } {
   const rawEvidenceText = toNonEmptyString(detail.xiaoShouJianYi);
   if (!rawEvidenceText) {
@@ -441,6 +451,7 @@ function buildCjDetailShippingEvidence(
       signal: "MISSING",
       evidenceText: null,
       shipFromCountry: null,
+      shippingConfidence: 0.2,
     };
   }
   const evidenceText = stripHtmlToText(rawEvidenceText);
@@ -450,6 +461,7 @@ function buildCjDetailShippingEvidence(
       signal: "MISSING",
       evidenceText: null,
       shipFromCountry: null,
+      shippingConfidence: 0.2,
     };
   }
 
@@ -476,6 +488,7 @@ function buildCjDetailShippingEvidence(
       signal: "MISSING",
       evidenceText,
       shipFromCountry: null,
+      shippingConfidence: 0.25,
     };
   }
 
@@ -497,6 +510,14 @@ function buildCjDetailShippingEvidence(
     signal: deliveryRange || shippingFeeMatch ? "PRESENT" : "PARTIAL",
     evidenceText,
     shipFromCountry,
+    shippingConfidence:
+      deliveryRange && shippingFeeMatch
+        ? 0.9
+        : deliveryRange || shippingFeeMatch
+          ? 0.82
+          : shipFromCountry
+            ? 0.72
+            : 0.4,
   };
 }
 
@@ -758,6 +779,8 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
     toNonEmptyString(inventories[0]?.countryCode) ?? toNonEmptyString(inventories[0]?.countryNameEn);
   const shippingEvidence = buildCjDetailShippingEvidence(detail, warehouseCountry);
   const variantMapping = buildCjVariantMapping(detail.stanProducts);
+  const videoUrls = normalizeVideoUrls(detail);
+  const mediaQualityScore = computeCjMediaQualityScore(images.length, videoUrls.length);
 
   const product: SupplierProduct = {
     title,
@@ -813,8 +836,30 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
           ? "warehouse_inventory"
           : "detail_shipping_text"
         : null,
+      shippingConfidence: shippingEvidence.shippingConfidence,
       shippingSignal: shippingEvidence.signal,
+      shippingTransparencyState:
+        shippingEvidence.signal === "PRESENT"
+          ? "PRESENT"
+          : shippingEvidence.signal === "PARTIAL"
+            ? "INCOMPLETE"
+            : "MISSING",
       shippingEvidenceText: shippingEvidence.evidenceText,
+      shipping:
+        shippingEvidence.estimates.length > 0
+          ? {
+              summary: shippingEvidence.evidenceText,
+              options: shippingEvidence.estimates.map((estimate) => ({
+                label: estimate.label ?? null,
+                cost: estimate.cost ?? null,
+                currency: estimate.currency ?? null,
+                etaMinDays: estimate.etaMinDays ?? null,
+                etaMaxDays: estimate.etaMaxDays ?? null,
+                shipFromCountry: estimate.ship_from_country ?? shippingEvidence.shipFromCountry,
+                destinationCountry: "US",
+              })),
+            }
+          : null,
       evidenceSource: "api_detail",
       detailQuality: "HIGH",
       enrichmentQuality: shippingEvidence.signal === "PRESENT" ? "HIGH" : shippingEvidence.signal === "PARTIAL" ? "MEDIUM" : "LOW",
@@ -824,7 +869,18 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       propertyEn: toNonEmptyString(detail.PROPERTYEN),
       variantKeyEn: toNonEmptyString(detail.VARIANTKEYEN),
       goodsJsonSearch: detail.goodsJsonSearch ?? null,
-      videos: normalizeVideoUrls(detail),
+      videos: videoUrls,
+      videoUrls,
+      videoCount: videoUrls.length,
+      mediaQualityScore,
+      media: {
+        images,
+        imageCount: images.length,
+        videoUrls,
+        videoCount: videoUrls.length,
+        present: images.length > 0 || videoUrls.length > 0,
+        qualityScore: mediaQualityScore,
+      },
       sourceFrom: detail.sourceFrom ?? null,
       stanProducts: Array.isArray(detail.stanProducts) ? detail.stanProducts.slice(0, 20) : [],
       detailPayload: detail,

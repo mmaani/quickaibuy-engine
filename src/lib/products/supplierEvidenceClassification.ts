@@ -57,6 +57,23 @@ function hasNonEmptyArray(value: unknown): boolean {
   return Array.isArray(value) && value.length > 0;
 }
 
+function countVideoEntries(rawPayload: Record<string, unknown>, mediaNode: Record<string, unknown> | null): number | null {
+  const topLevel =
+    Array.isArray(rawPayload.videoUrls)
+      ? rawPayload.videoUrls.length
+      : Array.isArray(rawPayload.videos)
+        ? rawPayload.videos.length
+        : null;
+  const nested =
+    Array.isArray(mediaNode?.videoUrls)
+      ? mediaNode.videoUrls.length
+      : Array.isArray(mediaNode?.videos)
+        ? mediaNode.videos.length
+        : null;
+  const direct = asNumber(rawPayload.videoCount) ?? asNumber(mediaNode?.videoCount);
+  return direct ?? topLevel ?? nested;
+}
+
 function hasMeaningfulShippingEstimate(value: ShippingEstimate[] | unknown): boolean {
   if (!Array.isArray(value)) return false;
   return value.some((estimate) => {
@@ -261,13 +278,7 @@ export function classifySupplierEvidence(
       asNumber(mediaNode?.imageCount) ??
       (structuredImageCount > 0 ? structuredImageCount : null);
     const videoCount =
-      asNumber(rawPayload.videoCount) ??
-      asNumber(mediaNode?.videoCount) ??
-      (Array.isArray(rawPayload.videoUrls)
-        ? rawPayload.videoUrls.length
-        : Array.isArray(mediaNode?.videoUrls)
-          ? mediaNode.videoUrls.length
-          : null);
+      countVideoEntries(rawPayload, mediaNode);
     const effectiveImageCount = imageCount ?? (structuredImageCount > 0 ? structuredImageCount : null);
     const mediaPresent = (effectiveImageCount != null && effectiveImageCount > 0) || (videoCount != null && videoCount > 0);
     if (!mediaPresent) {
