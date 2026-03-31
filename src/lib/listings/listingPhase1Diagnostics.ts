@@ -72,6 +72,12 @@ function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
+function textArraySql(values: string[]) {
+  return values.length
+    ? sql`ARRAY[${sql.join(values.map((value) => sql`${value}`), sql`, `)}]::text[]`
+    : sql`ARRAY[]::text[]`;
+}
+
 function listingAgeDays(listingDate: Date | string | null, now: Date): number | null {
   if (!listingDate) return null;
   const date = listingDate instanceof Date ? listingDate : new Date(String(listingDate));
@@ -460,13 +466,28 @@ export async function recomputeListingPhase1Diagnostics(input: {
     supplierTrustScore: toNumber(row.supplierTrustScore),
     listingResponse,
   });
+  const killReasonCodesSql = textArraySql(kill.kill_reason_codes);
+  const phase1DiagnosticsPayload = JSON.stringify({
+    kill: {
+      score: kill.kill_score,
+      decision: kill.kill_decision,
+      reasonCodes: kill.kill_reason_codes,
+      evaluatedAt: kill.kill_evaluated_at,
+    },
+    evolution: {
+      status: evolution.listing_evolution_status,
+      reason: evolution.listing_evolution_reason,
+      result: evolution.listing_evolution_result,
+      hasCandidate: evolution.listing_evolution_candidate_payload != null,
+    },
+  });
 
   await db.execute(sql`
     UPDATE listings
     SET
       kill_score = ${kill.kill_score},
       kill_decision = ${kill.kill_decision},
-      kill_reason_codes = ${kill.kill_reason_codes},
+      kill_reason_codes = ${killReasonCodesSql},
       kill_evaluated_at = ${kill.kill_evaluated_at},
       listing_evolution_status = ${evolution.listing_evolution_status},
       listing_evolution_reason = ${evolution.listing_evolution_reason},
@@ -483,20 +504,7 @@ export async function recomputeListingPhase1Diagnostics(input: {
       updated_at = NOW(),
       response = COALESCE(response, '{}'::jsonb) || jsonb_build_object(
         'phase1Diagnostics',
-        jsonb_build_object(
-          'kill', jsonb_build_object(
-            'score', ${kill.kill_score},
-            'decision', ${kill.kill_decision},
-            'reasonCodes', ${kill.kill_reason_codes},
-            'evaluatedAt', ${kill.kill_evaluated_at}
-          ),
-          'evolution', jsonb_build_object(
-            'status', ${evolution.listing_evolution_status},
-            'reason', ${evolution.listing_evolution_reason},
-            'result', ${evolution.listing_evolution_result},
-            'hasCandidate', ${evolution.listing_evolution_candidate_payload != null}
-          )
-        )
+        ${phase1DiagnosticsPayload}::jsonb
       )
     WHERE id = ${listingId}
   `);
