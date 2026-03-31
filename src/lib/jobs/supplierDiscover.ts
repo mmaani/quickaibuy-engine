@@ -5,6 +5,7 @@ import {
   buildFocusedSupplierDiscoverKeywords,
   evaluateProductPipelinePolicy,
 } from "@/lib/products/pipelinePolicy";
+import { deriveCanonicalMediaTruth } from "@/lib/products/canonicalTruth";
 import { searchAliExpressByKeyword } from "@/lib/products/suppliers/aliexpress";
 import { searchAlibabaByKeyword } from "@/lib/products/suppliers/alibaba";
 import { searchCjByKeyword } from "@/lib/products/suppliers/cjdropshipping";
@@ -416,17 +417,24 @@ export async function runSupplierDiscover(limitPerKeyword = 20): Promise<Supplie
         sourceCounter.valid_count += 1;
       }
       const additionalImageCount = Math.max(0, item.images.length - 1);
+      const canonicalMedia = deriveCanonicalMediaTruth({
+        rawPayload: item.raw,
+        imageCount: item.images.length,
+      });
       const quality = evaluateProductPipelinePolicy({
         title: item.title,
         supplierTitle: item.title,
         imageUrl: item.images[0] ?? null,
         additionalImageCount,
+        mediaQualityScore: canonicalMedia.mediaQualityScore,
+        canonicalMediaStrength: canonicalMedia.strength,
         supplierKey: item.platform,
         supplierQuality: item.snapshotQuality ?? null,
         telemetrySignals: item.telemetrySignals ?? [],
         availabilitySignal: item.availabilitySignal ?? null,
         availabilityConfidence: item.availabilityConfidence ?? null,
         shippingEstimates: item.shippingEstimates,
+        shippingConfidence: typeof item.raw?.shippingConfidence === "number" ? item.raw.shippingConfidence : null,
         supplierPrice: item.price ? Number(item.price) : null,
       });
       item.raw = {

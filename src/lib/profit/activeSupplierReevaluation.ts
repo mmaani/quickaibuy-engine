@@ -17,6 +17,7 @@ import {
   getMatchRoutingStatus,
   normalizeSupplierQuality,
 } from "@/lib/products/pipelinePolicy";
+import { deriveCanonicalMediaTruth, deriveCanonicalShippingTruth } from "@/lib/products/canonicalTruth";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { calculateRealProfit } from "@/lib/profit/realProfitCalculator";
 import { computeSupplierIntelligenceSignal, compareSupplierIntelligence, shouldRejectSupplierEarly, type SupplierStockClass } from "@/lib/suppliers/intelligence";
@@ -401,6 +402,26 @@ export async function reevaluateActiveListingSuppliers(input: {
       supplierRawPayload && Array.isArray(supplierRawPayload.telemetrySignals)
         ? (supplierRawPayload.telemetrySignals as string[])
         : [];
+    const canonicalMedia = deriveCanonicalMediaTruth({
+      rawPayload: supplierRawPayload,
+      imageCount: supplierImages.length,
+      mediaQualityScore:
+        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
+          ? supplierRawPayload.mediaQualityScore
+          : null,
+    });
+    const canonicalShipping = deriveCanonicalShippingTruth({
+      shippingValidity: shippingResolution.shippingValidity,
+      transparencyState: shippingResolution.shippingTransparencyState,
+      originCountry: shippingResolution.resolvedOriginCountry,
+      originConfidence: shippingResolution.resolvedOriginConfidence,
+      sourceConfidence: shippingResolution.sourceConfidence,
+      shippingErrorReason: shippingResolution.errorReason,
+      resolutionMode: shippingResolution.resolutionMode,
+      deliveryEstimateMinDays: shippingResolution.deliveryEstimateMinDays,
+      deliveryEstimateMaxDays: shippingResolution.deliveryEstimateMaxDays,
+      shippingCostUsd: shippingResolution.shippingCostUsd,
+    });
     const rawSupplierQuality =
       supplierRawPayload
         ? normalizeSupplierQuality(String(supplierRawPayload.snapshotQuality ?? ""))
@@ -423,10 +444,7 @@ export async function reevaluateActiveListingSuppliers(input: {
       supplierTitle: row.supplierTitle,
       imageUrl: supplierImages[0] ?? null,
       additionalImageCount: Math.max(0, supplierImages.length - 1),
-      mediaQualityScore:
-        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
-          ? supplierRawPayload.mediaQualityScore
-          : null,
+      mediaQualityScore: canonicalMedia.mediaQualityScore,
       supplierQuality: rawSupplierQuality,
       telemetrySignals,
       availabilitySignal,
@@ -436,6 +454,10 @@ export async function reevaluateActiveListingSuppliers(input: {
         supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
           ? supplierRawPayload.shippingConfidence
           : null,
+      canonicalShippingPassed: canonicalShipping.passed,
+      canonicalShippingSignalPresent: canonicalShipping.hasSignal,
+      canonicalShippingStable: canonicalShipping.passed,
+      canonicalMediaStrength: canonicalMedia.strength,
       actionableSnapshot:
         supplierRawPayload && typeof supplierRawPayload.actionableSnapshot === "boolean"
           ? supplierRawPayload.actionableSnapshot
@@ -461,14 +483,24 @@ export async function reevaluateActiveListingSuppliers(input: {
         supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
           ? supplierRawPayload.shippingConfidence
           : null,
-      mediaQualityScore:
-        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
-          ? supplierRawPayload.mediaQualityScore
-          : null,
-      imageCount: supplierImages.length,
+      mediaQualityScore: canonicalMedia.mediaQualityScore,
+      imageCount: canonicalMedia.imageCount,
+      videoCount: canonicalMedia.videoCount,
       sourceQuality: rawSupplierQuality,
       rawPayload: supplierRawPayload,
       telemetrySignals,
+      canonicalShipping: {
+        shippingValidity: shippingResolution.shippingValidity,
+        transparencyState: shippingResolution.shippingTransparencyState,
+        originCountry: shippingResolution.resolvedOriginCountry,
+        originConfidence: shippingResolution.resolvedOriginConfidence,
+        sourceConfidence: shippingResolution.sourceConfidence,
+        shippingErrorReason: shippingResolution.errorReason,
+        resolutionMode: shippingResolution.resolutionMode,
+        deliveryEstimateMinDays: shippingResolution.deliveryEstimateMinDays,
+        deliveryEstimateMaxDays: shippingResolution.deliveryEstimateMaxDays,
+        shippingCostUsd: shippingResolution.shippingCostUsd,
+      },
     });
     const supplierIntelligence = computeSupplierIntelligenceSignal({
       supplierKey,

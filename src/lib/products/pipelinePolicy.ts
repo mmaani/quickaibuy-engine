@@ -1,4 +1,5 @@
 import { scoreSellability } from "@/lib/products/sellabilityScore";
+import type { MediaEvidenceStrength } from "@/lib/products/canonicalTruth";
 
 type SupplierSnapshotQuality = "HIGH" | "MEDIUM" | "LOW" | "STUB";
 type AvailabilitySignal = "IN_STOCK" | "LOW_STOCK" | "OUT_OF_STOCK" | "UNKNOWN";
@@ -24,6 +25,10 @@ export type ProductPipelinePolicyInput = {
   availabilityConfidence?: number | null;
   shippingEstimates?: unknown;
   shippingConfidence?: number | null;
+  canonicalShippingPassed?: boolean | null;
+  canonicalShippingSignalPresent?: boolean | null;
+  canonicalShippingStable?: boolean | null;
+  canonicalMediaStrength?: MediaEvidenceStrength | null;
   actionableSnapshot?: boolean | null;
   supplierRowDecision?: "ACTIONABLE" | "MANUAL_REVIEW" | "BLOCKED" | null;
   supplierPrice?: number | null;
@@ -309,6 +314,10 @@ export function evaluateProductPipelinePolicy(
   const additionalImageCount = Math.max(0, Number(input.additionalImageCount ?? 0));
   const mediaQualityScore = Math.max(0, Math.min(1, Number(input.mediaQualityScore ?? 0) || 0));
   const shippingConfidence = Math.max(0, Math.min(1, Number(input.shippingConfidence ?? 0) || 0));
+  const canonicalShippingPassed = input.canonicalShippingPassed === true;
+  const canonicalShippingSignalPresent = input.canonicalShippingSignalPresent === true;
+  const canonicalShippingStable = input.canonicalShippingStable === true;
+  const canonicalMediaStrength = input.canonicalMediaStrength ?? null;
   const actionableSnapshot = input.actionableSnapshot !== false;
   const price = input.marketplacePrice ?? input.supplierPrice ?? null;
   const sellability = scoreSellability({
@@ -357,7 +366,7 @@ export function evaluateProductPipelinePolicy(
 
   const strongMedia =
     Boolean(input.imageUrl) &&
-    (additionalImageCount >= 4 || mediaQualityScore >= 0.82) &&
+    (canonicalMediaStrength === "STRONG" || additionalImageCount >= 4 || mediaQualityScore >= 0.82) &&
     actionableSnapshot &&
     !telemetry.has("low_quality") &&
     !telemetry.has("challenge");
@@ -387,13 +396,15 @@ export function evaluateProductPipelinePolicy(
   const availabilityConfirmed =
     (input.availabilitySignal === "IN_STOCK" || input.availabilitySignal === "LOW_STOCK") &&
     (input.availabilityConfidence == null || input.availabilityConfidence >= 0.6);
-  const shippingSignalPresent = shippingEstimateCount > 0 || shippingConfidence >= 0.75;
-  const shippingSignalWeak = !shippingSignalPresent || shippingConfidence < 0.75;
+  const shippingSignalPresent = canonicalShippingPassed || canonicalShippingSignalPresent || shippingEstimateCount > 0 || shippingConfidence >= 0.75;
+  const shippingSignalWeak =
+    !shippingSignalPresent || (!canonicalShippingPassed && shippingConfidence < 0.75);
   const shippingStable =
-    actionableSnapshot &&
-    input.supplierRowDecision !== "BLOCKED" &&
-    availabilityConfirmed &&
-    shippingSignalPresent;
+    canonicalShippingStable ||
+    (actionableSnapshot &&
+      input.supplierRowDecision !== "BLOCKED" &&
+      availabilityConfirmed &&
+      shippingSignalPresent);
   if (input.availabilitySignal === "OUT_OF_STOCK") {
     penalties.push("supplier out of stock");
     flags.add("SUPPLIER_OUT_OF_STOCK");

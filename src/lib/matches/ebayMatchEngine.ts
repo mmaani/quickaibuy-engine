@@ -7,6 +7,7 @@ import {
   PRODUCT_PIPELINE_MATCH_EXCEPTION_MIN,
   PRODUCT_PIPELINE_MATCH_PREFERRED_MIN,
 } from "@/lib/products/pipelinePolicy";
+import { deriveCanonicalMediaTruth } from "@/lib/products/canonicalTruth";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 const STOPWORDS = new Set([
@@ -281,25 +282,37 @@ function chooseBestCandidate(rows: CandidateRow[]): RankedCandidate | null {
     const supplierImages = Array.isArray(row.supplierImages)
       ? row.supplierImages.filter((value): value is string => typeof value === "string")
       : [];
+    const supplierRawPayload =
+      row.supplierRawPayload &&
+      typeof row.supplierRawPayload === "object" &&
+      !Array.isArray(row.supplierRawPayload)
+        ? (row.supplierRawPayload as Record<string, unknown>)
+        : null;
+    const canonicalMedia = deriveCanonicalMediaTruth({
+      rawPayload: supplierRawPayload,
+      imageCount: supplierImages.length,
+    });
     const pipeline = evaluateProductPipelinePolicy({
       title: supplierTitle,
       marketplaceTitle: matchedTitle,
       supplierTitle,
       imageUrl: supplierImages[0] ?? null,
       additionalImageCount: Math.max(0, supplierImages.length - 1),
+      mediaQualityScore: canonicalMedia.mediaQualityScore,
+      canonicalMediaStrength: canonicalMedia.strength,
       supplierQuality:
-        row.supplierRawPayload &&
-        typeof row.supplierRawPayload === "object" &&
-        !Array.isArray(row.supplierRawPayload)
-          ? normalizeSupplierQuality(String((row.supplierRawPayload as Record<string, unknown>).snapshotQuality ?? ""))
+        supplierRawPayload
+          ? normalizeSupplierQuality(String(supplierRawPayload.snapshotQuality ?? ""))
           : null,
       telemetrySignals:
-        row.supplierRawPayload &&
-        typeof row.supplierRawPayload === "object" &&
-        !Array.isArray(row.supplierRawPayload) &&
-        Array.isArray((row.supplierRawPayload as Record<string, unknown>).telemetrySignals)
-          ? ((row.supplierRawPayload as Record<string, unknown>).telemetrySignals as string[])
+        supplierRawPayload &&
+        Array.isArray(supplierRawPayload.telemetrySignals)
+          ? (supplierRawPayload.telemetrySignals as string[])
           : [],
+      shippingConfidence:
+        supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
+          ? supplierRawPayload.shippingConfidence
+          : null,
       supplierPrice: row.supplierPrice != null ? Number(row.supplierPrice) : null,
       marketplacePrice: row.marketplacePrice != null ? Number(row.marketplacePrice) : null,
       matchConfidence: quality.confidence,

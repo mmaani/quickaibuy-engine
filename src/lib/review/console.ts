@@ -7,6 +7,7 @@ import {
   type AvailabilitySignal,
 } from "@/lib/products/supplierAvailability";
 import { classifySupplierEvidence } from "@/lib/products/supplierEvidenceClassification";
+import { deriveCanonicalMediaTruth, deriveCanonicalShippingTruth } from "@/lib/products/canonicalTruth";
 import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 import {
   classifySupplierSnapshotQuality,
@@ -361,10 +362,12 @@ function canonicalEvidenceFromFees(
     transparencyIncomplete: boolean;
     shipFromUnresolved: boolean;
     weakSignal: boolean;
+    passed: boolean;
   };
   media: {
     hasCanonicalMedia: boolean;
     mediaPresent: boolean;
+    strongEnough: boolean;
   };
 } {
   const fees = asObject(estimatedFees);
@@ -407,27 +410,23 @@ function canonicalEvidenceFromFees(
     asString(shippingBreakdown?.destinationCountry) ??
     asString(selectedSupplierOption?.shippingDestinationCountry);
 
+  const shippingTruth = deriveCanonicalShippingTruth({
+    shippingValidity:
+      asString(shippingBreakdown?.shippingValidity) ??
+      asString(selectedSupplierOption?.shippingValidity),
+    transparencyState,
+    originCountry:
+      asString(shippingBreakdown?.originCountry) ??
+      asString(selectedSupplierOption?.shippingOriginCountry),
+    originConfidence,
+    sourceConfidence,
+    shippingErrorReason,
+    resolutionMode,
+    deliveryEstimateMinDays: minDays,
+    deliveryEstimateMaxDays: maxDays,
+    shippingCostUsd: totalShippingUsd ?? baseShippingCostUsd,
+  });
   const hasCanonicalShipping = Boolean(shippingBreakdown || selectedSupplierOption);
-  const hasShippingSignal =
-    totalShippingUsd != null ||
-    baseShippingCostUsd != null ||
-    minDays != null ||
-    maxDays != null ||
-    transparencyState === "PRESENT";
-  const transparencyIncomplete =
-    transparencyState === "MISSING" ||
-    shippingErrorReason === "MISSING_SHIPPING_TRANSPARENCY";
-  const shipFromUnresolved =
-    shippingErrorReason === "MISSING_SHIP_FROM_COUNTRY" ||
-    originValidity === "WEAK_OR_UNRESOLVED" ||
-    (hasShippingSignal &&
-      destinationCountry != null &&
-      !asString(shippingBreakdown?.originCountry) &&
-      !asString(selectedSupplierOption?.shippingOriginCountry));
-  const weakSignal =
-    resolutionMode === "INFERRED_WEAK" ||
-    (sourceConfidence != null && sourceConfidence < 0.75) ||
-    (originConfidence != null && originConfidence < 0.75);
 
   const mediaFromRawPayload = asObject(asObject(rowPayloadFromFees(fees))?.media);
   const imageGalleryCount =
@@ -437,22 +436,25 @@ function canonicalEvidenceFromFees(
     asFiniteNumber(rowPayloadFromFees(fees)?.videoCount) ??
     asFiniteNumber(mediaFromRawPayload?.videoCount);
   const images = rowImagesFromFees(fees);
-  const mediaPresent =
-    (Array.isArray(images) && images.length > 0) ||
-    (imageGalleryCount != null && imageGalleryCount > 0) ||
-    (videoCount != null && videoCount > 0);
+  const mediaTruth = deriveCanonicalMediaTruth({
+    rawPayload: rowPayloadFromFees(fees),
+    imageCount: imageGalleryCount ?? (Array.isArray(images) ? images.length : null),
+    videoCount,
+  });
 
   return {
     shipping: {
       hasCanonicalShipping,
-      hasShippingSignal,
-      transparencyIncomplete,
-      shipFromUnresolved,
-      weakSignal,
+      hasShippingSignal: shippingTruth.hasSignal,
+      transparencyIncomplete: shippingTruth.transparencyIncomplete,
+      shipFromUnresolved: shippingTruth.originUnresolved,
+      weakSignal: shippingTruth.weak,
+      passed: shippingTruth.passed,
     },
     media: {
-      hasCanonicalMedia: mediaPresent || Boolean(mediaFromRawPayload),
-      mediaPresent,
+      hasCanonicalMedia: mediaTruth.present || Boolean(mediaFromRawPayload),
+      mediaPresent: mediaTruth.present,
+      strongEnough: mediaTruth.strength === "MEDIUM" || mediaTruth.strength === "STRONG",
     },
   };
 }
@@ -636,11 +638,17 @@ function deriveRiskFlags(row: CandidateRow): string[] {
   }
 
   if (canonicalEvidence.shipping.hasCanonicalShipping) {
-    if (canonicalEvidence.shipping.hasShippingSignal) {
+    if (canonicalEvidence.shipping.passed || canonicalEvidence.shipping.hasShippingSignal) {
       flags.delete("SHIPPING_SIGNAL_MISSING");
       flags.delete("MISSING_SHIPPING_ESTIMATE");
     }
-    if (canonicalEvidence.shipping.transparencyIncomplete) {
+    if (canonicalEvidence.shipping.passed) {
+      flags.delete("SHIPPING_TRANSPARENCY_INCOMPLETE");
+      flags.delete("SHIPPING_SIGNAL_WEAK");
+      flags.delete("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT");
+      flags.delete("SHIP_FROM_MISSING");
+      flags.delete("MISSING_SHIP_FROM_COUNTRY");
+    } else if (canonicalEvidence.shipping.transparencyIncomplete) {
       flags.add("SHIPPING_TRANSPARENCY_INCOMPLETE");
     }
     if (canonicalEvidence.shipping.shipFromUnresolved) {
@@ -681,6 +689,25 @@ function deriveRiskFlags(row: CandidateRow): string[] {
 
   if ((canonicalEvidence.media.hasCanonicalMedia && canonicalEvidence.media.mediaPresent) || supplierMediaPresent) {
     flags.delete("MEDIA_MISSING");
+  }
+  if (canonicalEvidence.media.hasCanonicalMedia && canonicalEvidence.media.strongEnough) {
+    flags.delete("MEDIA_PRESENT_QUALITY_WEAK");
+    flags.delete("MEDIA_SIGNAL_WEAK");
+    if (!flags.has("AVAILABILITY_NOT_CONFIRMED") &&
+      !flags.has("SHIPPING_SIGNAL_MISSING") &&
+      !flags.has("SHIPPING_TRANSPARENCY_INCOMPLETE") &&
+      !flags.has("SHIP_FROM_MISSING") &&
+      !flags.has("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT") &&
+      !flags.has("SHIPPING_SIGNAL_WEAK")) {
+      flags.delete("SUPPLIER_SIGNAL_INSUFFICIENT");
+    }
+  }
+  if (canonicalEvidence.shipping.passed &&
+    !flags.has("AVAILABILITY_NOT_CONFIRMED") &&
+    !flags.has("MEDIA_MISSING") &&
+    !flags.has("MEDIA_PRESENT_QUALITY_WEAK") &&
+    !flags.has("MEDIA_SIGNAL_WEAK")) {
+    flags.delete("SUPPLIER_SIGNAL_INSUFFICIENT");
   }
   if (flags.has("MEDIA_MISSING")) {
     flags.delete("MEDIA_PRESENT_QUALITY_WEAK");

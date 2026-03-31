@@ -30,3 +30,34 @@ test("LOW_STOCK adds warning flag without treating availability as unconfirmed",
   assert.ok(!result.flags.includes("AVAILABILITY_NOT_CONFIRMED"));
   assert.equal(result.shippingStable, true);
 });
+
+test("canonical pass suppresses weak media and shipping pipeline flags", () => {
+  const result = evaluateProductPipelinePolicy({
+    title: "Wireless charging led night light",
+    supplierTitle: "Wireless charging led night light",
+    imageUrl: "https://example.com/1.jpg",
+    additionalImageCount: 4,
+    mediaQualityScore: 0.84,
+    canonicalMediaStrength: "STRONG",
+    supplierQuality: "HIGH",
+    telemetrySignals: [],
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.98,
+    shippingEstimates: [],
+    shippingConfidence: 0.58,
+    canonicalShippingPassed: true,
+    canonicalShippingSignalPresent: true,
+    canonicalShippingStable: true,
+    actionableSnapshot: true,
+    supplierRowDecision: "ACTIONABLE",
+    supplierPrice: 49.29,
+    marketplacePrice: 89.99,
+    matchConfidence: 0.98,
+    marginPct: 19.11,
+    roiPct: 33.53,
+  });
+
+  assert.equal(result.flags.includes("WEAK_MEDIA"), false);
+  assert.equal(result.flags.includes("SHIPPING_SIGNAL_WEAK"), false);
+  assert.equal(result.flags.includes("SHIPPING_STABILITY_WEAK"), false);
+});

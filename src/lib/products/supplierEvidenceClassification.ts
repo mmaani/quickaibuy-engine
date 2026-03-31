@@ -2,6 +2,7 @@ import { looksLikeProviderBlockPayload } from "./suppliers/parserSignals";
 import type { ShippingEstimate } from "./suppliers/types";
 import type { AvailabilitySignal } from "./supplierAvailability";
 import type { SupplierSnapshotQuality } from "./supplierQuality";
+import { deriveCanonicalMediaTruth, deriveCanonicalShippingTruth } from "./canonicalTruth";
 
 export type SupplierEvidenceReasonCode =
   | "SUPPLIER_OUT_OF_STOCK"
@@ -29,9 +30,22 @@ type SupplierEvidenceClassificationInput = {
   shippingConfidence?: number | null;
   mediaQualityScore?: number | null;
   imageCount?: number | null;
+  videoCount?: number | null;
   sourceQuality?: SupplierSnapshotQuality | null;
   rawPayload?: Record<string, unknown> | null;
   telemetrySignals?: string[] | null;
+  canonicalShipping?: {
+    shippingValidity?: unknown;
+    transparencyState?: unknown;
+    originCountry?: unknown;
+    originConfidence?: unknown;
+    sourceConfidence?: unknown;
+    shippingErrorReason?: unknown;
+    resolutionMode?: unknown;
+    deliveryEstimateMinDays?: unknown;
+    deliveryEstimateMaxDays?: unknown;
+    shippingCostUsd?: unknown;
+  } | null;
 };
 
 function asString(value: unknown): string | null {
@@ -171,6 +185,18 @@ export function classifySupplierEvidence(
   if (!codes.has("SOURCE_PROVIDER_BLOCK") && !codes.has("SOURCE_CHALLENGE_PAGE") && !codes.has("SUPPLIER_BLOCKED")) {
     const shippingSignal = String(rawPayload.shippingSignal ?? "").trim().toUpperCase();
     const shippingNode = nestedRecord(rawPayload.shipping);
+    const canonicalShipping = deriveCanonicalShippingTruth({
+      shippingValidity: input.canonicalShipping?.shippingValidity,
+      transparencyState: input.canonicalShipping?.transparencyState,
+      originCountry: input.canonicalShipping?.originCountry,
+      originConfidence: input.canonicalShipping?.originConfidence,
+      sourceConfidence: input.canonicalShipping?.sourceConfidence,
+      shippingErrorReason: input.canonicalShipping?.shippingErrorReason,
+      resolutionMode: input.canonicalShipping?.resolutionMode,
+      deliveryEstimateMinDays: input.canonicalShipping?.deliveryEstimateMinDays,
+      deliveryEstimateMaxDays: input.canonicalShipping?.deliveryEstimateMaxDays,
+      shippingCostUsd: input.canonicalShipping?.shippingCostUsd,
+    });
     const hasStructuredShippingNode =
       shippingNode != null &&
       Object.values(shippingNode).some((value) => {
@@ -231,33 +257,37 @@ export function classifySupplierEvidence(
       shippingSignal === "INFERRED" ||
       asString(rawPayload.shippingTransparencyState)?.toUpperCase() === "INCOMPLETE";
 
-    if (
-      (shippingSignal === "MISSING" && !hasTransparentShippingEvidence && !hasShipFromEvidence) ||
-      (!hasShippingEstimate && !shippingEvidenceText && !hasStructuredShippingNode && (shippingConfidence ?? 0) < 0.35)
-    ) {
-      codes.add("SHIPPING_SIGNAL_MISSING");
-    } else if (
-      shippingSignal === "INFERRED" ||
-      (!hasShippingEstimate && !hasStructuredShippingNode && Boolean(shippingEvidenceText)) ||
-      (shippingConfidence != null && shippingConfidence < 0.75)
-    ) {
-      codes.add("SHIPPING_SIGNAL_WEAK");
-    }
-    if (shippingTransparencyIncompleteSignal && hasTransparentShippingEvidence) {
-      codes.add("SHIPPING_TRANSPARENCY_INCOMPLETE");
-    }
-    if (!hasShipFromEvidence && destinationContextPresent) {
-      codes.add("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT");
-    } else if (!hasShipFromEvidence && hasTransparentShippingEvidence) {
-      codes.add("SHIP_FROM_MISSING");
+    if (canonicalShipping.passed) {
+      codes.delete("SHIPPING_SIGNAL_MISSING");
+      codes.delete("SHIPPING_SIGNAL_WEAK");
+      codes.delete("SHIPPING_TRANSPARENCY_INCOMPLETE");
+      codes.delete("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT");
+      codes.delete("SHIP_FROM_MISSING");
+    } else {
+      if (
+        (shippingSignal === "MISSING" && !hasTransparentShippingEvidence && !hasShipFromEvidence) ||
+        (!hasShippingEstimate && !shippingEvidenceText && !hasStructuredShippingNode && (shippingConfidence ?? 0) < 0.35)
+      ) {
+        codes.add("SHIPPING_SIGNAL_MISSING");
+      } else if (
+        canonicalShipping.weak ||
+        shippingSignal === "INFERRED" ||
+        (!hasShippingEstimate && !hasStructuredShippingNode && Boolean(shippingEvidenceText)) ||
+        (shippingConfidence != null && shippingConfidence < 0.75)
+      ) {
+        codes.add("SHIPPING_SIGNAL_WEAK");
+      }
+      if (canonicalShipping.transparencyIncomplete || (shippingTransparencyIncompleteSignal && hasTransparentShippingEvidence)) {
+        codes.add("SHIPPING_TRANSPARENCY_INCOMPLETE");
+      }
+      if (canonicalShipping.originUnresolved || (!hasShipFromEvidence && destinationContextPresent)) {
+        codes.add("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT");
+      } else if (!hasShipFromEvidence && hasTransparentShippingEvidence) {
+        codes.add("SHIP_FROM_MISSING");
+      }
     }
 
     const mediaNode = nestedRecord(rawPayload.media);
-    const mediaQualityScore =
-      input.mediaQualityScore ??
-      asNumber(rawPayload.mediaQualityScore) ??
-      asNumber(mediaNode?.qualityScore) ??
-      asNumber(mediaNode?.score);
     const structuredImageCount = new Set(
       [
         ...(Array.isArray(rawPayload.images) ? rawPayload.images : []),
@@ -277,19 +307,19 @@ export function classifySupplierEvidence(
       asNumber(rawPayload.imageGalleryCount) ??
       asNumber(mediaNode?.imageCount) ??
       (structuredImageCount > 0 ? structuredImageCount : null);
-    const videoCount =
-      countVideoEntries(rawPayload, mediaNode);
+    const videoCount = input.videoCount ?? countVideoEntries(rawPayload, mediaNode);
     const effectiveImageCount = imageCount ?? (structuredImageCount > 0 ? structuredImageCount : null);
-    const mediaPresent = (effectiveImageCount != null && effectiveImageCount > 0) || (videoCount != null && videoCount > 0);
+    const canonicalMedia = deriveCanonicalMediaTruth({
+      rawPayload,
+      imageCount: effectiveImageCount,
+      videoCount,
+      mediaQualityScore: input.mediaQualityScore,
+    });
+    const mediaPresent = canonicalMedia.present;
     if (!mediaPresent) {
       codes.add("MEDIA_MISSING");
     }
-    if (
-      (mediaQualityScore != null && mediaQualityScore < 0.82) ||
-      (effectiveImageCount != null && effectiveImageCount > 0 && effectiveImageCount < 3 && (videoCount ?? 0) <= 0) ||
-      input.sourceQuality === "LOW" ||
-      input.sourceQuality === "STUB"
-    ) {
+    if (canonicalMedia.strength === "WEAK" || input.sourceQuality === "LOW" || input.sourceQuality === "STUB") {
       if (mediaPresent) codes.add("MEDIA_PRESENT_QUALITY_WEAK");
       codes.add("MEDIA_SIGNAL_WEAK");
     }
@@ -314,6 +344,22 @@ export function classifySupplierEvidence(
       weakSignalCount >= 3
     ) {
       codes.add("SUPPLIER_SIGNAL_INSUFFICIENT");
+    }
+    if (
+      codes.has("SUPPLIER_SIGNAL_INSUFFICIENT") &&
+      !codes.has("AVAILABILITY_NOT_CONFIRMED") &&
+      !codes.has("SHIPPING_SIGNAL_MISSING") &&
+      !codes.has("SHIPPING_SIGNAL_WEAK") &&
+      !codes.has("SHIPPING_TRANSPARENCY_INCOMPLETE") &&
+      !codes.has("SHIP_FROM_MISSING") &&
+      !codes.has("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT") &&
+      !codes.has("MEDIA_MISSING") &&
+      !codes.has("MEDIA_PRESENT_QUALITY_WEAK") &&
+      actionableSnapshotValue !== "false" &&
+      !telemetry.has("fallback") &&
+      !telemetry.has("low_quality")
+    ) {
+      codes.delete("SUPPLIER_SIGNAL_INSUFFICIENT");
     }
   }
 

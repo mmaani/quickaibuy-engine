@@ -16,6 +16,7 @@ import {
   getMatchRoutingStatus,
   normalizeSupplierQuality,
 } from "@/lib/products/pipelinePolicy";
+import { deriveCanonicalMediaTruth, deriveCanonicalShippingTruth } from "@/lib/products/canonicalTruth";
 import { sql } from "drizzle-orm";
 import { calculateRealProfit } from "./realProfitCalculator";
 import { getPriceGuardThresholds } from "./priceGuardConfig";
@@ -592,6 +593,26 @@ export async function runProfitEngine(input?: {
       supplierRawPayload && Array.isArray(supplierRawPayload.telemetrySignals)
         ? (supplierRawPayload.telemetrySignals as string[])
         : [];
+    const canonicalMedia = deriveCanonicalMediaTruth({
+      rawPayload: supplierRawPayload,
+      imageCount: supplierImages.length,
+      mediaQualityScore:
+        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
+          ? supplierRawPayload.mediaQualityScore
+          : null,
+    });
+    const canonicalShipping = deriveCanonicalShippingTruth({
+      shippingValidity: shippingResolution.shippingValidity,
+      transparencyState: shippingResolution.shippingTransparencyState,
+      originCountry: shippingResolution.resolvedOriginCountry,
+      originConfidence: shippingResolution.resolvedOriginConfidence,
+      sourceConfidence: shippingResolution.sourceConfidence,
+      shippingErrorReason: shippingResolution.errorReason,
+      resolutionMode: shippingResolution.resolutionMode,
+      deliveryEstimateMinDays: shippingResolution.deliveryEstimateMinDays,
+      deliveryEstimateMaxDays: shippingResolution.deliveryEstimateMaxDays,
+      shippingCostUsd: shippingResolution.shippingCostUsd,
+    });
     const marketPriceSeries = Array.isArray(row.marketPriceSeries)
       ? row.marketPriceSeries.map((value) => toNum(value)).filter((value): value is number => value != null && value > 0)
       : [];
@@ -605,10 +626,7 @@ export async function runProfitEngine(input?: {
       supplierTitle: row.supplierTitle,
       imageUrl: supplierImages[0] ?? null,
       additionalImageCount: Math.max(0, supplierImages.length - 1),
-      mediaQualityScore:
-        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
-          ? supplierRawPayload.mediaQualityScore
-          : null,
+      mediaQualityScore: canonicalMedia.mediaQualityScore,
       supplierQuality:
         supplierRawPayload
           ? normalizeSupplierQuality(String(supplierRawPayload.snapshotQuality ?? ""))
@@ -621,6 +639,10 @@ export async function runProfitEngine(input?: {
         supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
           ? supplierRawPayload.shippingConfidence
           : null,
+      canonicalShippingPassed: canonicalShipping.passed,
+      canonicalShippingSignalPresent: canonicalShipping.hasSignal,
+      canonicalShippingStable: canonicalShipping.passed,
+      canonicalMediaStrength: canonicalMedia.strength,
       actionableSnapshot:
         supplierRawPayload && typeof supplierRawPayload.actionableSnapshot === "boolean"
           ? supplierRawPayload.actionableSnapshot
@@ -650,14 +672,24 @@ export async function runProfitEngine(input?: {
         supplierRawPayload && typeof supplierRawPayload.shippingConfidence === "number"
           ? supplierRawPayload.shippingConfidence
           : null,
-      mediaQualityScore:
-        supplierRawPayload && typeof supplierRawPayload.mediaQualityScore === "number"
-          ? supplierRawPayload.mediaQualityScore
-          : null,
-      imageCount: supplierImages.length,
+      mediaQualityScore: canonicalMedia.mediaQualityScore,
+      imageCount: canonicalMedia.imageCount,
+      videoCount: canonicalMedia.videoCount,
       sourceQuality: rawSupplierQuality,
       rawPayload: supplierRawPayload,
       telemetrySignals,
+      canonicalShipping: {
+        shippingValidity: shippingResolution.shippingValidity,
+        transparencyState: shippingResolution.shippingTransparencyState,
+        originCountry: shippingResolution.resolvedOriginCountry,
+        originConfidence: shippingResolution.resolvedOriginConfidence,
+        sourceConfidence: shippingResolution.sourceConfidence,
+        shippingErrorReason: shippingResolution.errorReason,
+        resolutionMode: shippingResolution.resolutionMode,
+        deliveryEstimateMinDays: shippingResolution.deliveryEstimateMinDays,
+        deliveryEstimateMaxDays: shippingResolution.deliveryEstimateMaxDays,
+        shippingCostUsd: shippingResolution.shippingCostUsd,
+      },
     });
     const supplierEvidenceCodes = supplierEvidence.codes;
     const sourceReliabilityComponent = (sourceQualityRank(rawSupplierQuality) + 1) / 4;
@@ -787,26 +819,22 @@ export async function runProfitEngine(input?: {
               : Array.isArray(supplierRawPayload.videos)
                 ? supplierRawPayload.videos.length
                 : null),
-          mediaQualityScore: supplierRawPayload.mediaQualityScore ?? null,
+          mediaQualityScore: canonicalMedia.mediaQualityScore,
           media:
             supplierRawPayload.media && typeof supplierRawPayload.media === "object" && !Array.isArray(supplierRawPayload.media)
-              ? supplierRawPayload.media
+              ? {
+                  ...(supplierRawPayload.media as Record<string, unknown>),
+                  imageCount: canonicalMedia.imageCount || null,
+                  videoCount: canonicalMedia.videoCount || null,
+                  present: canonicalMedia.present,
+                  qualityScore: canonicalMedia.mediaQualityScore,
+                }
               : {
                   images: supplierImages.slice(0, 48),
-                  imageCount: supplierImages.length || null,
-                  videoCount:
-                    supplierRawPayload.videoCount ??
-                    (Array.isArray(supplierRawPayload.videoUrls)
-                      ? supplierRawPayload.videoUrls.length
-                      : Array.isArray(supplierRawPayload.videos)
-                        ? supplierRawPayload.videos.length
-                        : null),
-                  present:
-                    supplierImages.length > 0 ||
-                    Boolean(
-                      (Array.isArray(supplierRawPayload.videoUrls) && supplierRawPayload.videoUrls.length > 0) ||
-                        (Array.isArray(supplierRawPayload.videos) && supplierRawPayload.videos.length > 0)
-                    ),
+                  imageCount: canonicalMedia.imageCount || null,
+                  videoCount: canonicalMedia.videoCount || null,
+                  present: canonicalMedia.present,
+                  qualityScore: canonicalMedia.mediaQualityScore,
                 },
         }
       : null;

@@ -160,6 +160,80 @@ test("legacy CJ videos field counts as media evidence", () => {
   assert.equal(result.codes.includes("MEDIA_MISSING"), false);
 });
 
+test("cj-like canonical shipping pass suppresses false weak shipping and media flags", () => {
+  const result = classifySupplierEvidence({
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.98,
+    shippingEstimates: [],
+    shippingConfidence: 0.58,
+    mediaQualityScore: 0,
+    imageCount: 5,
+    sourceQuality: "HIGH",
+    rawPayload: {
+      shippingSignal: "PARTIAL",
+      shippingTransparencyState: "INCOMPLETE",
+      shipFromCountry: "CN",
+      images: [
+        "https://cdn.example.com/1.jpg",
+        "https://cdn.example.com/2.jpg",
+        "https://cdn.example.com/3.jpg",
+        "https://cdn.example.com/4.jpg",
+        "https://cdn.example.com/5.jpg",
+      ],
+      media: {
+        present: true,
+        imageCount: 5,
+      },
+      actionableSnapshot: true,
+    },
+    telemetrySignals: ["parsed"],
+    canonicalShipping: {
+      shippingValidity: "PASS",
+      transparencyState: "PRESENT",
+      originCountry: "CN",
+      originConfidence: 0.99,
+      sourceConfidence: 0.85,
+      resolutionMode: "INFERRED_STRONG",
+      deliveryEstimateMinDays: 2,
+      deliveryEstimateMaxDays: 6,
+      shippingCostUsd: 4,
+    },
+  });
+
+  assert.equal(result.codes.includes("SHIPPING_SIGNAL_WEAK"), false);
+  assert.equal(result.codes.includes("SHIPPING_TRANSPARENCY_INCOMPLETE"), false);
+  assert.equal(result.codes.includes("MEDIA_PRESENT_QUALITY_WEAK"), false);
+  assert.equal(result.codes.includes("MEDIA_SIGNAL_WEAK"), false);
+  assert.equal(result.codes.includes("SUPPLIER_SIGNAL_INSUFFICIENT"), false);
+});
+
+test("unresolved origin remains fail-closed even when shipping text exists", () => {
+  const result = classifySupplierEvidence({
+    availabilitySignal: "IN_STOCK",
+    availabilityConfidence: 0.92,
+    shippingConfidence: 0.7,
+    sourceQuality: "HIGH",
+    rawPayload: {
+      shippingSignal: "PARTIAL",
+      shippingDestinationCountry: "US",
+      shippingEvidenceText: "Delivery in 7 to 12 days",
+      actionableSnapshot: true,
+      images: ["https://cdn.example.com/1.jpg", "https://cdn.example.com/2.jpg"],
+    },
+    telemetrySignals: ["parsed"],
+    canonicalShipping: {
+      shippingValidity: "FAIL",
+      transparencyState: "PRESENT",
+      originCountry: null,
+      originConfidence: null,
+      sourceConfidence: 0.7,
+      shippingErrorReason: "MISSING_SHIP_FROM_COUNTRY",
+    },
+  });
+
+  assert.equal(result.codes.includes("SHIP_FROM_UNRESOLVED_DESTINATION_CONTEXT"), true);
+});
+
 
 test("parser extracts ship-from and destination-aware shipping evidence", () => {
   const shipping = extractShippingEvidence(
