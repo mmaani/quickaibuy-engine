@@ -1,6 +1,6 @@
 {
   "name": "quickaibuy-engine",
-  "image": "://microsoft.com",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
   "customizations": {
     "vscode": {
       "settings": {
@@ -13,15 +13,13 @@
       ]
     }
   },
-  "forwardPorts": [
-    3000
-  ],
+  "forwardPorts": [3000],
   "portsAttributes": {
     "3000": {
       "label": "Next.js",
       "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "corepack enable && pnpm install --frozen-lockfile && npm install -g @openai/codex",
+  "postCreateCommand": "corepack enable && pnpm install --no-frozen-lockfile && npm install -g @openai/codex",
   "postAttachCommand": "bash scripts/codespace_post_attach.sh"
 }
