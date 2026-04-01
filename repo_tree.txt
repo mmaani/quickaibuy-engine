@@ -1,7 +1,5 @@
 .
 ├── AGENTS.md
-├── LICENSE
-├── README.md
 ├── ai_sources
 │   ├── AGENT_RULES.md
 │   ├── PIPELINE_SCOPE.md
@@ -20,20 +18,15 @@
 ├── config
 │   └── db-targets.mjs
 ├── docs
-│   ├── AGENT_RULES.md
-│   ├── PIPELINE_SCOPE.md
-│   ├── PROJECT_ISOLATION.md
-│   ├── PROJECT_SCOPE.md
-│   ├── PUBLISHING_GUARDRAILS.md
-│   ├── SECURITY_POLICY.md
-│   ├── SUPPLIER_CRAWL_POLICY.md
 │   ├── admin-control.md
+│   ├── AGENT_RULES.md
 │   ├── architecture.md
 │   ├── code-review-2026-03-13.md
+│   ├── codespaces-resume.md
 │   ├── codespaces-secrets-policy.md
 │   ├── control-plane-architecture.md
-│   ├── data-quality-supplier-intelligence-learning-signal-audit-2026-03-30.md
 │   ├── database-migrations.md
+│   ├── data-quality-supplier-intelligence-learning-signal-audit-2026-03-30.md
 │   ├── ebay-image-policy.md
 │   ├── ebay-live-publish.md
 │   ├── env-db-targeting.md
@@ -44,12 +37,17 @@
 │   ├── order-automation-validation.md
 │   ├── order-purchase-safety-scope.md
 │   ├── phase1-thread-instruction1-canonical-inspection.md
+│   ├── PIPELINE_SCOPE.md
+│   ├── PROJECT_ISOLATION.md
+│   ├── PROJECT_SCOPE.md
+│   ├── PUBLISHING_GUARDRAILS.md
 │   ├── railway-jobs-worker.md
 │   ├── runtime-diagnostics.md
 │   ├── scripts-hygiene-audit-2026-03-13.md
+│   ├── SECURITY_POLICY.md
 │   ├── supplier-account-payment-safety.md
+│   ├── SUPPLIER_CRAWL_POLICY.md
 │   ├── system
-│   │   ├── README.md
 │   │   ├── architecture
 │   │   │   └── system-overview.md
 │   │   ├── automation
@@ -82,6 +80,7 @@
 │   │   │   └── order-flow.md
 │   │   ├── profit-engine
 │   │   │   └── profit-hard-gate.md
+│   │   ├── README.md
 │   │   ├── runtime
 │   │   │   └── env-and-db-targeting.md
 │   │   ├── shipping
@@ -113,6 +112,7 @@
 │       └── _journal.json
 ├── drizzle.config.ts
 ├── eslint.config.mjs
+├── LICENSE
 ├── migrations
 │   ├── 20260306_trend_candidates_dedupe_index.sql
 │   ├── 20260307_create_matches.sql
@@ -126,26 +126,26 @@
 │   ├── 20260308_normalize_supplier_keys_lowercase.sql
 │   ├── 20260308_rebuild_derived_tables_clean.sql
 │   ├── 20260309_add_worker_runs_orders_if_missing.sql
-│   ├── 20260309_controlled_listing_gate_v1.sql
 │   ├── 20260309a_normalize_listing_statuses_for_gate.sql
+│   ├── 20260309_controlled_listing_gate_v1.sql
 │   ├── 20260310_harden_worker_runs_jobs_truth.sql
-│   ├── 20260311_order_automation_foundation.sql
 │   ├── 20260311b_order_items_supplier_linkage_nullable.sql
 │   ├── 20260311c_supplier_orders_manual_workflow_fields.sql
 │   ├── 20260311d_supplier_orders_add_tracking_carrier.sql
 │   ├── 20260311e_supplier_orders_tracking_sync_fields.sql
 │   ├── 20260311f_add_manual_overrides.sql
+│   ├── 20260311_order_automation_foundation.sql
 │   ├── 20260322_add_seller_account_metrics.sql
 │   ├── 20260324_add_ebay_image_normalizations.sql
 │   ├── 20260324_add_lead_submissions.sql
 │   ├── 20260327_add_supplier_shipping_quotes.sql
+│   ├── 20260328b_orders_legacy_columns_nullable.sql
 │   ├── 20260328_customer_intelligence_foundation.sql
 │   ├── 20260328_supplier_linkage_stock_lockdown.sql
-│   ├── 20260328b_orders_legacy_columns_nullable.sql
 │   ├── 20260329_learning_hub_data_quality_fabric.sql
 │   └── 20260330_phase1_self_kill_supplier_trust_listing_evolution_schema.sql
-├── next-env.d.ts
 ├── next.config.ts
+├── next-env.d.ts
 ├── package.json
 ├── pnpm-lock.yaml
 ├── postcss.config.mjs
@@ -192,13 +192,15 @@
 │   ├── quickaibuy-logo.svg
 │   ├── vercel.svg
 │   └── window.svg
-├── quickaibuy_auto_diagnose.sh
 ├── quickaibuy_auto_diagnose_20260326_081212.log
-├── quickaibuy_diag_clean.sh
+├── quickaibuy_auto_diagnose.sh
 ├── quickaibuy_diag_clean_20260326_082657.log
+├── quickaibuy_diag_clean.sh
 ├── railway.json
 ├── railway_worker.env
 ├── railway_worker.env.example
+├── README.md
+├── rebuild-backup.patch
 ├── repo_tree.txt
 ├── review_files
 │   ├── db.ts
@@ -207,7 +209,6 @@
 │   ├── schema.ts
 │   └── trendMarketplaceScanner.ts
 ├── scripts
-│   ├── README.md
 │   ├── apply_sql_file.ts
 │   ├── apply_supplier_shipping_quotes_migration.ts
 │   ├── approve_profitable_candidate.ts
@@ -218,12 +219,12 @@
 │   ├── backfill_listing_previews_for_approved.ts
 │   ├── bootstrap_drizzle_ledger.ts
 │   ├── build_railway_worker_env.ts
-│   ├── check-db-tables.mjs
-│   ├── check-products-raw.mjs
 │   ├── check_active_missing_external_id_rows.mjs
 │   ├── check_approval_readiness_pipeline_static.mjs
 │   ├── check_audit_log.mjs
+│   ├── check_codespace_runtime.ts
 │   ├── check_controlled_listing_gate_v1.mjs
+│   ├── check-db-tables.mjs
 │   ├── check_ebay_inventory_location.ts
 │   ├── check_ebay_live_required_env.ts
 │   ├── check_ebay_order_sync_context.ts
@@ -237,8 +238,8 @@
 │   ├── check_listing_readiness_prereqs.mjs
 │   ├── check_listing_statuses_after_gate.mjs
 │   ├── check_live_state_integrity.ts
-│   ├── check_marketplace_price_urls.mjs
 │   ├── check_marketplace_prices.mjs
+│   ├── check_marketplace_price_urls.mjs
 │   ├── check_match_duplicates.mjs
 │   ├── check_matches.mjs
 │   ├── check_migration_baseline.ts
@@ -252,11 +253,12 @@
 │   ├── check_orders_table.mjs
 │   ├── check_payment_storage_policy.mjs
 │   ├── check_price_guard.ts
+│   ├── check-products-raw.mjs
 │   ├── check_products_raw_titles.mjs
+│   ├── check_profitable_candidates.mjs
 │   ├── check_profit_breakdown.ts
 │   ├── check_profit_duplicates.mjs
 │   ├── check_profit_math.mjs
-│   ├── check_profitable_candidates.mjs
 │   ├── check_publish_queue_and_monitor_v1.mjs
 │   ├── check_publish_rate_limit_state.ts
 │   ├── check_publish_result_rows.mjs
@@ -264,22 +266,25 @@
 │   ├── check_revenue_enablement_truth.ts
 │   ├── check_runtime_db_fingerprint.mjs
 │   ├── check_schema_drift.ts
+│   ├── check_scripts_catalog.ts
+│   ├── check_scripts_runtime_smoke.ts
 │   ├── check_shipping_pricing_readiness.ts
 │   ├── check_stale_publish_in_progress_rows.mjs
 │   ├── check_supplier_queue.ts
 │   ├── check_tracking_sync_readiness.ts
 │   ├── check_tracking_sync_test_order.ts
+│   ├── check_trend_candidates_for_signal.mjs
 │   ├── check_trend_candidates.mjs
 │   ├── check_trend_candidates.sh
-│   ├── check_trend_candidates_for_signal.mjs
 │   ├── check_trend_signals.mjs
 │   ├── check_upstash_isolation.ts
 │   ├── check_upstream_schedules.ts
 │   ├── check_vercel_env_access.ts
-│   ├── check_worker_run_truth.ts
 │   ├── check_worker_runtime_dependencies.ts
+│   ├── check_worker_run_truth.ts
 │   ├── cleanup_trading_image_cache.ts
 │   ├── clear_success_publish_error.ts
+│   ├── codespace_post_attach.sh
 │   ├── compare_local_and_vercel_env.mjs
 │   ├── confirm_env_local.sh
 │   ├── db_inspect.mjs
@@ -304,8 +309,8 @@
 │   ├── fix_single_listing_payload_for_retry.ts
 │   ├── guard_mutation.mjs
 │   ├── ingest_cj_direct_product.ts
-│   ├── inspect-products-raw-columns.mjs
 │   ├── inspect_failed_listing_payload.ts
+│   ├── inspect-products-raw-columns.mjs
 │   ├── inspect_products_raw_keys.mjs
 │   ├── inspect_trend_candidates.ts
 │   ├── install_psql.sh
@@ -322,8 +327,8 @@
 │   │   ├── runtimeDiagnostics.mjs
 │   │   ├── runtimeDiagnostics.ts
 │   │   └── runtimeEnv.mjs
-│   ├── load_env_local.sh
 │   ├── load_env_local_now.sh
+│   ├── load_env_local.sh
 │   ├── make_matching_dirs.sh
 │   ├── make_needed_dirs.sh
 │   ├── manage_env.mjs
@@ -331,10 +336,10 @@
 │   ├── mutate_execute_sql_file.mjs
 │   ├── mutate_git_push_pipeline_to_main.sh
 │   ├── mutate_listings_mark_stale_publish_failed.ts
-│   ├── patch-package-json.mjs
 │   ├── patch_marketplace_scan_summary_labels.py
 │   ├── patch_marketplace_scan_summary_labels_v2.py
 │   ├── patch_marketplace_scan_summary_labels_v3.py
+│   ├── patch-package-json.mjs
 │   ├── peek-products-raw.mjs
 │   ├── persist_post_publish_ebay_audit.ts
 │   ├── pipeline_dashboard.mjs
@@ -344,7 +349,12 @@
 │   ├── probe_runtime.ts
 │   ├── promote_single_listing_ready.ts
 │   ├── pull_vercel_env.sh
+│   ├── __pycache__
+│   │   ├── patch_marketplace_scan_summary_labels.cpython-312.pyc
+│   │   ├── patch_marketplace_scan_summary_labels_v2.cpython-312.pyc
+│   │   └── patch_marketplace_scan_summary_labels_v3.cpython-312.pyc
 │   ├── queue_namespace_diagnostics.ts
+│   ├── README.md
 │   ├── recheck_single_candidate.ts
 │   ├── reclassify_legacy_dry_run_active_listings.ts
 │   ├── recompute_landed_cost_candidates.ts
@@ -389,10 +399,10 @@
 │   ├── run_targeted_candidate_expansion.ts
 │   ├── run_test_product_matcher.sh
 │   ├── run_test_trend_expand.sh
+│   ├── runtime_diagnostics.ts
 │   ├── run_trend_candidates_index_migration.sh
 │   ├── run_trend_candidates_migration.sh
 │   ├── run_worker_engine_with_preflight.ts
-│   ├── runtime_diagnostics.ts
 │   ├── select_sellable_products.ts
 │   ├── show_db_index.sh
 │   ├── sql
@@ -451,23 +461,6 @@
 ├── sources_quickaibuy.zip
 ├── src
 │   ├── app
-│   │   ├── (ops)
-│   │   │   ├── admin
-│   │   │   │   ├── control
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── listings
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── orders
-│   │   │   │   │   └── page.tsx
-│   │   │   │   └── review
-│   │   │   │       └── page.tsx
-│   │   │   ├── dashboard
-│   │   │   │   └── page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── HomePageClient.tsx
-│   │   ├── _components
-│   │   │   ├── AdminChrome.tsx
-│   │   │   └── RefreshButton.tsx
 │   │   ├── api
 │   │   │   ├── admin
 │   │   │   │   ├── allocate-query-budget
@@ -526,6 +519,9 @@
 │   │   │       │   └── route.ts
 │   │   │       └── test
 │   │   │           └── route.ts
+│   │   ├── _components
+│   │   │   ├── AdminChrome.tsx
+│   │   │   └── RefreshButton.tsx
 │   │   ├── ebay
 │   │   │   └── auth
 │   │   │       ├── accepted
@@ -534,7 +530,21 @@
 │   │   │           └── page.tsx
 │   │   ├── favicon.ico
 │   │   ├── globals.css
+│   │   ├── HomePageClient.tsx
 │   │   ├── layout.tsx
+│   │   ├── (ops)
+│   │   │   ├── admin
+│   │   │   │   ├── control
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── listings
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── orders
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── review
+│   │   │   │       └── page.tsx
+│   │   │   ├── dashboard
+│   │   │   │   └── page.tsx
+│   │   │   └── layout.tsx
 │   │   ├── page.tsx
 │   │   ├── privacy
 │   │   │   └── page.tsx
@@ -565,8 +575,8 @@
 │   │   ├── autonomousOps
 │   │   │   ├── backbone.ts
 │   │   │   └── fullCycle.ts
-│   │   ├── bull.ts
 │   │   ├── bullConnection.ts
+│   │   ├── bull.ts
 │   │   ├── control
 │   │   │   ├── controlQuickActions.ts
 │   │   │   ├── getControlPanelData.ts
@@ -616,8 +626,6 @@
 │   │   ├── leads
 │   │   │   └── notifications.ts
 │   │   ├── learningHub
-│   │   │   ├── __tests__
-│   │   │   │   └── productMarketIntelligence.test.ts
 │   │   │   ├── continuousLearning.ts
 │   │   │   ├── contracts.ts
 │   │   │   ├── drift.ts
@@ -627,13 +635,10 @@
 │   │   │   ├── pipelineWriters.ts
 │   │   │   ├── productMarketIntelligence.ts
 │   │   │   ├── scorecard.ts
+│   │   │   ├── __tests__
+│   │   │   │   └── productMarketIntelligence.test.ts
 │   │   │   └── types.ts
 │   │   ├── listings
-│   │   │   ├── __tests__
-│   │   │   │   ├── listingPhase1Diagnostics.test.ts
-│   │   │   │   ├── optimizeListingTitle.test.ts
-│   │   │   │   ├── recoveryState.test.ts
-│   │   │   │   └── supplierSelectionAndImmutability.test.ts
 │   │   │   ├── auditLiveEbayListing.ts
 │   │   │   ├── build_amazon_preview.ts
 │   │   │   ├── build_ebay_preview.ts
@@ -661,39 +666,46 @@
 │   │   │   ├── promoteReadyBatch.ts
 │   │   │   ├── publishIdempotency.ts
 │   │   │   ├── publishRateLimiter.ts
-│   │   │   ├── recovery.ts
 │   │   │   ├── recoveryState.ts
+│   │   │   ├── recovery.ts
 │   │   │   ├── resumePausedListing.ts
 │   │   │   ├── statuses.ts
 │   │   │   ├── supplierSelection.ts
+│   │   │   ├── __tests__
+│   │   │   │   ├── listingPhase1Diagnostics.test.ts
+│   │   │   │   ├── optimizeListingTitle.test.ts
+│   │   │   │   ├── recoveryState.test.ts
+│   │   │   │   └── supplierSelectionAndImmutability.test.ts
 │   │   │   ├── types.ts
 │   │   │   └── validate_listing_preview.ts
 │   │   ├── logger.ts
 │   │   ├── marketplaces
-│   │   │   ├── __tests__
-│   │   │   │   └── match.test.ts
 │   │   │   ├── amazon.ts
 │   │   │   ├── ebay
 │   │   │   │   └── normalizeWarehouseCountry.ts
-│   │   │   ├── ebay.ts
+│   │   │   ├── ebayAuthEnv.ts
 │   │   │   ├── ebayImageHosting.ts
 │   │   │   ├── ebayPublish.ts
+│   │   │   ├── ebay.ts
 │   │   │   ├── match.ts
 │   │   │   ├── normalizeMarketplaceKey.ts
+│   │   │   ├── __tests__
+│   │   │   │   ├── ebayPublishEnv.test.ts
+│   │   │   │   └── match.test.ts
 │   │   │   └── trendMarketplaceScanner.ts
 │   │   ├── matches
 │   │   │   └── ebayMatchEngine.ts
 │   │   ├── matching
-│   │   │   ├── __tests__
-│   │   │   │   └── productMatcher.test.ts
-│   │   │   └── productMatcher.ts
+│   │   │   ├── productMatcher.ts
+│   │   │   └── __tests__
+│   │   │       └── productMatcher.test.ts
 │   │   ├── media
 │   │   │   └── storage.ts
 │   │   ├── operations
 │   │   │   └── runtimeFailure.ts
 │   │   ├── orders
-│   │   │   ├── autoPurchase.ts
 │   │   │   ├── autoPurchaseRateLimiter.ts
+│   │   │   ├── autoPurchase.ts
 │   │   │   ├── customerIntelligence.ts
 │   │   │   ├── ebayFetchOrders.ts
 │   │   │   ├── getAdminOrdersPageData.ts
@@ -720,13 +732,6 @@
 │   │   │   ├── shippingConfig.ts
 │   │   │   └── shippingInference.ts
 │   │   ├── products
-│   │   │   ├── __tests__
-│   │   │   │   ├── canonicalTruth.test.ts
-│   │   │   │   ├── pipelinePolicy.test.ts
-│   │   │   │   ├── shipFromOrigin.test.ts
-│   │   │   │   ├── supplierEnrichment.test.ts
-│   │   │   │   ├── supplierEvidenceClassification.test.ts
-│   │   │   │   └── supplierTrustScore.test.ts
 │   │   │   ├── canonicalTruth.ts
 │   │   │   ├── discoverProducts.ts
 │   │   │   ├── pipelinePolicy.ts
@@ -739,36 +744,43 @@
 │   │   │   ├── supplierEnrichment.ts
 │   │   │   ├── supplierEvidenceClassification.ts
 │   │   │   ├── supplierQuality.ts
+│   │   │   ├── suppliers
+│   │   │   │   ├── alibaba.ts
+│   │   │   │   ├── aliexpress.ts
+│   │   │   │   ├── cjdropshipping.ts
+│   │   │   │   ├── fetchWithFallback.ts
+│   │   │   │   ├── parserSignals.ts
+│   │   │   │   ├── temu.ts
+│   │   │   │   └── types.ts
 │   │   │   ├── supplierSnapshots.ts
-│   │   │   └── suppliers
-│   │   │       ├── alibaba.ts
-│   │   │       ├── aliexpress.ts
-│   │   │       ├── cjdropshipping.ts
-│   │   │       ├── fetchWithFallback.ts
-│   │   │       ├── parserSignals.ts
-│   │   │       ├── temu.ts
-│   │   │       └── types.ts
+│   │   │   └── __tests__
+│   │   │       ├── canonicalTruth.test.ts
+│   │   │       ├── pipelinePolicy.test.ts
+│   │   │       ├── shipFromOrigin.test.ts
+│   │   │       ├── supplierEnrichment.test.ts
+│   │   │       ├── supplierEvidenceClassification.test.ts
+│   │   │       └── supplierTrustScore.test.ts
 │   │   ├── profit
-│   │   │   ├── __tests__
-│   │   │   │   ├── opportunitySignals.test.ts
-│   │   │   │   └── supplierPriority.test.ts
 │   │   │   ├── activeSupplierReevaluation.ts
 │   │   │   ├── aiOpportunityValidation.ts
 │   │   │   ├── hardProfitGate.ts
 │   │   │   ├── opportunitySignals.ts
-│   │   │   ├── priceGuard.ts
 │   │   │   ├── priceGuardConfig.ts
+│   │   │   ├── priceGuard.ts
 │   │   │   ├── profitAssumptions.ts
 │   │   │   ├── profitEngine.ts
 │   │   │   ├── realProfitCalculator.ts
 │   │   │   ├── shippingRepricing.ts
-│   │   │   └── supplierPriority.ts
+│   │   │   ├── supplierPriority.ts
+│   │   │   └── __tests__
+│   │   │       ├── opportunitySignals.test.ts
+│   │   │       └── supplierPriority.test.ts
 │   │   ├── queryBudget
 │   │   │   └── allocator.ts
 │   │   ├── queue
 │   │   │   └── bullmq.ts
-│   │   ├── queue.ts
 │   │   ├── queueNamespace.ts
+│   │   ├── queue.ts
 │   │   ├── redis.ts
 │   │   ├── review
 │   │   │   ├── applyCandidateDecision.ts
@@ -783,16 +795,16 @@
 │   │   │   └── supplierLinkage.ts
 │   │   ├── server
 │   │   ├── suppliers
-│   │   │   ├── __tests__
-│   │   │   │   ├── discoveryWave.test.ts
-│   │   │   │   ├── intelligence.test.ts
-│   │   │   │   └── policySurface.test.ts
 │   │   │   ├── cjApi.ts
 │   │   │   ├── cjTracking.ts
 │   │   │   ├── discoveryWave.ts
 │   │   │   ├── intelligence.ts
 │   │   │   ├── policySurface.ts
-│   │   │   └── telemetry.ts
+│   │   │   ├── telemetry.ts
+│   │   │   └── __tests__
+│   │   │       ├── discoveryWave.test.ts
+│   │   │       ├── intelligence.test.ts
+│   │   │       └── policySurface.test.ts
 │   │   ├── time
 │   │   │   └── jordan.ts
 │   │   └── trends
@@ -814,4 +826,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-126 directories, 689 files
+127 directories, 700 files
