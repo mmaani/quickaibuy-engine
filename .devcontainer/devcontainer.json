@@ -1,6 +1,9 @@
 {
   "name": "quickaibuy-engine",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/git-lfs:1": {}
+  },
   "customizations": {
     "vscode": {
       "settings": {
@@ -20,6 +23,6 @@
       "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "corepack enable && pnpm install --no-frozen-lockfile && npm install -g @openai/codex",
+  "postCreateCommand": "bash .devcontainer/bootstrap.sh",
   "postAttachCommand": "bash scripts/codespace_post_attach.sh"
 }
