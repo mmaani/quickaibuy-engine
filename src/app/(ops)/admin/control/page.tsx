@@ -140,6 +140,13 @@ function formatDateTime(value: string | null): string {
   });
 }
 
+function enforcementTone(severity: string | null | undefined): string {
+  const normalized = String(severity ?? "").trim().toUpperCase();
+  if (normalized === "CRITICAL") return "border-rose-400/30 bg-rose-500/10 text-rose-100";
+  if (normalized === "HIGH") return "border-amber-400/30 bg-amber-500/10 text-amber-100";
+  return "border-white/15 bg-white/[0.06] text-white/80";
+}
+
 function yesNoUnknown(value: boolean | null): string {
   if (value == null) return "Unknown";
   return value ? "Yes" : "No";
@@ -1290,21 +1297,63 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <DataTable rows={data.workerQueueHealth.recentWorkerFailures} empty="No recent worker failures." />
             <DataTable rows={data.workerQueueHealth.recentJobFailures} empty="No recent job failures." />
           </div>
-          <div className="mt-4">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-white/55">Canonical enforcement violations (deduped recent evidence)</div>
-            <DataTable
-              rows={data.workerQueueHealth.recentCanonicalEnforcementViolations.map((row) => ({
-                timestamp: row.eventTs ? formatDateTime(row.eventTs) : "unknown",
-                blockedAction: row.blockedAction ?? "unknown",
-                violationType: row.violationType ?? "unknown",
-                executionPath: row.executionPath ?? "unknown",
-                severity: row.severity ?? "unknown",
-                occurrences: row.occurrenceCount > 1 ? row.occurrenceCount : 1,
-                reason: row.reason ?? "unspecified",
-                scope: "historical evidence",
-              }))}
-              empty="No canonical enforcement violations recorded recently."
-            />
+          <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-white/55">Canonical enforcement evidence</div>
+                <div className="mt-2 text-lg font-semibold text-white">Guardrail blocks summarized as incidents</div>
+                <div className="mt-1 text-sm text-white/72">
+                  Repeated identical blocks are collapsed here so historical guardrail evidence does not read like duplicated active incidents.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs text-white/75">
+                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1">
+                  incidents {data.workerQueueHealth.recentCanonicalEnforcementViolations.length}
+                </span>
+                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1">
+                  total blocked attempts {data.workerQueueHealth.recentCanonicalEnforcementViolations.reduce((sum, row) => sum + (row.occurrenceCount ?? 1), 0)}
+                </span>
+                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1">
+                  latest evidence {data.workerQueueHealth.recentCanonicalEnforcementViolations[0]?.eventTs ? formatDateTime(data.workerQueueHealth.recentCanonicalEnforcementViolations[0].eventTs) : "unknown"}
+                </span>
+              </div>
+            </div>
+            {!data.workerQueueHealth.recentCanonicalEnforcementViolations.length ? (
+              <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3 text-sm text-white/55">
+                No canonical enforcement violations recorded recently.
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {data.workerQueueHealth.recentCanonicalEnforcementViolations.map((row, idx) => (
+                  <div key={[row.blockedAction ?? "unknown", row.executionPath ?? "unknown", String(idx)].join(":")} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-white">{row.blockedAction ?? "unknown action"}</div>
+                        <div className="mt-1 text-xs text-white/55">{row.executionPath ?? "unknown path"}</div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className={["rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]", enforcementTone(row.severity)].join(" ")}>
+                          {row.severity ?? "unknown"}
+                        </span>
+                        <span className="rounded-full border border-white/15 bg-white/[0.04] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-white/75">
+                          historical evidence
+                        </span>
+                        {row.occurrenceCount > 1 ? (
+                          <span className="rounded-full border border-white/15 bg-white/[0.04] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-white/75">
+                            {row.occurrenceCount} attempts
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="mt-3 text-sm leading-6 text-white/80">{row.reason ?? "unspecified"}</div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/60">
+                      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1">{row.violationType ?? "unknown violation"}</span>
+                      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1">latest {row.eventTs ? formatDateTime(row.eventTs) : "unknown"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Section>
 
