@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import RefreshButton from "@/app/_components/RefreshButton";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
 import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
+import { classifyRuntimeFailure } from "@/lib/operations/runtimeFailure";
 import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import { CONTROL_QUICK_ACTIONS, getControlQuickActionBlockedReason } from "@/lib/control/controlQuickActions";
 import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
@@ -356,22 +357,33 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
   const resolvedSearchParams = await searchParams;
   let data: Awaited<ReturnType<typeof getControlPanelData>> | null = null;
   let controlPlane: Awaited<ReturnType<typeof getControlPlaneOverview>> | null = null;
+  let loadError: unknown = null;
 
   try {
     [data, controlPlane] = await Promise.all([getControlPanelData(), getControlPlaneOverview()]);
-  } catch {}
+  } catch (error) {
+    loadError = error;
+  }
 
   if (!data) {
+    const failure = loadError ? classifyRuntimeFailure(loadError) : null;
+    const isTransientInfraFailure = failure?.class === "infrastructure" && failure.retryable;
     return (
       <main className="relative min-h-screen bg-app text-white">
         <div className="relative mx-auto grid max-w-[900px] gap-5 px-4 py-6 sm:px-6 lg:px-8">
           <header className="glass-card rounded-3xl border border-rose-300/30 bg-rose-400/10 px-5 py-4 sm:px-6">
             <h1 className="m-0 text-2xl font-bold text-rose-100">Control panel temporarily unavailable</h1>
             <p className="mt-2 text-sm text-rose-100/90">
-              We couldn&apos;t load control panel data right now. Please retry in a minute.
+              {isTransientInfraFailure
+                ? "Transient Neon or Upstash connectivity failed during page load. Retry in 30-60 seconds."
+                : "We couldn&apos;t load control panel data right now. Please retry in a minute."}
             </p>
             <p className="mt-2 text-xs text-rose-100/70">
-              If the issue persists, check runtime diagnostics and server logs.
+              {loadError instanceof Error
+                ? loadError.message
+                : isTransientInfraFailure
+                  ? "If retries keep failing, check Codespaces DNS resolution, runtime diagnostics, and server logs."
+                  : "If the issue persists, check runtime diagnostics and server logs."}
             </p>
           </header>
         </div>

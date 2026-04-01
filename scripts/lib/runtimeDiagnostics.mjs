@@ -33,23 +33,53 @@ function truthyEnv(key) {
   return Boolean(String(process.env[key] ?? "").trim());
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientNetworkError(error) {
+  const code = error?.code ? String(error.code) : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    code === "EAI_AGAIN" ||
+    code === "ENOTFOUND" ||
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "ETIMEDOUT" ||
+    code === "ENETUNREACH" ||
+    /\b(EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH)\b/i.test(message)
+  );
+}
+
 async function lookupHost(host) {
-  try {
-    const addresses = await dns.lookup(host, { all: true });
-    return {
-      ok: true,
-      addresses: addresses.map((entry) => entry.address),
-      family: addresses.map((entry) => entry.family),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      code: error?.code ?? null,
-      message: error instanceof Error ? error.message : String(error),
-      addresses: [],
-      family: [],
-    };
+  const attempts = Number(process.env.RUNTIME_DNS_RETRY_ATTEMPTS ?? 3);
+  const baseDelayMs = Number(process.env.RUNTIME_DNS_RETRY_DELAY_MS ?? 400);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const addresses = await dns.lookup(host, { all: true });
+      return {
+        ok: true,
+        addresses: addresses.map((entry) => entry.address),
+        family: addresses.map((entry) => entry.family),
+      };
+    } catch (error) {
+      lastError = error;
+      if (!isTransientNetworkError(error) || attempt >= attempts) {
+        break;
+      }
+      await sleep(baseDelayMs * attempt);
+    }
   }
+
+  return {
+    ok: false,
+    code: lastError?.code ?? null,
+    message: lastError instanceof Error ? lastError.message : String(lastError),
+    addresses: [],
+    family: [],
+  };
 }
 
 function tcpProbe(host, port, timeoutMs = 5000) {
