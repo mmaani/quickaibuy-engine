@@ -46,9 +46,9 @@ function toneClass(tone: Tone): string {
 }
 
 function stageTone(stage: StageStatus): Tone {
-  if (stage.state === "fresh") return "ok";
-  if (stage.state === "warning") return "warning";
-  if (stage.state === "stale") return "error";
+  if (stage.renderState === "HEALTHY") return "ok";
+  if (stage.renderState === "DEGRADED" || stage.renderState === "UNKNOWN" || stage.renderState === "ZERO") return "warning";
+  if (stage.renderState === "STALE" || stage.renderState === "PARTIAL_FAILURE" || stage.renderState === "QUERY_FAILED") return "error";
   return "default";
 }
 
@@ -124,7 +124,7 @@ function StageMeter({
     <div>
       <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-white/50">
         <span>Freshness coverage</span>
-        <span>{denominator > 0 ? `${pct.toFixed(0)}%` : "0%"}</span>
+        <span>{denominator > 0 ? `${pct.toFixed(0)}%` : total == null || fresh == null ? "unknown" : "0%"}</span>
       </div>
       <div className="h-2.5 overflow-hidden rounded-full bg-white/8">
         <div
@@ -140,7 +140,7 @@ function StageCard({ stage }: { stage: StageStatus }) {
   const tone = stageTone(stage);
 
   return (
-    <div className="group relative overflow-hidden rounded-[1.6rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.02))] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.34)]">
+    <a href={stage.actionableHref} className="group relative block overflow-hidden rounded-[1.6rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.02))] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.34)]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.12),transparent_36%)] opacity-70" />
       <div className="relative">
         <div className="flex items-start justify-between gap-3">
@@ -149,7 +149,7 @@ function StageCard({ stage }: { stage: StageStatus }) {
             <div className="mt-1 text-xs uppercase tracking-[0.22em] text-white/40">{toneLabel(tone)}</div>
           </div>
           <div className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${toneClass(tone)}`}>
-            {stage.state}
+            {stage.renderState.replaceAll("_", " ")}
           </div>
         </div>
 
@@ -203,7 +203,7 @@ function StageCard({ stage }: { stage: StageStatus }) {
           {stage.detail}
         </div>
       </div>
-    </div>
+    </a>
   );
 }
 
@@ -269,19 +269,21 @@ function AlertCard({
   title,
   detail,
   tone,
+  href,
 }: {
   title: string;
   detail: string;
   tone: Tone;
+  href: string;
 }) {
   return (
-    <div className={`relative overflow-hidden rounded-[1.6rem] border p-4 ${toneClass(tone)}`}>
+    <a href={href} className={`relative block overflow-hidden rounded-[1.6rem] border p-4 ${toneClass(tone)}`}>
       <div className={`pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b ${progressBarClass(tone)}`} />
       <div className="pl-3">
         <div className="text-sm font-semibold">{title}</div>
         <div className="mt-2 text-sm leading-6 text-white/80">{detail}</div>
       </div>
-    </div>
+    </a>
   );
 }
 
@@ -373,7 +375,11 @@ export default async function DashboardPage() {
   let controlPlane: Awaited<ReturnType<typeof getControlPlaneOverview>> | null = null;
 
   try {
-    [data, controlPlane] = await Promise.all([getDashboardData(), getControlPlaneOverview()]);
+    data = await getDashboardData();
+  } catch {}
+
+  try {
+    controlPlane = await getControlPlaneOverview();
   } catch {}
 
   if (!data) {
@@ -397,8 +403,30 @@ export default async function DashboardPage() {
     );
   }
 
-  const healthTone = data.headline.criticalIssues > 0 ? "error" : data.headline.manualReviewDueToStale > 0 ? "warning" : "ok";
-  const marketplaceTone = data.headline.staleMarketplaceSnapshots > 0 ? "error" : "ok";
+  const stageByKey = new Map(data.stages.map((stage) => [stage.key, stage] as const));
+  const trendStage = stageByKey.get("trend");
+  const supplierStage = stageByKey.get("supplier");
+  const marketplaceStage = stageByKey.get("marketplace");
+  const matchingStage = stageByKey.get("matching");
+  const profitabilityStage = stageByKey.get("profitability");
+  const listingReadinessStage = stageByKey.get("listing_readiness");
+
+  const overallHealthTone: Tone = data.stages.some((stage) => stage.renderState === "QUERY_FAILED" || stage.renderState === "PARTIAL_FAILURE" || stage.renderState === "STALE")
+    ? "error"
+    : data.stages.some((stage) => stage.renderState === "DEGRADED" || stage.renderState === "UNKNOWN" || stage.renderState === "ZERO")
+      ? "warning"
+      : "ok";
+  const profitabilityTone = profitabilityStage ? stageTone(profitabilityStage) : "default";
+  const marketplaceTone = marketplaceStage ? stageTone(marketplaceStage) : "default";
+  const trendTone = trendStage ? stageTone(trendStage) : "default";
+  const supplierTone = supplierStage ? stageTone(supplierStage) : "default";
+  const matchingTone = matchingStage ? stageTone(matchingStage) : "default";
+  const listingReadinessTone = listingReadinessStage ? stageTone(listingReadinessStage) : "default";
+  const alertsTone: Tone = data.alerts.some((alert) => alert.tone === "error")
+    ? "error"
+    : data.alerts.some((alert) => alert.tone === "warning")
+      ? "warning"
+      : "ok";
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-app text-white">
@@ -418,7 +446,7 @@ export default async function DashboardPage() {
             <div>
               <div className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.05] px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-cyan-100/72">
                 <span>Operational Control Surface</span>
-                <span className={`rounded-full border px-2 py-1 ${toneClass(healthTone)}`}>{toneLabel(healthTone)}</span>
+                <span className={`rounded-full border px-2 py-1 ${toneClass(overallHealthTone)}`}>{toneLabel(overallHealthTone)}</span>
               </div>
               <h1 className="max-w-4xl text-4xl font-semibold tracking-[-0.04em] text-white sm:text-5xl">
                 Monitoring Dashboard
@@ -445,25 +473,25 @@ export default async function DashboardPage() {
                 <HeroMetric
                   label="Fresh Actionable"
                   value={data.headline.actionableFreshCandidates}
-                  tone={data.headline.actionableFreshCandidates > 0 ? "ok" : "warning"}
+                  tone={profitabilityTone}
                   detail="Candidates that are fresh, approved, and listing-eligible."
                 />
                 <HeroMetric
                   label="Approved And Fresh"
                   value={data.headline.approvedFreshCandidates}
-                  tone={data.headline.approvedFreshCandidates > 0 ? "ok" : "warning"}
+                  tone={profitabilityTone}
                   detail="Approved candidates that still sit within current freshness policy."
                 />
                 <HeroMetric
                   label="Stale Snapshot Reviews"
                   value={data.headline.manualReviewDueToStale}
-                  tone={data.headline.manualReviewDueToStale > 0 ? "warning" : "ok"}
+                  tone={profitabilityTone}
                   detail="Manual review rows attributable to stale supplier or marketplace snapshots."
                 />
                 <HeroMetric
                   label="Critical Issues"
                   value={data.headline.criticalIssues}
-                  tone={data.headline.criticalIssues > 0 ? "error" : "ok"}
+                  tone={overallHealthTone}
                   detail="Current error-level operational issues surfaced from canonical truth."
                 />
               </div>
@@ -483,7 +511,7 @@ export default async function DashboardPage() {
                   <CompactStat label="DB" value={data.infrastructure.db.status.toUpperCase()} tone={data.infrastructure.db.status === "ok" ? "ok" : "error"} />
                   <CompactStat label="Redis" value={data.infrastructure.redis.status.toUpperCase()} tone={data.infrastructure.redis.status === "ok" ? "ok" : "warning"} />
                   <CompactStat label="Stale eBay Snapshots" value={data.headline.staleMarketplaceSnapshots} tone={marketplaceTone} />
-                  <CompactStat label="Open Alerts" value={data.alerts.length} tone={data.alerts.length > 0 ? "warning" : "ok"} />
+                  <CompactStat label="Open Alerts" value={data.alerts.length} tone={alertsTone} />
                 </div>
               </div>
 
@@ -520,6 +548,7 @@ export default async function DashboardPage() {
                   title={alert.title}
                   detail={alert.detail}
                   tone={alertToneToCard(alert.tone)}
+                  href={alert.href}
                 />
               ))}
             </div>
@@ -585,18 +614,18 @@ export default async function DashboardPage() {
               <StatCard
                 label="Ready To Publish"
                 value={data.listingReadiness.readyToPublish}
-                tone={data.listingReadiness.readyToPublish > 0 ? "ok" : "default"}
+                tone={listingReadinessTone}
               />
               <StatCard label="Preview" value={data.listingReadiness.preview} />
               <StatCard
                 label="Active Listings"
                 value={data.listingReadiness.active}
-                tone={data.listingReadiness.active > 0 ? "ok" : "default"}
+                tone={listingReadinessTone}
               />
               <StatCard
                 label="Publish Failed"
                 value={data.listingReadiness.publishFailed}
-                tone={data.listingReadiness.publishFailed > 0 ? "error" : "ok"}
+                tone={listingReadinessTone}
               />
             </div>
           </Section>
@@ -662,7 +691,7 @@ export default async function DashboardPage() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <StatCard label="Trend Signals" value={data.trend.totalSignals} />
-                  <StatCard label="Signals In 24h" value={data.trend.recentSignals24h} tone={data.trend.recentSignals24h > 0 ? "ok" : "warning"} />
+                  <StatCard label="Signals In 24h" value={data.trend.recentSignals24h} tone={trendTone} />
                   <StatCard
                     label="Manual Seed Signals"
                     value={data.trend.manualSeedSignals}
@@ -687,8 +716,8 @@ export default async function DashboardPage() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <StatCard label="Supplier Rows" value={data.supplier.totalRows} />
-                  <StatCard label="Fresh Rows" value={data.supplier.freshRows} tone={data.supplier.freshRows > 0 ? "ok" : "warning"} />
-                  <StatCard label="Stale Rows" value={data.supplier.staleRows} tone={data.supplier.staleRows > 0 ? "warning" : "ok"} />
+                  <StatCard label="Fresh Rows" value={data.supplier.freshRows} tone={supplierTone} />
+                  <StatCard label="Stale Rows" value={data.supplier.staleRows} tone={supplierTone === "ok" ? "ok" : supplierTone} />
                   <StatCard label="Last Snapshot" value={formatCompactDateTime(data.supplier.latestSnapshotTs)} />
                 </div>
                 <div className="mt-5">
@@ -714,8 +743,8 @@ export default async function DashboardPage() {
                 <div className="mt-2 text-xl font-semibold text-white">eBay Snapshot Health</div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <StatCard label="Total eBay Rows" value={data.marketplace.totalEbayRows} />
-                  <StatCard label="Fresh eBay Rows" value={data.marketplace.freshEbayRows} tone={data.marketplace.freshEbayRows > 0 ? "ok" : "error"} />
-                  <StatCard label="Stale eBay Rows" value={data.marketplace.staleEbayRows} tone={data.marketplace.staleEbayRows > 0 ? "error" : "ok"} />
+                  <StatCard label="Fresh eBay Rows" value={data.marketplace.freshEbayRows} tone={marketplaceTone} />
+                  <StatCard label="Stale eBay Rows" value={data.marketplace.staleEbayRows} tone={marketplaceTone} />
                   <StatCard label="Last Scan" value={formatCompactDateTime(data.marketplace.latestSuccessfulRunTs ?? data.marketplace.latestSnapshotTs)} />
                 </div>
               </div>
@@ -725,9 +754,9 @@ export default async function DashboardPage() {
                 <div className="mt-2 text-xl font-semibold text-white">Active eBay Matches</div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <StatCard label="Active Matches" value={data.matching.totalMatches} />
-                  <StatCard label="Fresh In 24h" value={data.matching.freshMatches24h} tone={data.matching.freshMatches24h > 0 ? "ok" : "warning"} />
+                  <StatCard label="Fresh In 24h" value={data.matching.freshMatches24h} tone={matchingTone} />
                   <StatCard label="Avg Confidence" value={formatPercent(data.matching.averageConfidence == null ? null : data.matching.averageConfidence * 100)} />
-                  <StatCard label="Low Confidence" value={data.matching.lowConfidenceCount} tone={data.matching.lowConfidenceCount > 0 ? "warning" : "ok"} />
+                  <StatCard label="Low Confidence" value={data.matching.lowConfidenceCount} tone={matchingTone === "error" ? "error" : matchingTone === "warning" ? "warning" : "ok"} />
                 </div>
               </div>
             </div>
@@ -794,6 +823,24 @@ export default async function DashboardPage() {
             </div>
           </div>
         </Section>
+
+        <Section
+          eyebrow="Lineage"
+          title="Field Lineage"
+          description="Each dashboard metric documents its canonical source, the query family behind it, the business rule, and the fail-closed behavior when that source is unavailable."
+        >
+          <DataTable rows={data.fieldLineage} empty="No dashboard lineage metadata available" />
+        </Section>
+
+        {data.queryFailures.length ? (
+          <Section
+            eyebrow="Failures"
+            title="Query Failures"
+            description="These groups failed to load from canonical sources. The dashboard does not treat those failures as zero-state data."
+          >
+            <DataTable rows={data.queryFailures} empty="No query failures detected" />
+          </Section>
+        ) : null}
 
         <Section
           eyebrow="Evidence"

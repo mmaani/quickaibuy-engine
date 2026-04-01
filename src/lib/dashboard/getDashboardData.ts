@@ -2,19 +2,35 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobsQueue } from "@/lib/bull";
 import { JOB_NAMES } from "@/lib/jobNames";
+import {
+  buildDashboardAlertHref,
+  deriveCoverageState,
+  deriveFreshnessState,
+  deriveHealthStatus,
+  deriveRenderState,
+  deriveSeverity,
+  getReadOnlyRefreshDescription,
+    type DashboardAlert,
+  type DashboardFieldLineage,
+  type DashboardMetricState,
+} from "@/lib/dashboard/status";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
-type FreshnessState = "fresh" | "warning" | "stale" | "unknown";
-type AlertTone = "info" | "warning" | "error";
 type QueueScheduleEntry = { name?: string; id?: string | null; key?: string; every?: number | null; next?: number | null };
+type QueryFailure = { key: string; source: string; message: string };
 
 export type StageStatus = {
   key: string;
   label: string;
-  state: FreshnessState;
+  state: DashboardMetricState;
+  freshnessState: DashboardMetricState;
+  healthStatus: DashboardMetricState;
+  coverageState: ReturnType<typeof deriveCoverageState>;
+  severity: ReturnType<typeof deriveSeverity>;
+  renderState: ReturnType<typeof deriveRenderState>;
   thresholdHours: number;
   lastDataTs: string | null;
   lastSuccessfulRunTs: string | null;
@@ -23,7 +39,9 @@ export type StageStatus = {
   staleRows: number | null;
   latestFailedRunTs?: string | null;
   scheduleActive?: boolean;
+  queryFailed: boolean;
   dominantBlocker?: string;
+  actionableHref: string;
   detail: string;
 };
 
@@ -47,11 +65,7 @@ export type DashboardData = {
       vercelEnv: string;
     };
   };
-  refreshBehavior: {
-    pageCaching: "force-dynamic";
-    dataSource: string;
-    refreshAction: string;
-  };
+  refreshBehavior: ReturnType<typeof getReadOnlyRefreshDescription>;
   headline: {
     actionableFreshCandidates: number;
     approvedFreshCandidates: number;
@@ -133,8 +147,10 @@ export type DashboardData = {
     recentWorkerRuns: Row[];
     recentAuditEvents: Row[];
   };
+  queryFailures: QueryFailure[];
+  fieldLineage: DashboardFieldLineage[];
   adminLinks: Array<{ label: string; href: string; note: string }>;
-  alerts: Array<{ id: string; tone: AlertTone; title: string; detail: string }>;
+  alerts: DashboardAlert[];
 };
 
 function normalizeRows(result: unknown): Row[] {
@@ -151,7 +167,27 @@ async function runQuery(query: string): Promise<Row[]> {
   return normalizeRows(result);
 }
 
+async function readOnlyQuery<T>(
+  queryFailures: QueryFailure[],
+  key: string,
+  source: string,
+  loader: () => Promise<T>,
+  fallback: T
+): Promise<T> {
+  try {
+    return await loader();
+  } catch (error) {
+    queryFailures.push({
+      key,
+      source,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return fallback;
+  }
+}
+
 function toNum(value: unknown): number {
+
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
 }
@@ -257,73 +293,70 @@ function buildStageStatus(input: {
   totalRows: number | null;
   freshRows: number | null;
   staleRows: number | null;
+  latestFailedRunTs?: string | null;
+  scheduleActive?: boolean;
+  queryFailed?: boolean;
+  actionableHref: string;
   detailFresh: string;
   detailStale: string;
   detailUnknown: string;
+  detailZero?: string;
+  detailFailure?: string;
 }): StageStatus {
-  const totalRows = input.totalRows;
-  const freshRows = input.freshRows;
-  const staleRows = input.staleRows;
+  const freshnessState = deriveFreshnessState({
+    totalRows: input.totalRows,
+    freshRows: input.freshRows,
+    staleRows: input.staleRows,
+    lastDataTs: input.lastDataTs,
+    lastSuccessfulRunTs: input.lastSuccessfulRunTs,
+    latestFailedRunTs: input.latestFailedRunTs,
+    scheduleActive: input.scheduleActive,
+    queryFailed: input.queryFailed,
+  });
+  const healthStatus = deriveHealthStatus({
+    totalRows: input.totalRows,
+    freshRows: input.freshRows,
+    staleRows: input.staleRows,
+    lastDataTs: input.lastDataTs,
+    lastSuccessfulRunTs: input.lastSuccessfulRunTs,
+    latestFailedRunTs: input.latestFailedRunTs,
+    scheduleActive: input.scheduleActive,
+    queryFailed: input.queryFailed,
+  });
+  const renderState = deriveRenderState(healthStatus, { queryFailed: input.queryFailed });
 
-  if (!input.lastDataTs || totalRows == null) {
-    return {
-      key: input.key,
-      label: input.label,
-      state: "unknown",
-      thresholdHours: input.thresholdHours,
-      lastDataTs: input.lastDataTs,
-      lastSuccessfulRunTs: input.lastSuccessfulRunTs,
-      totalRows,
-      freshRows,
-      staleRows,
-      detail: input.detailUnknown,
-    };
-  }
-
-  if ((freshRows ?? 0) === 0) {
-    return {
-      key: input.key,
-      label: input.label,
-      state: "stale",
-      thresholdHours: input.thresholdHours,
-      lastDataTs: input.lastDataTs,
-      lastSuccessfulRunTs: input.lastSuccessfulRunTs,
-      totalRows,
-      freshRows,
-      staleRows,
-      detail: input.detailStale,
-    };
-  }
-
-  if ((staleRows ?? 0) > 0) {
-    return {
-      key: input.key,
-      label: input.label,
-      state: "warning",
-      thresholdHours: input.thresholdHours,
-      lastDataTs: input.lastDataTs,
-      lastSuccessfulRunTs: input.lastSuccessfulRunTs,
-      totalRows,
-      freshRows,
-      staleRows,
-      detail: input.detailStale,
-    };
-  }
+  let detail = input.detailFresh;
+  if (healthStatus === "TOTAL_FAILURE") detail = input.detailFailure ?? input.detailUnknown;
+  else if (healthStatus === "UNKNOWN") detail = input.detailUnknown;
+  else if (healthStatus === "ZERO_VALID") detail = input.detailZero ?? "No canonical rows currently satisfy this metric.";
+  else if (healthStatus === "STALE" || healthStatus === "PARTIAL_FAILURE" || healthStatus === "FRESH_DEGRADED") detail = input.detailStale;
 
   return {
     key: input.key,
     label: input.label,
-    state: "fresh",
+    state: healthStatus,
+    freshnessState,
+    healthStatus,
+    coverageState: deriveCoverageState({
+      totalRows: input.totalRows,
+      freshRows: input.freshRows,
+      queryFailed: input.queryFailed,
+    }),
+    severity: deriveSeverity(healthStatus),
+    renderState,
     thresholdHours: input.thresholdHours,
     lastDataTs: input.lastDataTs,
     lastSuccessfulRunTs: input.lastSuccessfulRunTs,
-    totalRows,
-    freshRows,
-    staleRows,
-    detail: input.detailFresh,
+    totalRows: input.totalRows,
+    freshRows: input.freshRows,
+    staleRows: input.staleRows,
+    latestFailedRunTs: input.latestFailedRunTs,
+    scheduleActive: input.scheduleActive,
+    queryFailed: Boolean(input.queryFailed),
+    actionableHref: input.actionableHref,
+    detail,
   };
 }
-
 export async function getDashboardData(): Promise<DashboardData> {
   const thresholds = getPriceGuardThresholds();
   const trendWindowHours = 24;
@@ -331,6 +364,8 @@ export async function getDashboardData(): Promise<DashboardData> {
   const marketplaceWindowHours = Math.max(1, thresholds.maxMarketplaceSnapshotAgeHours);
   const matchWindowHours = 24;
   const profitabilityWindowHours = Math.max(supplierWindowHours, marketplaceWindowHours);
+
+  const queryFailures: QueryFailure[] = [];
 
   const [
     dbHealth,
@@ -374,7 +409,8 @@ export async function getDashboardData(): Promise<DashboardData> {
       status: "error" as const,
       detail: error instanceof Error ? error.message : "Redis health check failed",
     })),
-    runQuery(`
+    readOnlyQuery(queryFailures, "trend_summary", "trend_signals", () =>
+      runQuery(`
       select
         count(*)::int as total_signals,
         count(*) filter (where captured_ts >= now() - interval '${trendWindowHours} hours')::int as fresh_signals,
@@ -384,8 +420,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         )::int as manual_seed_signals,
         max(captured_ts) as latest_signal_ts
       from trend_signals
-    `).then((rows) => rows[0] ?? {}).catch(() => ({})),
-    runQuery(`
+    `).then((rows) => rows[0] ?? {}), {}),
+    readOnlyQuery(queryFailures, "trend_recent_signals", "trend_signals", () =>
+      runQuery(`
       select
         id,
         source,
@@ -397,8 +434,9 @@ export async function getDashboardData(): Promise<DashboardData> {
       from trend_signals
       order by captured_ts desc nulls last, id desc
       limit 8
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "trend_recent_candidates", "trend_candidates", () =>
+      runQuery(`
       select
         tc.id,
         tc.candidate_value,
@@ -410,35 +448,42 @@ export async function getDashboardData(): Promise<DashboardData> {
       left join trend_signals ts on ts.id = tc.trend_signal_id
       order by tc.created_ts desc nulls last, tc.id desc
       limit 8
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "trend_candidates_summary", "trend_candidates", () =>
+      runQuery(`
       select
         count(*)::int as total_rows,
         count(*) filter (where created_ts >= now() - interval '${trendWindowHours} hours')::int as fresh_rows,
         count(*) filter (where created_ts < now() - interval '${trendWindowHours} hours')::int as stale_rows
       from trend_candidates
-    `).then((rows) => rows[0] ?? {}).catch(() => ({})),
-    runQuery(`
+    `).then((rows) => rows[0] ?? {}), {}),
+    readOnlyQuery(queryFailures, "supplier_summary", "products_raw", () =>
+      runQuery(`
       select
         count(*)::int as total_rows,
         count(*) filter (where snapshot_ts >= now() - interval '${supplierWindowHours} hours')::int as fresh_rows,
         count(*) filter (where snapshot_ts < now() - interval '${supplierWindowHours} hours')::int as stale_rows,
         max(snapshot_ts) as latest_snapshot_ts
       from products_raw
-    `).then((rows) => rows[0] ?? {}).catch(() => ({})),
-    runQuery(`
+    `).then((rows) => rows[0] ?? {}), {}),
+    readOnlyQuery(queryFailures, "supplier_by_supplier", "products_raw", () =>
+      runQuery(`
       select
-        supplier_key,
+        case
+          when lower(trim(coalesce(supplier_key, ''))) in ('cj', 'cj dropshipping', 'cjdropshipping') then 'cjdropshipping'
+          else lower(trim(coalesce(supplier_key, '')))
+        end as supplier_key,
         count(*)::int as total_rows,
         count(*) filter (where snapshot_ts >= now() - interval '${supplierWindowHours} hours')::int as fresh_rows,
         count(*) filter (where snapshot_ts < now() - interval '${supplierWindowHours} hours')::int as stale_rows,
         max(snapshot_ts) as latest_snapshot_ts
       from products_raw
-      group by supplier_key
+      group by 1
       order by latest_snapshot_ts desc nulls last, supplier_key asc
       limit 12
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "marketplace_summary", "marketplace_prices", () =>
+      runQuery(`
       select
         count(*) filter (where lower(coalesce(marketplace_key, '')) = 'ebay')::int as total_ebay_rows,
         count(*) filter (
@@ -453,8 +498,9 @@ export async function getDashboardData(): Promise<DashboardData> {
           where lower(coalesce(marketplace_key, '')) = 'ebay'
         ) as latest_snapshot_ts
       from marketplace_prices
-    `).then((rows) => rows[0] ?? {}).catch(() => ({})),
-    runQuery(`
+    `).then((rows) => rows[0] ?? {}), {}),
+    readOnlyQuery(queryFailures, "matching_summary", "matches", () =>
+      runQuery(`
       select
         count(*) filter (
           where lower(coalesce(marketplace_key, '')) = 'ebay'
@@ -479,8 +525,9 @@ export async function getDashboardData(): Promise<DashboardData> {
             and upper(coalesce(status, '')) = 'ACTIVE'
         ) as latest_match_ts
       from matches
-    `).then((rows) => rows[0] ?? {}).catch(() => ({})),
-    runQuery(`
+    `).then((rows) => rows[0] ?? {}), {}),
+    readOnlyQuery(queryFailures, "matching_recent", "matches", () =>
+      runQuery(`
       select
         supplier_key,
         supplier_product_id,
@@ -493,8 +540,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         and upper(coalesce(status, '')) = 'ACTIVE'
       order by last_seen_ts desc nulls last, id desc
       limit 8
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "profitability_summary", "profitable_candidates", () =>
+      runQuery(`
       with candidate_truth as (
         select
           pc.id,
@@ -578,8 +626,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         count(*) filter (where blocker_category = 'policy_or_manual_review')::int as blocked_by_policy_or_manual_review,
         max(calc_ts) as latest_calc_ts
       from candidate_truth
-    `).then((rows) => rows[0] ?? {}).catch(() => ({})),
-    runQuery(`
+    `).then((rows) => rows[0] ?? {}), {}),
+    readOnlyQuery(queryFailures, "profitability_status_breakdown", "profitable_candidates", () =>
+      runQuery(`
       select
         upper(coalesce(decision_status, 'UNKNOWN')) as decision_status,
         count(*)::int as count
@@ -587,8 +636,9 @@ export async function getDashboardData(): Promise<DashboardData> {
       where lower(coalesce(marketplace_key, '')) = 'ebay'
       group by upper(coalesce(decision_status, 'UNKNOWN'))
       order by count desc, decision_status asc
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "profitability_block_breakdown", "profitable_candidates", () =>
+      runQuery(`
       with candidate_truth as (
         select
           case
@@ -625,8 +675,9 @@ export async function getDashboardData(): Promise<DashboardData> {
       from candidate_truth
       group by blocker_category
       order by count desc, blocker_category asc
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "profitability_top_opportunities", "profitable_candidates", () =>
+      runQuery(`
       with candidate_truth as (
         select
           pc.id,
@@ -692,8 +743,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         estimated_profit desc nulls last,
         id desc
       limit 10
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "listings_summary", "listings", () =>
+      runQuery(`
       select
         count(*) filter (where status = 'READY_TO_PUBLISH')::int as ready_to_publish,
         count(*) filter (where status = 'PREVIEW')::int as preview,
@@ -702,11 +754,12 @@ export async function getDashboardData(): Promise<DashboardData> {
         max(coalesce(updated_at, created_at, publish_finished_ts, publish_started_ts)) as latest_listing_ts
       from listings
       where lower(coalesce(marketplace_key, '')) = 'ebay'
-    `).then((rows) => rows[0] ?? {}).catch(() => ({})),
-    tableExists("lead_submissions")
-      .then((exists) =>
-        exists
-          ? runQuery(`
+    `).then((rows) => rows[0] ?? {}), {}),
+    readOnlyQuery(queryFailures, "lead_summary", "lead_submissions", () =>
+      tableExists("lead_submissions")
+        .then((exists) =>
+          exists
+            ? runQuery(`
               select
                 count(*)::int as total,
                 count(*) filter (where upper(coalesce(status, '')) = 'NEW')::int as new_leads,
@@ -715,13 +768,13 @@ export async function getDashboardData(): Promise<DashboardData> {
                 max(created_at) as latest_lead_ts
               from lead_submissions
             `).then((rows) => rows[0] ?? {})
-          : {}
-      )
-      .catch(() => ({})),
-    tableExists("lead_submissions")
-      .then((exists) =>
-        exists
-          ? runQuery(`
+            : {}
+        ), {}),
+    readOnlyQuery(queryFailures, "lead_recent", "lead_submissions", () =>
+      tableExists("lead_submissions")
+        .then((exists) =>
+          exists
+            ? runQuery(`
               select
                 id,
                 full_name,
@@ -736,16 +789,17 @@ export async function getDashboardData(): Promise<DashboardData> {
               order by created_at desc nulls last, id desc
               limit 8
             `)
-          : []
-      )
-      .catch(() => []),
-    runQuery(`
+            : []
+        ), []),
+    readOnlyQuery(queryFailures, "recent_jobs", "jobs", () =>
+      runQuery(`
       select job_type, status, attempt, max_attempts, scheduled_ts, started_ts, finished_ts
       from jobs
       order by coalesce(finished_ts, started_ts, scheduled_ts) desc nulls last
       limit 12
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "recent_worker_runs", "worker_runs", () =>
+      runQuery(`
       select
         worker,
         job_name,
@@ -772,13 +826,14 @@ export async function getDashboardData(): Promise<DashboardData> {
       where row_num = 1
       order by coalesce(finished_at, started_at) desc nulls last
       limit 12
-    `).catch(() => []),
-    runQuery(`
+    `), []),
+    readOnlyQuery(queryFailures, "recent_audit_events", "audit_log", () =>
+      runQuery(`
       select event_ts, actor_type, actor_id, entity_type, entity_id, event_type
       from audit_log
       order by event_ts desc
       limit 12
-    `).catch(() => []),
+    `), []),
     getLatestSuccessfulJobTs([JOB_NAMES.TREND_EXPAND]),
     getLatestSuccessfulJobTs([JOB_NAMES.SUPPLIER_DISCOVER]),
     getLatestSuccessfulJobTs([JOB_NAMES.SCAN_MARKETPLACE_PRICE]),
@@ -789,10 +844,14 @@ export async function getDashboardData(): Promise<DashboardData> {
     getLatestFailedJobTs([JOB_NAMES.SCAN_MARKETPLACE_PRICE]),
     getLatestFailedJobTs([JOB_NAMES.MATCH_PRODUCT]),
     getLatestFailedJobTs([JOB_NAMES.EVAL_PROFIT]),
-    Promise.all([
-      jobsQueue.getRepeatableJobs(0, 500).catch(() => []),
-      jobsQueue.getJobSchedulers(0, 500).catch(() => []),
-    ]),
+    readOnlyQuery(queryFailures, "queue_schedules", "bullmq_schedules", () =>
+      Promise.all([
+        jobsQueue.getRepeatableJobs(0, 500),
+        jobsQueue.getJobSchedulers(0, 500),
+      ]).then(([repeatableJobs, jobSchedulers]) => [
+        repeatableJobs as QueueScheduleEntry[],
+        jobSchedulers as QueueScheduleEntry[],
+      ] as [QueueScheduleEntry[], QueueScheduleEntry[]]), [[], []] as [QueueScheduleEntry[], QueueScheduleEntry[]]),
   ]);
 
   const [repeatableJobs, jobSchedulers] = scheduleVisibility as [QueueScheduleEntry[], QueueScheduleEntry[]];
@@ -826,6 +885,9 @@ export async function getDashboardData(): Promise<DashboardData> {
   const profitScheduleActive =
     hasRepeatable(JOB_NAMES.EVAL_PROFIT, 14400000) ||
     hasScheduler(JOB_NAMES.EVAL_PROFIT, 14400000);
+
+  const hasQueryFailure = (...keys: string[]) =>
+    queryFailures.some((failure) => keys.includes(failure.key));
 
   const trendSummary = trendSummaryRow as Row;
   const trendCandidatesSummary = trendCandidatesSummaryRow as Row;
@@ -898,12 +960,15 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalRows: trendTotal,
       freshRows: trendFresh,
       staleRows: trendStale,
+      actionableHref: buildDashboardAlertHref({ surface: 'control', params: { stage: 'trend' } }),
+      queryFailed: hasQueryFailure('trend_summary', 'trend_recent_signals', 'trend_recent_candidates', 'trend_candidates_summary'),
       detailFresh: `${trendFresh}/${trendTotal} trend signals were captured in the last ${trendWindowHours}h.`,
       detailStale:
         trendFresh === 0
           ? `No trend signals were captured in the last ${trendWindowHours}h. Latest trend signal is older data.`
           : `${trendStale} trend signals are older than ${trendWindowHours}h.`,
       detailUnknown: "Trend signal data is unavailable.",
+      detailFailure: "Trend intake query failed; canonical trend status is unavailable.",
     }),
     buildStageStatus({
       key: "supplier",
@@ -914,12 +979,15 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalRows: supplierTotal,
       freshRows: supplierFresh,
       staleRows: supplierStale,
+      actionableHref: buildDashboardAlertHref({ surface: 'review', params: { supplier: 'cjdropshipping' } }),
+      queryFailed: hasQueryFailure('supplier_summary', 'supplier_by_supplier'),
       detailFresh: `${supplierFresh}/${supplierTotal} supplier snapshots are within the ${supplierWindowHours}h policy window.`,
       detailStale:
         supplierFresh === 0
           ? `No supplier snapshots are within the ${supplierWindowHours}h policy window.`
           : `${supplierStale} supplier snapshots are outside the ${supplierWindowHours}h policy window.`,
       detailUnknown: "Supplier snapshot freshness is unavailable.",
+      detailFailure: "Supplier freshness query failed; canonical supplier status is unavailable.",
     }),
     buildStageStatus({
       key: "marketplace",
@@ -930,12 +998,15 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalRows: marketplaceTotal,
       freshRows: marketplaceFresh,
       staleRows: marketplaceStale,
+      actionableHref: buildDashboardAlertHref({ surface: 'review', params: { marketplace: 'ebay' } }),
+      queryFailed: hasQueryFailure('marketplace_summary'),
       detailFresh: `${marketplaceFresh}/${marketplaceTotal} eBay marketplace snapshots are fresh.`,
       detailStale:
         marketplaceFresh === 0
           ? `No eBay marketplace snapshots are within the ${marketplaceWindowHours}h policy window.`
           : `${marketplaceStale} eBay marketplace snapshots are stale.`,
       detailUnknown: "Marketplace scan freshness is unavailable.",
+      detailFailure: "Marketplace freshness query failed; canonical marketplace status is unavailable.",
     }),
     buildStageStatus({
       key: "matching",
@@ -946,12 +1017,15 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalRows: totalMatches,
       freshRows: freshMatches,
       staleRows: staleMatches,
+      actionableHref: buildDashboardAlertHref({ surface: 'review', params: { marketplace: 'ebay', sort: 'match' } }),
+      queryFailed: hasQueryFailure('matching_summary', 'matching_recent'),
       detailFresh: `${freshMatches}/${totalMatches} active eBay matches were refreshed in the last ${matchWindowHours}h.`,
       detailStale:
         freshMatches === 0
           ? `No active eBay matches were refreshed in the last ${matchWindowHours}h.`
           : `${staleMatches} active eBay matches are older than ${matchWindowHours}h.`,
       detailUnknown: "Matching freshness is unavailable.",
+      detailFailure: "Matching freshness query failed; canonical matching status is unavailable.",
     }),
     buildStageStatus({
       key: "profitability",
@@ -962,6 +1036,8 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalRows: totalCandidates,
       freshRows: freshCandidates,
       staleRows: staleCandidates,
+      actionableHref: buildDashboardAlertHref({ surface: 'review', params: { marketplace: 'ebay' } }),
+      queryFailed: hasQueryFailure('profitability_summary', 'profitability_status_breakdown', 'profitability_block_breakdown', 'profitability_top_opportunities'),
       detailFresh:
         freshCandidates === totalCandidates
           ? `${freshCandidates}/${totalCandidates} profitable candidates have fresh profitability inputs. ${actionableFresh} are actionable and ${freshLive} are already ACTIVE listings.`
@@ -971,6 +1047,7 @@ export async function getDashboardData(): Promise<DashboardData> {
           ? `No profitable candidates currently have fresh supplier, marketplace, and profitability inputs.`
           : `${staleCandidates} profitable candidates still rely on stale upstream inputs.`,
       detailUnknown: "Profitability freshness is unavailable.",
+      detailFailure: "Profitability query failed; canonical candidate status is unavailable.",
     }),
     buildStageStatus({
       key: "listing_readiness",
@@ -981,12 +1058,15 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalRows: readyToPublish + preview + active + publishFailed,
       freshRows: readyToPublish + active,
       staleRows: publishFailed,
+      actionableHref: buildDashboardAlertHref({ surface: 'listings', params: { status: 'PUBLISH_FAILED', marketplace: 'ebay' } }),
+      queryFailed: hasQueryFailure('listings_summary'),
       detailFresh: `${readyToPublish} listings are READY_TO_PUBLISH and ${active} are ACTIVE.`,
       detailStale:
         publishFailed > 0
           ? `${publishFailed} eBay listings are in PUBLISH_FAILED.`
           : `${preview} listings remain in PREVIEW awaiting further action.`,
       detailUnknown: "Listing readiness data is unavailable.",
+      detailFailure: "Listing readiness query failed; canonical listing status is unavailable.",
     }),
   ];
 
@@ -998,7 +1078,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         ? "missing schedule"
         : !trendJobTs
           ? "missing worker evidence"
-          : stage.state !== "fresh"
+          : stage.healthStatus !== "FRESH_HEALTHY"
             ? "stale upstream data"
             : "none";
       stage.detail = `${stage.detail} ${
@@ -1014,7 +1094,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         ? "missing schedule"
         : !supplierJobTs
           ? "missing worker evidence"
-          : stage.state !== "fresh"
+          : stage.healthStatus !== "FRESH_HEALTHY"
             ? "stale upstream data"
             : "none";
       stage.detail = `${stage.detail} ${
@@ -1030,7 +1110,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         ? "missing schedule"
         : !marketplaceJobTs
           ? "missing worker evidence"
-          : stage.state !== "fresh"
+          : stage.healthStatus !== "FRESH_HEALTHY"
             ? "stale upstream data"
             : "none";
       stage.detail = `${stage.detail} ${
@@ -1046,7 +1126,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         ? "missing schedule"
         : !matchJobTs
           ? "missing worker evidence"
-          : stage.state !== "fresh"
+          : stage.healthStatus !== "FRESH_HEALTHY"
             ? "stale upstream data"
             : "none";
       stage.detail = `${stage.detail} ${
@@ -1062,7 +1142,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         ? "missing schedule"
         : !profitJobTs
           ? "missing worker evidence"
-          : stage.state === "fresh"
+          : stage.healthStatus === "FRESH_HEALTHY"
             ? "none"
           : blockedByStaleSnapshot > 0
             ? "blocked downstream freshness"
@@ -1084,6 +1164,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       tone: "error",
       title: "Marketplace scan is stale",
       detail: `No eBay marketplace snapshots are within the ${marketplaceWindowHours}h policy window.`,
+      href: buildDashboardAlertHref({ surface: "review", params: { marketplace: "ebay", reason: "stale_snapshot" } }),
     });
   }
   if (manualReviewDueToStale > 0) {
@@ -1092,6 +1173,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       tone: "warning",
       title: "Profitable candidates are blocked by stale snapshots",
       detail: `${manualReviewDueToStale} profitable candidates are in MANUAL_REVIEW because snapshot freshness is outside policy.`,
+      href: buildDashboardAlertHref({ surface: "review", params: { reason: "stale_snapshot", marketplace: "ebay" } }),
     });
   }
   if (trendFresh === 0) {
@@ -1100,6 +1182,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       tone: "warning",
       title: "Trend intake is stale",
       detail: `No trend signals were captured in the last ${trendWindowHours}h.`,
+      href: buildDashboardAlertHref({ surface: "control", params: { stage: "trend" } }),
     });
   }
   if (supplierFresh === 0) {
@@ -1108,6 +1191,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       tone: "warning",
       title: "Supplier ingestion is stale",
       detail: `No supplier snapshots are within the ${supplierWindowHours}h policy window.`,
+      href: buildDashboardAlertHref({ surface: "review", params: { supplier: "cjdropshipping" } }),
     });
   }
   if (publishFailed > 0) {
@@ -1116,6 +1200,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       tone: "error",
       title: "Listing publish failures need attention",
       detail: `${publishFailed} eBay listings are currently in PUBLISH_FAILED.`,
+      href: buildDashboardAlertHref({ surface: "listings", params: { status: "PUBLISH_FAILED", marketplace: "ebay" } }),
     });
   }
   if (trendManualSeedSignals === trendTotal && trendTotal > 0) {
@@ -1124,6 +1209,17 @@ export async function getDashboardData(): Promise<DashboardData> {
       tone: "warning",
       title: "Trend coverage is still dominated by manual seed data",
       detail: `${trendManualSeedSignals}/${trendTotal} current trend signals are manual/seed rows.`,
+      href: buildDashboardAlertHref({ surface: "control", params: { stage: "trend", reason: "manual_seed_only" } }),
+    });
+  }
+
+  if (queryFailures.length > 0) {
+    alerts.push({
+      id: "dashboard-query-failures",
+      tone: "error",
+      title: "Dashboard has partial query failures",
+      detail: `${queryFailures.length} dashboard query groups failed. Canonical zero values are not inferred for those groups.`,
+      href: buildDashboardAlertHref({ surface: "control", params: { tab: "diagnostics" } }),
     });
   }
 
@@ -1196,11 +1292,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         vercelEnv: process.env.VERCEL_ENV ?? "unknown",
       },
     },
-    refreshBehavior: {
-      pageCaching: "force-dynamic",
-      dataSource: "Direct canonical DB tables plus jobs/worker_runs/audit_log.",
-      refreshAction: "Refresh Dashboard reloads current canonical state only; it does not trigger workers.",
-    },
+    refreshBehavior: getReadOnlyRefreshDescription(),
     headline: {
       actionableFreshCandidates: actionableFresh,
       approvedFreshCandidates: approvedFresh,
@@ -1282,6 +1374,114 @@ export async function getDashboardData(): Promise<DashboardData> {
       recentWorkerRuns,
       recentAuditEvents,
     },
+    queryFailures,
+    fieldLineage: [
+      {
+        field: "headline.actionableFreshCandidates",
+        source: "profitable_candidates + products_raw + marketplace_prices",
+        query: "candidate_truth aggregate in getDashboardData",
+        businessRule: "Count only APPROVED, listing-eligible, fresh candidates on normalized ebay scope.",
+        failureMode: "If profitability aggregate fails, dashboard must not infer zero actionables from missing data.",
+      },
+      {
+        field: "headline.staleMarketplaceSnapshots",
+        source: "marketplace_prices",
+        query: "ebay-only freshness aggregate in getDashboardData",
+        businessRule: "Latest row existence never overrides fresh-window failure; stale rows remain stale.",
+        failureMode: "If snapshot aggregate fails, stale count is unknown and alerting must fail closed.",
+      },
+      {
+        field: "stages[*]",
+        source: "canonical DB truth + worker_runs + queue schedule metadata",
+        query: "buildStageStatus + latest worker run timestamps + repeatable scheduler visibility",
+        businessRule: "Freshness, health, coverage, and severity are derived centrally with one deterministic state each.",
+        failureMode: "Missing worker evidence or schedule visibility downgrades health; query failure renders query-failed state.",
+      },
+      {
+        field: "supplier.bySupplier",
+        source: "products_raw",
+        query: "normalized supplier snapshot aggregate",
+        businessRule: "Supplier keys are normalized before grouping so CJ aliases cannot double count.",
+        failureMode: "If grouping fails, supplier coverage must be treated as unknown rather than zero.",
+      },
+      {
+        field: "alerts[*]",
+        source: "same dashboard aggregates as cards",
+        query: "alert assembly in getDashboardData",
+        businessRule: "Every alert links to the admin surface filtered to the same canonical dataset and reason.",
+        failureMode: "If upstream data is missing, emit failure-state alerting instead of silent suppression.",
+      },
+      {
+        field: "infrastructure.db",
+        source: "database connectivity",
+        query: "select 1 as ok",
+        businessRule: "Dashboard infrastructure state reflects direct read-only DB connectivity, not cached health heuristics.",
+        failureMode: "DB health query failure is rendered as infrastructure error, not a healthy zero state.",
+      },
+      {
+        field: "infrastructure.redis",
+        source: "redis client ping",
+        query: "redis.ping()",
+        businessRule: "Redis status reflects live ping visibility only; missing client export remains unknown rather than healthy.",
+        failureMode: "Redis probe failure stays explicit and does not overwrite DB truth or stage freshness.",
+      },
+      {
+        field: "trend.*",
+        source: "trend_signals + trend_candidates + worker_runs",
+        query: "trend summary, recent rows, and latest worker success queries",
+        businessRule: "Current trend health requires fresh canonical signals plus worker evidence; manual seed dominance is advisory only.",
+        failureMode: "Trend query failure forces query-failed/unknown state and blocks zero rendering.",
+      },
+      {
+        field: "supplier.*",
+        source: "products_raw + worker_runs",
+        query: "supplier freshness aggregate and normalized supplier breakdown",
+        businessRule: "Supplier freshness is grouped on canonical supplier keys before aggregation.",
+        failureMode: "Supplier query failure is explicit; missing snapshots are not fabricated as zero rows.",
+      },
+      {
+        field: "marketplace.*",
+        source: "marketplace_prices + worker_runs",
+        query: "ebay-only snapshot freshness aggregate",
+        businessRule: "Latest marketplace row existence does not override freshness-window failure.",
+        failureMode: "Marketplace aggregate failure remains query-failed and drives actionable diagnostics instead of false health.",
+      },
+      {
+        field: "matching.*",
+        source: "matches + worker_runs",
+        query: "active-ebay match freshness and confidence aggregate",
+        businessRule: "Only ACTIVE ebay matches contribute to current matching health.",
+        failureMode: "Matching query failure leaves match health unknown/query-failed rather than zero active matches.",
+      },
+      {
+        field: "profitability.*",
+        source: "profitable_candidates + products_raw + marketplace_prices + listings + worker_runs",
+        query: "candidate_truth aggregates, blocker breakdown, top-opportunity query",
+        businessRule: "Fresh profitability requires fresh supplier inputs, fresh marketplace inputs, and current calc timestamps.",
+        failureMode: "Profitability query failure invalidates current actionability instead of reporting empty approved/fresh pools.",
+      },
+      {
+        field: "listingReadiness.*",
+        source: "listings",
+        query: "ebay listing status aggregate",
+        businessRule: "Listing readiness is a read-only status aggregate and never a publish trigger.",
+        failureMode: "Listing-status query failure remains explicit and is not shown as zero failed listings or zero ready listings.",
+      },
+      {
+        field: "leadPipeline.*",
+        source: "lead_submissions",
+        query: "lead status aggregate and recent leads query",
+        businessRule: "Lead metrics reflect persisted DB intake only, not notification-side assumptions.",
+        failureMode: "If the lead query fails, the dashboard shows a query failure rather than an empty lead queue.",
+      },
+      {
+        field: "diagnostics.*",
+        source: "jobs + worker_runs + audit_log + BullMQ schedule metadata",
+        query: "recent jobs, recent worker runs, recent audit events, schedule visibility",
+        businessRule: "Diagnostics surfaces are evidence only and never override canonical metric truth.",
+        failureMode: "Diagnostic query failure is listed in queryFailures and alerting instead of silently dropping evidence.",
+      },
+    ],
     adminLinks: [
       { label: "Operational Control Panel", href: "/admin/control", note: "Quick actions, queue health, safety overrides." },
       { label: "Review Console", href: "/admin/review", note: "Decisioning and candidate diagnostics." },

@@ -114,7 +114,7 @@ function normalizeCountry(value: unknown): string | null {
 
 export function canonicalSupplierKey(value: unknown): string {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "cj dropshipping" || normalized === "cjdropshipping") return "cjdropshipping";
+  if (normalized === "cj" || normalized === "cj dropshipping" || normalized === "cjdropshipping") return "cjdropshipping";
   if (normalized === "ali_express") return "aliexpress";
   return normalized;
 }
