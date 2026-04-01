@@ -16,6 +16,39 @@ function mask(value: string | null): string | null {
   return `${value.slice(0, 2)}***${value.slice(-2)} (len=${value.length})`;
 }
 
+function resolveRefreshTokenCandidate(): {
+  value: string | null;
+  source: "EBAY_REFRESH_TOKEN" | "EBAY_USER_REFRESH_TOKEN" | null;
+  invalidSources: Array<"EBAY_REFRESH_TOKEN" | "EBAY_USER_REFRESH_TOKEN">;
+} {
+  const candidates: Array<{
+    key: "EBAY_REFRESH_TOKEN" | "EBAY_USER_REFRESH_TOKEN";
+    value: string | null;
+  }> = [
+    { key: "EBAY_REFRESH_TOKEN", value: val("EBAY_REFRESH_TOKEN") },
+    { key: "EBAY_USER_REFRESH_TOKEN", value: val("EBAY_USER_REFRESH_TOKEN") },
+  ];
+  const invalidSources: Array<"EBAY_REFRESH_TOKEN" | "EBAY_USER_REFRESH_TOKEN"> = [];
+
+  for (const candidate of candidates) {
+    if (!candidate.value) continue;
+    if (candidate.value.length >= 20) {
+      return {
+        value: candidate.value,
+        source: candidate.key,
+        invalidSources,
+      };
+    }
+    invalidSources.push(candidate.key);
+  }
+
+  return {
+    value: null,
+    source: null,
+    invalidSources,
+  };
+}
+
 function checkNumeric(name: string, value: string | null, errors: string[]) {
   if (!value) {
     errors.push(`Missing ${name}.`);
@@ -27,8 +60,9 @@ function checkNumeric(name: string, value: string | null, errors: string[]) {
 }
 
 function main() {
+  const refreshToken = resolveRefreshTokenCandidate();
   const required = {
-    EBAY_REFRESH_TOKEN: val("EBAY_REFRESH_TOKEN") || val("EBAY_USER_REFRESH_TOKEN"),
+    EBAY_REFRESH_TOKEN: refreshToken.value,
     EBAY_MERCHANT_LOCATION_KEY: val("EBAY_MERCHANT_LOCATION_KEY") || val("EBAY_LOCATION_KEY"),
     EBAY_PAYMENT_POLICY_ID: val("EBAY_PAYMENT_POLICY_ID") || val("EBAY_POLICY_PAYMENT_ID"),
     EBAY_RETURN_POLICY_ID: val("EBAY_RETURN_POLICY_ID") || val("EBAY_POLICY_RETURN_ID"),
@@ -42,9 +76,13 @@ function main() {
   const errors: string[] = [];
 
   if (!required.EBAY_REFRESH_TOKEN) {
-    errors.push("Missing EBAY_REFRESH_TOKEN (or EBAY_USER_REFRESH_TOKEN).");
-  } else if (required.EBAY_REFRESH_TOKEN.length < 20) {
-    errors.push("Invalid EBAY_REFRESH_TOKEN: value appears too short.");
+    if (refreshToken.invalidSources.length > 0) {
+      errors.push(
+        `Invalid ${refreshToken.invalidSources.join(" / ")}: value appears too short to be a valid eBay refresh token.`
+      );
+    } else {
+      errors.push("Missing EBAY_REFRESH_TOKEN (or EBAY_USER_REFRESH_TOKEN).");
+    }
   }
 
   if (!required.EBAY_MERCHANT_LOCATION_KEY) {

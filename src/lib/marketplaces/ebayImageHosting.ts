@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ebayImageNormalizations } from "@/lib/db/schema";
+import { resolveEbayRefreshTokenCandidate } from "@/lib/marketplaces/ebayAuthEnv";
 
 export type EbayHostedImageMode = "external" | "self_hosted" | "eps" | "invalid";
 export type EbayImageNormalizationCode =
@@ -189,9 +190,7 @@ async function readApiBody(res: Response): Promise<string> {
 async function getImageHostingAccessToken(): Promise<string> {
   const clientId = stringOrNull(process.env.EBAY_CLIENT_ID);
   const clientSecret = stringOrNull(process.env.EBAY_CLIENT_SECRET);
-  const refreshToken =
-    stringOrNull(process.env.EBAY_REFRESH_TOKEN) ||
-    stringOrNull(process.env.EBAY_USER_REFRESH_TOKEN);
+  const refreshToken = resolveEbayRefreshTokenCandidate().value;
 
   if (!clientId || !clientSecret || !refreshToken) {
     throw new Error("Missing eBay OAuth credentials required for EPS image normalization.");

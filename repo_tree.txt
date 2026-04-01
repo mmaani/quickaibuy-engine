@@ -43,6 +43,7 @@
 │   ├── order-automation-rollout.md
 │   ├── order-automation-validation.md
 │   ├── order-purchase-safety-scope.md
+│   ├── phase1-thread-instruction1-canonical-inspection.md
 │   ├── railway-jobs-worker.md
 │   ├── runtime-diagnostics.md
 │   ├── scripts-hygiene-audit-2026-03-13.md
@@ -141,7 +142,8 @@
 │   ├── 20260328_customer_intelligence_foundation.sql
 │   ├── 20260328_supplier_linkage_stock_lockdown.sql
 │   ├── 20260328b_orders_legacy_columns_nullable.sql
-│   └── 20260329_learning_hub_data_quality_fabric.sql
+│   ├── 20260329_learning_hub_data_quality_fabric.sql
+│   └── 20260330_phase1_self_kill_supplier_trust_listing_evolution_schema.sql
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
@@ -366,6 +368,7 @@
 │   ├── run_learning_refresh.ts
 │   ├── run_listing_execution_direct.ts
 │   ├── run_listing_monitor_direct.ts
+│   ├── run_listing_phase1_recheck.ts
 │   ├── run_listing_prepare_direct.sh
 │   ├── run_listing_prepare_direct.ts
 │   ├── run_marketplace_prices_maintenance.ts
@@ -627,6 +630,7 @@
 │   │   │   └── types.ts
 │   │   ├── listings
 │   │   │   ├── __tests__
+│   │   │   │   ├── listingPhase1Diagnostics.test.ts
 │   │   │   │   ├── optimizeListingTitle.test.ts
 │   │   │   │   ├── recoveryState.test.ts
 │   │   │   │   └── supplierSelectionAndImmutability.test.ts
@@ -645,6 +649,7 @@
 │   │   │   ├── idempotency.ts
 │   │   │   ├── integrity.ts
 │   │   │   ├── linkagePolicy.ts
+│   │   │   ├── listingPhase1Diagnostics.ts
 │   │   │   ├── listingThroughputController.ts
 │   │   │   ├── markListingReadyToPublish.ts
 │   │   │   ├── media.ts
@@ -716,10 +721,13 @@
 │   │   │   └── shippingInference.ts
 │   │   ├── products
 │   │   │   ├── __tests__
+│   │   │   │   ├── canonicalTruth.test.ts
 │   │   │   │   ├── pipelinePolicy.test.ts
 │   │   │   │   ├── shipFromOrigin.test.ts
 │   │   │   │   ├── supplierEnrichment.test.ts
-│   │   │   │   └── supplierEvidenceClassification.test.ts
+│   │   │   │   ├── supplierEvidenceClassification.test.ts
+│   │   │   │   └── supplierTrustScore.test.ts
+│   │   │   ├── canonicalTruth.ts
 │   │   │   ├── discoverProducts.ts
 │   │   │   ├── pipelinePolicy.ts
 │   │   │   ├── refreshMatchedSupplierRows.ts
@@ -806,4 +814,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-126 directories, 681 files
+126 directories, 689 files

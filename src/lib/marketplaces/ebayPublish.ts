@@ -4,6 +4,7 @@ import { classifyHostedImage } from "@/lib/marketplaces/ebayImageHosting";
 import { db } from "@/lib/db";
 import { buildListingPreviewMedia } from "@/lib/listings/media";
 import type { ListingPreviewInput } from "@/lib/listings/types";
+import { resolveEbayRefreshTokenCandidate } from "@/lib/marketplaces/ebayAuthEnv";
 import { sql } from "drizzle-orm";
 
 export type EbayListingPayload = {
@@ -212,13 +213,12 @@ function parseTokenError(body: unknown): { code: string | null; description: str
 }
 
 function buildEbayPublishConfigValidation(): EbayPublishEnvValidation {
+  const refreshToken = resolveEbayRefreshTokenCandidate();
   const values = {
     websiteUrl: normalizeWebsiteUrl(stringOrNull(process.env.WEBSITE_URL)),
     clientId: stringOrNull(process.env.EBAY_CLIENT_ID),
     clientSecret: stringOrNull(process.env.EBAY_CLIENT_SECRET),
-    refreshToken:
-      stringOrNull(process.env.EBAY_REFRESH_TOKEN) ||
-      stringOrNull(process.env.EBAY_USER_REFRESH_TOKEN),
+    refreshToken: refreshToken.value,
     marketplaceId: stringOrNull(process.env.EBAY_MARKETPLACE_ID) || "EBAY_US",
     merchantLocationKey:
       stringOrNull(process.env.EBAY_MERCHANT_LOCATION_KEY) ||
@@ -254,13 +254,15 @@ function buildEbayPublishConfigValidation(): EbayPublishEnvValidation {
     errors.push("Missing EBAY_CLIENT_SECRET. Set your eBay app client secret for live publish.");
   }
   if (!values.refreshToken) {
-    errors.push(
-      "Missing EBAY_REFRESH_TOKEN (or EBAY_USER_REFRESH_TOKEN). Generate a user refresh token with sell scopes."
-    );
-  } else if (values.refreshToken.length < 20) {
-    errors.push(
-      "Invalid EBAY_REFRESH_TOKEN: value is too short to be a valid eBay refresh token. Re-generate and store the full token."
-    );
+    if (refreshToken.invalidSources.length > 0) {
+      errors.push(
+        `Invalid ${refreshToken.invalidSources.join(" / ")}: value is too short to be a valid eBay refresh token. Re-generate and store the full token.`
+      );
+    } else {
+      errors.push(
+        "Missing EBAY_REFRESH_TOKEN (or EBAY_USER_REFRESH_TOKEN). Generate a user refresh token with sell scopes."
+      );
+    }
   }
   if (!values.merchantLocationKey) {
     errors.push(
