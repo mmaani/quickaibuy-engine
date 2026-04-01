@@ -1,3 +1,4 @@
+import "server-only";
 import type { ProductVariant, ShippingEstimate, SupplierProduct } from "./types";
 import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 
@@ -69,6 +70,16 @@ type CjWrappedResponse<T> = {
 type CjAuthResponse = {
   accessToken?: string;
   access_token?: string;
+  accessTokenExpiredAt?: string | number;
+  accessTokenExpiryDate?: string | number;
+  accessTokenExpiresAt?: string | number;
+  accessTokenCreateDate?: string | number;
+  refreshToken?: string;
+  refresh_token?: string;
+  refreshTokenExpiredAt?: string | number;
+  refreshTokenExpiryDate?: string | number;
+  refreshTokenExpiresAt?: string | number;
+  refreshTokenCreateDate?: string | number;
 };
 
 type CjSearchProduct = {
@@ -118,12 +129,19 @@ export type CjDirectProductResult = {
 };
 
 type CjAccessTokenState = {
-  token: string;
-  expiresAtMs: number;
+  accessToken: string;
+  accessTokenExpiresAtMs: number;
+  refreshToken: string | null;
+  refreshTokenExpiresAtMs: number | null;
+  createdAtMs: number;
 };
 
 const CJ_API_BASE_URL = "https://developers.cjdropshipping.com/api2.0/v1";
+const CJ_ACCESS_TOKEN_REFRESH_WINDOW_MS = 6 * 60 * 60 * 1000;
+const CJ_DEFAULT_ACCESS_TOKEN_TTL_MS = 15 * 24 * 60 * 60 * 1000;
+const CJ_DEFAULT_REFRESH_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 let cjAccessTokenState: CjAccessTokenState | null = null;
+let cjAccessTokenPromise: Promise<string | null> | null = null;
 
 function toNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -365,16 +383,104 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function getCjAccessToken(): Promise<string | null> {
-  const now = Date.now();
-  if (cjAccessTokenState && cjAccessTokenState.expiresAtMs > now + 60_000) {
-    return cjAccessTokenState.token;
+function parseCjTimestamp(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? value : value * 1000;
   }
 
-  const apiKey = String(process.env.CJ_API_KEY ?? "").trim();
-  if (!apiKey) return null;
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
 
-  const res = await fetch(`${CJ_API_BASE_URL}/authentication/getAccessToken`, {
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) return null;
+    return numeric > 1e12 ? numeric : numeric * 1000;
+  }
+
+  const normalized = raw.replace(/\//g, "-").replace(" ", "T");
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isCjWrappedSuccess<T>(wrapped: CjWrappedResponse<T>): boolean {
+  if (wrapped.success === false || wrapped.result === false) return false;
+  if (typeof wrapped.code === "number") {
+    return wrapped.code === 200 || wrapped.code === 0;
+  }
+  return true;
+}
+
+function isCjAuthFailureResponse(response: Response, wrapped: CjWrappedResponse<unknown>): boolean {
+  if (response.status === 401 || response.status === 403) return true;
+  const message = String(wrapped.message ?? "").toLowerCase();
+  const code = typeof wrapped.code === "number" ? wrapped.code : null;
+  if (code != null && [401, 403, 1002, 1003, 1102].includes(code)) return true;
+  return message.includes("token") && (message.includes("invalid") || message.includes("expired") || message.includes("auth"));
+}
+
+function buildCjApiError(prefix: string, response: Response, wrapped: CjWrappedResponse<unknown>): Error {
+  return new Error(`${prefix}: ${response.status} ${wrapped.message ?? "unknown error"}`);
+}
+
+function buildCjAccessTokenState(payload: CjAuthResponse, now: number): CjAccessTokenState {
+  const accessToken = toNonEmptyString(payload.accessToken) ?? toNonEmptyString(payload.access_token);
+  if (!accessToken) {
+    throw new Error("CJ auth missing access token");
+  }
+
+  const accessTokenExpiresAtMs =
+    parseCjTimestamp(payload.accessTokenExpiredAt) ??
+    parseCjTimestamp(payload.accessTokenExpiryDate) ??
+    parseCjTimestamp(payload.accessTokenExpiresAt) ??
+    now + CJ_DEFAULT_ACCESS_TOKEN_TTL_MS;
+  const refreshToken = toNonEmptyString(payload.refreshToken) ?? toNonEmptyString(payload.refresh_token);
+  const refreshTokenExpiresAtMs = refreshToken
+    ? parseCjTimestamp(payload.refreshTokenExpiredAt) ??
+      parseCjTimestamp(payload.refreshTokenExpiryDate) ??
+      parseCjTimestamp(payload.refreshTokenExpiresAt) ??
+      now + CJ_DEFAULT_REFRESH_TOKEN_TTL_MS
+    : null;
+  const createdAtMs =
+    parseCjTimestamp(payload.accessTokenCreateDate) ??
+    parseCjTimestamp(payload.refreshTokenCreateDate) ??
+    now;
+
+  return {
+    accessToken,
+    accessTokenExpiresAtMs,
+    refreshToken,
+    refreshTokenExpiresAtMs,
+    createdAtMs,
+  };
+}
+
+function hasUsableCjAccessToken(state: CjAccessTokenState | null, now = Date.now()): state is CjAccessTokenState {
+  return Boolean(state && state.accessTokenExpiresAtMs > now + CJ_ACCESS_TOKEN_REFRESH_WINDOW_MS);
+}
+
+function hasRefreshableCjToken(state: CjAccessTokenState | null, now = Date.now()): state is CjAccessTokenState {
+  return Boolean(
+    state &&
+      state.refreshToken &&
+      state.refreshTokenExpiresAtMs &&
+      state.refreshTokenExpiresAtMs > now + 60_000
+  );
+}
+
+function invalidateCurrentCjAccessToken(): void {
+  if (!cjAccessTokenState) return;
+  cjAccessTokenState = {
+    ...cjAccessTokenState,
+    accessTokenExpiresAtMs: 0,
+  };
+}
+
+async function requestCjAuthState(
+  mode: "getAccessToken" | "refreshAccessToken",
+  payload: Record<string, string>,
+): Promise<CjAccessTokenState> {
+  const now = Date.now();
+  const response = await fetch(`${CJ_API_BASE_URL}/authentication/${mode}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -382,27 +488,138 @@ async function getCjAccessToken(): Promise<string | null> {
       "User-Agent":
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     },
-    body: JSON.stringify({ apiKey }),
+    body: JSON.stringify(payload),
     cache: "no-store",
   });
 
-  if (!res.ok) {
-    throw new Error(`CJ auth failed: ${res.status}`);
+  const wrapped = (await response.json().catch(() => ({}))) as CjWrappedResponse<CjAuthResponse>;
+  if (!response.ok || !isCjWrappedSuccess(wrapped)) {
+    throw buildCjApiError(`CJ ${mode} failed`, response, wrapped);
   }
 
-  const wrapped = (await res.json()) as CjWrappedResponse<CjAuthResponse>;
-  const token =
-    toNonEmptyString(wrapped.data?.accessToken) ?? toNonEmptyString(wrapped.data?.access_token);
-  if (!token) {
-    throw new Error(`CJ auth missing access token: ${wrapped.message ?? "unknown error"}`);
+  return buildCjAccessTokenState(wrapped.data ?? {}, now);
+}
+
+async function withCjAccessTokenLock(factory: () => Promise<string | null>): Promise<string | null> {
+  if (cjAccessTokenPromise) {
+    return cjAccessTokenPromise;
   }
 
-  cjAccessTokenState = {
-    token,
-    expiresAtMs: now + 14 * 24 * 60 * 60 * 1000,
+  cjAccessTokenPromise = factory().finally(() => {
+    cjAccessTokenPromise = null;
+  });
+
+  return cjAccessTokenPromise;
+}
+
+async function getCjAccessTokenUnlocked(): Promise<string | null> {
+  const now = Date.now();
+  if (hasUsableCjAccessToken(cjAccessTokenState, now)) {
+    return cjAccessTokenState.accessToken;
+  }
+
+  const apiKey = String(process.env.CJ_API_KEY ?? "").trim();
+  if (!apiKey) return null;
+
+  if (hasRefreshableCjToken(cjAccessTokenState, now)) {
+    return refreshCjAccessTokenUnlocked();
+  }
+
+  cjAccessTokenState = await requestCjAuthState("getAccessToken", { apiKey });
+  return cjAccessTokenState.accessToken;
+}
+
+async function refreshCjAccessTokenUnlocked(): Promise<string | null> {
+  const now = Date.now();
+  const currentState = cjAccessTokenState;
+  if (hasUsableCjAccessToken(currentState, now)) {
+    return currentState.accessToken;
+  }
+
+  if (!hasRefreshableCjToken(currentState, now)) {
+    return getCjAccessTokenUnlocked();
+  }
+
+  const refreshToken = (currentState as CjAccessTokenState).refreshToken;
+  if (!refreshToken) {
+    return getCjAccessTokenUnlocked();
+  }
+
+  cjAccessTokenState = await requestCjAuthState("refreshAccessToken", { refreshToken });
+  return cjAccessTokenState.accessToken;
+}
+
+export async function getCjAccessToken(): Promise<string | null> {
+  return withCjAccessTokenLock(() => getCjAccessTokenUnlocked());
+}
+
+export async function refreshCjAccessToken(): Promise<string | null> {
+  return withCjAccessTokenLock(() => refreshCjAccessTokenUnlocked());
+}
+
+export async function getValidCjAccessToken(): Promise<string | null> {
+  return withCjAccessTokenLock(async () => {
+    const now = Date.now();
+    if (hasUsableCjAccessToken(cjAccessTokenState, now)) {
+      return cjAccessTokenState.accessToken;
+    }
+
+    if (hasRefreshableCjToken(cjAccessTokenState, now)) {
+      return refreshCjAccessTokenUnlocked();
+    }
+
+    return getCjAccessTokenUnlocked();
+  });
+}
+
+async function fetchCjAuthenticatedJson<T>(
+  url: string,
+  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+  options?: { allowMissingAuth?: boolean },
+): Promise<{ response: Response; wrapped: CjWrappedResponse<T> } | null> {
+  const accessToken = await getValidCjAccessToken();
+  if (!accessToken) {
+    if (options?.allowMissingAuth) return null;
+    throw new Error("CJ auth unavailable: missing CJ_API_KEY");
+  }
+
+  const execute = async (token: string) => {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        ...init.headers,
+        "CJ-Access-Token": token,
+        Accept: init.headers?.Accept ?? "application/json",
+        "User-Agent":
+          init.headers?.["User-Agent"] ??
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      },
+      cache: init.cache ?? "no-store",
+    });
+
+    const wrapped = (await response.json().catch(() => ({}))) as CjWrappedResponse<T>;
+    return { response, wrapped };
   };
 
-  return token;
+  let result = await execute(accessToken);
+  if (!result.response.ok || !isCjWrappedSuccess(result.wrapped)) {
+    if (!isCjAuthFailureResponse(result.response, result.wrapped)) {
+      throw buildCjApiError("CJ request failed", result.response, result.wrapped);
+    }
+
+    invalidateCurrentCjAccessToken();
+    const refreshedToken = await refreshCjAccessToken();
+    if (!refreshedToken) {
+      throw buildCjApiError("CJ request failed", result.response, result.wrapped);
+    }
+
+    result = await execute(refreshedToken);
+    if (!result.response.ok || !isCjWrappedSuccess(result.wrapped)) {
+      throw buildCjApiError("CJ request failed", result.response, result.wrapped);
+    }
+  }
+
+  return result;
 }
 
 function parseDeliveryCycleDays(value: unknown): { minDays: number | null; maxDays: number | null } {
@@ -658,9 +875,6 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
   const trimmedKeyword = String(keyword ?? "").trim();
   if (!trimmedKeyword) return [];
 
-  const accessToken = await getCjAccessToken();
-  if (!accessToken) return [];
-
   const pageSize = Math.max(1, Math.min(Number(limit) || 20, 100));
   const url = new URL(`${CJ_API_BASE_URL}/product/listV2`);
   url.searchParams.set("page", "1");
@@ -673,22 +887,19 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
   url.searchParams.set("sort", "desc");
   url.searchParams.set("features", "enable_description,enable_category,enable_video");
 
-  const res = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "CJ-Access-Token": accessToken,
-      Accept: "application/json",
-      "User-Agent":
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  const result = await fetchCjAuthenticatedJson<CjSearchResponse>(
+    url.toString(),
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
     },
-    cache: "no-store",
-  });
+    { allowMissingAuth: true },
+  );
+  if (!result) return [];
 
-  if (!res.ok) {
-    throw new Error(`CJ search failed: ${res.status} ${trimmedKeyword}`);
-  }
-
-  const wrapped = (await res.json()) as CjWrappedResponse<CjSearchResponse>;
+  const { response, wrapped } = result;
   const content = Array.isArray(wrapped.data?.content) ? wrapped.data.content : [];
   const products = content.flatMap((entry) => (Array.isArray(entry.productList) ? entry.productList : []));
   const mappedProducts = products
@@ -700,7 +911,7 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
       raw: {
         ...product.raw,
         searchUrl: url.toString(),
-        fetchStatus: res.status,
+        fetchStatus: response.status,
         apiResponseCode: wrapped.code ?? null,
         apiResponseMessage: wrapped.message ?? null,
         resultCount: products.length,
@@ -715,7 +926,7 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
         event: "CJ_SEARCH_NO_RESULTS",
         keyword: trimmedKeyword,
         searchUrl: url.toString(),
-        fetchStatus: res.status,
+        fetchStatus: response.status,
         apiResponseCode: wrapped.code ?? null,
         apiResponseMessage: wrapped.message ?? null,
         resultCount: products.length,
