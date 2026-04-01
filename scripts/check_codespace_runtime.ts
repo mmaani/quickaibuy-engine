@@ -1,5 +1,8 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { pool } from "../src/lib/db";
 import { getQueueNamespaceDiagnostics } from "../src/lib/queueNamespace";
+import { getReviewConsoleCredentials } from "../src/lib/review/auth";
 import { getDbTargetContext } from "./lib/dbTarget.mjs";
 import { getRuntimeDiagnostics } from "./lib/runtimeDiagnostics.mjs";
 import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
@@ -10,6 +13,17 @@ type CheckResult = {
   reason: string;
   detail?: string;
 };
+
+type ControlPageProbe = {
+  attempted: boolean;
+  url: string;
+  status: number | null;
+  ok: boolean;
+  outcome: "verified" | "skipped" | "failed";
+  reason: string;
+};
+
+const execFileAsync = promisify(execFile);
 
 function isTransientNetworkError(error: unknown): boolean {
   const text = String(error instanceof Error ? error.message : error ?? "")
@@ -23,6 +37,105 @@ function isTransientNetworkError(error: unknown): boolean {
     text.includes("enetunreach") ||
     text.includes("dns")
   );
+}
+
+function isLocalServerUnavailable(error: unknown): boolean {
+  const code = error && typeof error === "object" && "code" in error ? String(error.code ?? "").trim() : "";
+  const text = String(error instanceof Error ? error.message : error ?? "")
+    .trim()
+    .toLowerCase();
+  return code === "7" || text.includes("econnrefused") || text.includes("bad port") || text.includes("exit code 7");
+}
+
+async function requestStatus(url: string, dotenvPath: string, timeoutMs: number): Promise<number> {
+  const { stdout } = await execFileAsync(
+    "bash",
+    [
+      "-lc",
+      "set -a; source \"$DOTENV_PATH\"; set +a; curl -s -o /dev/null -w '%{http_code}' -u \"$REVIEW_CONSOLE_USERNAME:$REVIEW_CONSOLE_PASSWORD\" --max-time \"$MAX_TIME\" \"$PROBE_URL\"",
+    ],
+    {
+      timeout: timeoutMs,
+      env: {
+        ...process.env,
+        DOTENV_PATH: dotenvPath,
+        MAX_TIME: String(Math.max(1, Math.ceil(timeoutMs / 1000))),
+        PROBE_URL: url,
+      },
+    }
+  );
+  const status = Number(String(stdout).trim());
+  if (!Number.isFinite(status)) {
+    throw new Error(`Control page probe returned non-numeric HTTP status: ${String(stdout).trim()}`);
+  }
+  return status;
+}
+
+async function probeControlPage(
+  reviewConsole: NonNullable<ReturnType<typeof getReviewConsoleCredentials>> | null,
+  dotenvPath: string
+): Promise<ControlPageProbe> {
+  const baseUrl = String(process.env.CODESPACE_LOCAL_APP_URL ?? "http://127.0.0.1:3000").trim().replace(/\/+$/, "");
+  const url = `${baseUrl}/admin/control`;
+
+  if (!reviewConsole) {
+    return {
+      attempted: false,
+      url,
+      status: null,
+      ok: false,
+      outcome: "skipped",
+      reason: "Review console credentials are not configured; authenticated control page probe skipped.",
+    };
+  }
+
+  try {
+    const status = await requestStatus(
+      url,
+      dotenvPath,
+      Number(process.env.CODESPACE_CONTROL_PAGE_TIMEOUT_MS ?? 20000)
+    );
+
+    if (status >= 200 && status < 300) {
+      return {
+        attempted: true,
+        url,
+        status,
+        ok: true,
+        outcome: "verified",
+        reason: `Authenticated control page responded with HTTP ${status}.`,
+      };
+    }
+
+    return {
+      attempted: true,
+      url,
+      status,
+      ok: false,
+      outcome: "failed",
+      reason: `Authenticated control page responded with HTTP ${status}.`,
+    };
+  } catch (error) {
+    if (isLocalServerUnavailable(error)) {
+      return {
+        attempted: true,
+        url,
+        status: null,
+        ok: false,
+        outcome: "skipped",
+        reason: "No local app server is listening on the configured control page URL; probe skipped.",
+      };
+    }
+
+    return {
+      attempted: true,
+      url,
+      status: null,
+      ok: false,
+      outcome: "failed",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function summarizePgConnectivity(runtimeDiagnostics: Awaited<ReturnType<typeof getRuntimeDiagnostics>>): CheckResult {
@@ -91,7 +204,9 @@ async function main() {
   const dotenvPath = loadRuntimeEnv();
   const context = getDbTargetContext();
   const queue = getQueueNamespaceDiagnostics();
+  const reviewConsole = getReviewConsoleCredentials();
   const runtimeDiagnostics = await getRuntimeDiagnostics({ includeConnectivity: true });
+  const controlPageProbe = await probeControlPage(reviewConsole, dotenvPath);
   const checks: CheckResult[] = [];
 
   checks.push(
@@ -157,6 +272,44 @@ async function main() {
         }
   );
 
+  checks.push(
+    reviewConsole
+      ? {
+          check: "Review console auth",
+          status: "OK",
+          reason: "Review console credentials are configured in runtime env",
+        }
+      : {
+          check: "Review console auth",
+          status: "WARN",
+          reason: "REVIEW_CONSOLE_USERNAME / REVIEW_CONSOLE_PASSWORD are not configured",
+          detail: "Authenticated /admin/control verification will not be possible until review console credentials are present.",
+        }
+  );
+
+  checks.push(
+    controlPageProbe.outcome === "verified"
+      ? {
+          check: "Control page probe",
+          status: "OK",
+          reason: controlPageProbe.reason,
+          detail: controlPageProbe.url,
+        }
+      : controlPageProbe.outcome === "skipped"
+        ? {
+            check: "Control page probe",
+            status: "WARN",
+            reason: controlPageProbe.reason,
+            detail: controlPageProbe.url,
+          }
+        : {
+            check: "Control page probe",
+            status: "FAILED",
+            reason: controlPageProbe.reason,
+            detail: controlPageProbe.url,
+          }
+  );
+
   try {
     const result = await pool.query("select 1 as ok");
     checks.push(
@@ -194,6 +347,12 @@ async function main() {
         classification: context.classification,
         mutationSafety: context.mutationSafety.classification,
         queue,
+        reviewConsole: {
+          configured: Boolean(reviewConsole),
+          usernameSet: Boolean(String(process.env.REVIEW_CONSOLE_USERNAME ?? "").trim()),
+          passwordSet: Boolean(String(process.env.REVIEW_CONSOLE_PASSWORD ?? "")),
+        },
+        controlPageProbe,
         connectivity: runtimeDiagnostics.connectivity,
         checks,
       },

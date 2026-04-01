@@ -11,6 +11,9 @@ This folder is no longer the operator-facing command surface by default. Human o
 | Learning refresh | `pnpm ops:learning-refresh` | Canonical Learning Hub refresh. |
 | Supplier wave refresh | `pnpm ops:supplier-wave` | Canonical supplier discovery plus rebuild wave. |
 | Runtime diagnostics | `pnpm runtime:diag` | Canonical env/runtime classification. |
+| Codespaces attach/runtime validation | `NODE_ENV=production pnpm codespace:check` | Confirms prod target, mutation safety, review-console auth readiness, and local control-page probe status. |
+| Scripts catalog audit | `pnpm scripts:check` | Syntax/type audit across the top-level `scripts/` catalog. |
+| Scripts runtime smoke | `pnpm scripts:smoke` | Read-only runtime smoke suite for deterministic automation-safe checks. |
 | Live integrity diagnostics | `pnpm check:live-integrity` | Canonical listing/integrity scan. |
 | Worker start | `pnpm worker:jobs` | Canonical BullMQ consumer. |
 | Engine boot-path check | `pnpm worker:engine:dev` / `pnpm worker:engine:prod` | For runtime boot-path verification, not daily operation. |
@@ -45,6 +48,8 @@ This folder is no longer the operator-facing command surface by default. Human o
 - `scripts/check_schema_drift.ts`
 - `scripts/check_migration_ledger.ts`
 - `scripts/verify_blocked_candidate_recovery.ts` (read-only candidate recovery verifier; supports candidate/supplier lookup plus dynamic targeting modes for current blocked/manual-review truth)
+
+`pnpm probe:runtime` remains a deeper read-only runtime probe, but it is intentionally not part of `pnpm scripts:smoke` because it has proven sensitive to wrapper/process-model differences under automation. Run it directly when you want a richer DB plus Redis liveness probe.
 
 ### Canonical mutation and repair
 
