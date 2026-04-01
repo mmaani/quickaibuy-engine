@@ -107,6 +107,10 @@ function toneLabel(tone: Tone): string {
   return "watch";
 }
 
+function renderStateLabel(value: StageStatus["renderState"] | null | undefined): string {
+  return value ? value.replaceAll("_", " ").toLowerCase() : "unknown";
+}
+
 function StageMeter({
   tone,
   fresh,
@@ -685,8 +689,8 @@ export default async function DashboardPage() {
                     <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Trend Coverage</div>
                     <div className="mt-2 text-xl font-semibold text-white">Signals By Recency</div>
                   </div>
-                  <div className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${toneClass(data.trend.recentSignals24h > 0 ? "ok" : "warning")}`}>
-                    {data.trend.recentSignals24h > 0 ? "current" : "stale"}
+                  <div className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${toneClass(trendTone)}`}>
+                    {renderStateLabel(trendStage?.renderState)}
                   </div>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -710,8 +714,8 @@ export default async function DashboardPage() {
                     <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Supplier Ingestion</div>
                     <div className="mt-2 text-xl font-semibold text-white">Snapshot Freshness</div>
                   </div>
-                  <div className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${toneClass(data.supplier.freshRows > 0 ? "ok" : "warning")}`}>
-                    {data.supplier.freshRows > 0 ? "current" : "stale"}
+                  <div className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${toneClass(supplierTone)}`}>
+                    {renderStateLabel(supplierStage?.renderState)}
                   </div>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -845,7 +849,7 @@ export default async function DashboardPage() {
         <Section
           eyebrow="Evidence"
           title="Diagnostics"
-          description="Canonical jobs, worker runs, and audit events remain visible so operators can trace freshness gaps back to execution reality."
+          description="Canonical jobs, worker runs, and audit events remain visible so operators can trace freshness gaps back to execution reality. Worker-run rows now label historical failures separately when newer worker activity proves the worker recovered."
         >
           <div className="grid gap-5 xl:grid-cols-3">
             <div>

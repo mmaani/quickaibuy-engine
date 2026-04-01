@@ -800,15 +800,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     `), []),
     readOnlyQuery(queryFailures, "recent_worker_runs", "worker_runs", () =>
       runQuery(`
-      select
-        worker,
-        job_name,
-        job_id,
-        status,
-        duration_ms,
-        started_at,
-        finished_at
-      from (
+      with worker_runs_ranked as (
         select
           worker,
           job_name,
@@ -817,14 +809,45 @@ export async function getDashboardData(): Promise<DashboardData> {
           duration_ms,
           started_at,
           finished_at,
+          coalesce(finished_at, started_at) as activity_ts,
           row_number() over (
             partition by worker, job_name, job_id
             order by coalesce(finished_at, started_at) desc nulls last, started_at desc nulls last, job_id desc
           ) as row_num
         from worker_runs
-      ) worker_runs_latest
-      where row_num = 1
-      order by coalesce(finished_at, started_at) desc nulls last
+      ),
+      latest_worker_activity as (
+        select
+          worker,
+          max(coalesce(finished_at, started_at)) as latest_worker_activity_ts
+        from worker_runs
+        group by worker
+      )
+      select
+        r.worker,
+        r.job_name,
+        r.job_id,
+        r.status,
+        case
+          when upper(coalesce(r.status, '')) = 'FAILED'
+            and a.latest_worker_activity_ts is not null
+            and r.activity_ts < a.latest_worker_activity_ts
+          then 'HISTORICAL_WORKER_FAILURE'
+          when upper(coalesce(r.status, '')) = 'FAILED'
+          then 'CURRENT_FAILURE'
+          when upper(coalesce(r.status, '')) = 'STARTED'
+          then 'RUNNING'
+          when upper(coalesce(r.status, '')) = 'SUCCEEDED'
+          then 'LATEST_SUCCESS'
+          else concat('LATEST_', upper(coalesce(r.status, 'UNKNOWN')))
+        end as evidence_state,
+        r.duration_ms,
+        r.started_at,
+        r.finished_at
+      from worker_runs_ranked r
+      left join latest_worker_activity a on a.worker = r.worker
+      where r.row_num = 1
+      order by r.activity_ts desc nulls last
       limit 12
     `), []),
     readOnlyQuery(queryFailures, "recent_audit_events", "audit_log", () =>
