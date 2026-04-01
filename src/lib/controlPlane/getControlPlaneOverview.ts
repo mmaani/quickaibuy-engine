@@ -15,6 +15,8 @@ import {
 } from "@/lib/autonomousOps/backbone";
 import type { FullCycleRunResult } from "@/lib/autonomousOps/fullCycle";
 import { getContinuousLearningScheduleSnapshot } from "@/lib/jobs/enqueueContinuousLearningSchedules";
+import { getControlPanelData } from "@/lib/control/getControlPanelData";
+import { buildScopedHealth, deriveEvidenceState, deriveScopedHealthStatus, summarizeIncidents, type DashboardAlert, type DashboardScopedHealth } from "@/lib/dashboard/status";
 
 type LatestRunSnapshot = {
   generatedAt: string | null;
@@ -72,6 +74,8 @@ export type ControlPlaneOverview = {
     manualWorkLabel: string;
     safeToRunFullCycleNow: boolean;
   };
+  scopedHealth: DashboardScopedHealth[];
+  prioritizedIncidents: DashboardAlert[];
   anomalyGroups: Array<{
     key: string;
     label: string;
@@ -398,10 +402,11 @@ function buildRecommendations(
 export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   const runtime = await getRuntimeDiagnostics();
   const summary = await buildOperationalSummary(runtime);
-  const [learningHub, productMarketIntelligence, continuousLearningSchedule] = await Promise.all([
+  const [learningHub, productMarketIntelligence, continuousLearningSchedule, controlPanel] = await Promise.all([
     getLearningHubScorecard(),
     getProductMarketIntelligenceOverview({ windowDays: 90, includeNodes: 12 }).catch(() => null),
     getContinuousLearningScheduleSnapshot().catch(() => null),
+    getControlPanelData().catch(() => null),
   ]);
   const pauseMap = await computePauseMap(runtime, summary, learningHub);
   const latestRunDetails = await getLatestAutonomousRunDetails();
@@ -419,6 +424,187 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   const pauseSource: PauseSource = reconciledRunWindowPauses.length ? "latest_run" : "runtime";
   const anomalyGroups = buildAnomalyGroups(summary, pauses, latestRun, learningHub);
   const recommendations = buildRecommendations(summary, pauses, latestRun, learningHub);
+
+  const workerRecentTs = controlPanel?.workerQueueHealth.recentWorkerActivityTs ?? null;
+  const workerAlive = controlPanel?.workerQueueHealth.workerAlive ?? false;
+  const supplierFreshnessRows = summary.supplierReliability.reduce((acc, row) => acc + row.candidates, 0);
+  const supplierBlockedRows = summary.supplierReliability.reduce((acc, row) => acc + row.shippingBlocked, 0);
+  const candidateUniverseTotal = summary.candidateUniverse.supplierMix.reduce((acc, row) => acc + row.totalCandidates, 0);
+  const orderSyncAuthFailure = (controlPanel?.workerQueueHealth.failureClassifications ?? []).some((row) => row.classification === "auth");
+  const orderSyncScheduleActive = controlPanel?.futureOrders.orderSyncScheduleActive ?? null;
+  const listingPerformanceState = controlPanel?.workerQueueHealth.listingPerformanceFreshness.state ?? "missing";
+  const publishFailures = controlPanel?.listingThroughput.publishFailed ?? 0;
+  const recentPublishFailures24h = controlPanel?.listingThroughput.recentPublishFailures24h ?? 0;
+  const workerFailureCount24h = controlPanel?.workerQueueHealth.recentFailureCount24h ?? 0;
+
+  const scopedHealth = [
+    buildScopedHealth({
+      domain: "worker_heartbeat",
+      label: "Worker heartbeat",
+      state: deriveScopedHealthStatus({
+        domain: "worker_heartbeat",
+        totalRows: workerRecentTs ? 1 : 0,
+        freshRows: workerAlive ? 1 : 0,
+        staleRows: workerRecentTs && !workerAlive ? 1 : 0,
+        lastDataTs: workerRecentTs,
+        lastSuccessfulRunTs: controlPanel?.workerQueueHealth.lastSuccessfulWorkerActivityTs ?? workerRecentTs,
+        scheduleActive: true,
+      }),
+      actionableHref: "/admin/control?tab=worker-queue-health",
+      latestEvidenceTs: workerRecentTs,
+      detail: controlPanel?.workerQueueHealth.workerStateDetail ?? "Worker heartbeat evidence unavailable.",
+      blockedReason: workerAlive ? null : "worker heartbeat is stale or inactive",
+    }),
+    buildScopedHealth({
+      domain: "supplier_discovery",
+      label: "Supplier discovery",
+      state: deriveScopedHealthStatus({
+        domain: "supplier_discovery",
+        totalRows: supplierFreshnessRows,
+        freshRows: summary.supplierReliability.filter((row) => (row.refreshSuccessRate ?? 0) > 0.95).length,
+        staleRows: supplierBlockedRows,
+        lastDataTs: latestRun?.generatedAt ?? null,
+        lastSuccessfulRunTs: latestRun?.generatedAt ?? null,
+        scheduleActive: true,
+        viableCount: candidateUniverseTotal,
+        downstreamContributionCount: summary.pipeline.active + summary.pipeline.readyToPublish + summary.pipeline.preview,
+      }),
+      actionableHref: "/admin/control?tab=supplier-discovery",
+      latestEvidenceTs: latestRun?.generatedAt ?? null,
+      blockedReason: candidateUniverseTotal === 0 && supplierFreshnessRows > 0 ? "supplier discovery is not contributing viable downstream candidates" : null,
+      detail: candidateUniverseTotal === 0 && supplierFreshnessRows > 0
+        ? "Supplier discovery has active refresh evidence, but downstream candidate contribution is still zero."
+        : "Supplier discovery health is derived from canonical supplier reliability and candidate-universe contribution.",
+    }),
+    buildScopedHealth({
+      domain: "marketplace_scan",
+      label: "Marketplace scan",
+      state: deriveScopedHealthStatus({
+        domain: "marketplace_scan",
+        totalRows:
+          summary.marketplaceReliability.freshMarketplaceRows24h +
+          summary.marketplaceReliability.staleMarketplaceRows24h,
+        freshRows: summary.marketplaceReliability.freshMarketplaceRows24h,
+        staleRows: summary.marketplaceReliability.staleMarketplaceRows24h,
+        lastDataTs: latestRun?.generatedAt ?? null,
+        lastSuccessfulRunTs: latestRun?.generatedAt ?? null,
+        scheduleActive: true,
+      }),
+      actionableHref: "/admin/review?marketplace=ebay&reason=stale_snapshot",
+      latestEvidenceTs: latestRun?.generatedAt ?? null,
+      blockedReason: summary.marketplaceReliability.staleMarketplaceCandidates > 0 ? "stale marketplace coverage remains in the active scope" : null,
+      detail: summary.marketplaceReliability.staleMarketplaceCandidates > 0
+        ? `${summary.marketplaceReliability.staleMarketplaceCandidates} candidates remain blocked by stale marketplace coverage.`
+        : "Marketplace scan health is backed by current candidate-marketplace freshness.",
+    }),
+    buildScopedHealth({
+      domain: "order_sync",
+      label: "Order sync",
+      state: deriveScopedHealthStatus({
+        domain: "order_sync",
+        totalRows: controlPanel?.futureOrders.totalOrders ?? 0,
+        freshRows: controlPanel?.futureOrders.orderSyncScheduleActive ? 1 : 0,
+        staleRows: controlPanel?.futureOrders.orderSyncScheduleActive === false ? 1 : 0,
+        lastDataTs: controlPanel?.futureOrders.nextOrderSyncRun ?? workerRecentTs,
+        lastSuccessfulRunTs: controlPanel?.workerQueueHealth.lastSuccessfulWorkerActivityTs ?? null,
+        scheduleActive: orderSyncScheduleActive,
+        repeatedFailures: workerFailureCount24h >= 2 ? workerFailureCount24h : 0,
+        authInvalid: orderSyncAuthFailure,
+      }),
+      actionableHref: "/admin/orders",
+      latestEvidenceTs: controlPanel?.futureOrders.nextOrderSyncRun ?? workerRecentTs,
+      blockedReason: orderSyncAuthFailure ? "eBay auth/token failure is blocking order sync" : orderSyncScheduleActive === false ? "order sync schedule is missing" : null,
+      incidentState: !orderSyncAuthFailure && workerFailureCount24h > 0 && orderSyncScheduleActive ? deriveEvidenceState({ status: "FAILED", isLatestForWorker: false }) : undefined,
+      detail: orderSyncAuthFailure
+        ? "Order sync is unhealthy because auth/token refresh failures are present in canonical worker failure classifications."
+        : controlPanel?.futureOrders.automationDetail ?? "Order sync automation detail unavailable.",
+    }),
+    buildScopedHealth({
+      domain: "listing_pipeline",
+      label: "Listing pipeline",
+      state: deriveScopedHealthStatus({
+        domain: "listing_pipeline",
+        totalRows: (controlPanel?.listingThroughput.previews ?? 0) + (controlPanel?.listingThroughput.readyToPublish ?? 0) + (controlPanel?.listingThroughput.active ?? 0) + publishFailures,
+        freshRows: listingPerformanceState === "fresh" ? 1 : 0,
+        staleRows: listingPerformanceState === "fresh" ? 0 : 1,
+        lastDataTs: controlPanel?.workerQueueHealth.listingPerformanceFreshness.latestSuccessTs ?? latestRun?.generatedAt ?? null,
+        lastSuccessfulRunTs: controlPanel?.workerQueueHealth.listingPerformanceFreshness.latestSuccessTs ?? null,
+        scheduleActive: true,
+        blockedCount: publishFailures,
+      }),
+      actionableHref: "/admin/listings",
+      latestEvidenceTs: controlPanel?.workerQueueHealth.listingPerformanceFreshness.latestSuccessTs ?? latestRun?.generatedAt ?? null,
+      blockedReason: publishFailures > 0 ? "active publish failures remain in current listing scope" : listingPerformanceState !== "fresh" ? "listing performance freshness is missing or stale" : null,
+      detail: publishFailures > 0
+        ? `${publishFailures} listings are currently in PUBLISH_FAILED and keep the listing pipeline degraded.`
+        : controlPanel?.workerQueueHealth.listingPerformanceFreshness.detail ?? "Listing performance freshness unavailable.",
+    }),
+  ];
+
+  const prioritizedIncidents = summarizeIncidents([
+    ...(orderSyncAuthFailure ? [{
+      id: "control-order-sync-auth",
+      tone: "error" as const,
+      title: "eBay auth failure is blocking order sync",
+      detail: "Canonical worker failure classifications include auth/token refresh failures.",
+      href: "/admin/orders",
+      domain: "order_sync" as const,
+      incidentState: "CURRENT" as const,
+      actionState: "BLOCKED" as const,
+      blockedReason: "invalid_grant or refresh-token mismatch",
+      count: 1,
+    }] : []),
+    ...(summary.shippingBlocks > 0 ? [{
+      id: "control-shipping-blocks",
+      tone: "error" as const,
+      title: "Shipping remains fail-closed",
+      detail: `${summary.shippingBlocks} candidates remain blocked by missing deterministic shipping intelligence.`,
+      href: "/admin/review?reason=shipping_block",
+      domain: "listing_pipeline" as const,
+      incidentState: "CURRENT" as const,
+      actionState: "BLOCKED" as const,
+      blockedReason: "shipping intelligence unresolved",
+      count: summary.shippingBlocks,
+    }] : []),
+    ...(summary.marketplaceReliability.staleMarketplaceCandidates > 0 ? [{
+      id: "control-marketplace-stale",
+      tone: "warning" as const,
+      title: "Marketplace freshness is degraded",
+      detail: `${summary.marketplaceReliability.staleMarketplaceCandidates} candidates are blocked by stale marketplace data.`,
+      href: "/admin/review?marketplace=ebay&reason=stale_snapshot",
+      domain: "marketplace_scan" as const,
+      incidentState: "CURRENT" as const,
+      actionState: "READ_ONLY" as const,
+      count: summary.marketplaceReliability.staleMarketplaceCandidates,
+    }] : []),
+    ...(listingPerformanceState !== "fresh" ? [{
+      id: "control-listing-performance",
+      tone: "warning" as const,
+      title: "Listing performance freshness is missing",
+      detail: controlPanel?.workerQueueHealth.listingPerformanceFreshness.detail ?? "Listing performance freshness evidence is missing.",
+      href: "/admin/listings",
+      domain: "listing_pipeline" as const,
+      incidentState: "CURRENT" as const,
+      actionState: "READ_ONLY" as const,
+      blockedReason: "listing performance evidence is stale or missing",
+      count: 1,
+    }] : []),
+    ...(recentPublishFailures24h > 0 || publishFailures > 0 ? [{
+      id: "control-publish-failures",
+      tone: "error" as const,
+      title: "Active publish failures require triage",
+      detail: publishFailures > 0
+        ? `${publishFailures} listings are currently in PUBLISH_FAILED.`
+        : `${recentPublishFailures24h} publish failures occurred in the last 24 hours.`,
+      href: "/admin/listings?status=PUBLISH_FAILED",
+      domain: "listing_pipeline" as const,
+      incidentState: "CURRENT" as const,
+      actionState: "BLOCKED" as const,
+      blockedReason: "publish failures are active in current listing scope",
+      count: Math.max(recentPublishFailures24h, publishFailures),
+    }] : []),
+  ]);
+
   const safeToRunFullCycleNow =
     runtime.hasEbayClientId &&
     runtime.hasEbayClientSecret &&
@@ -450,6 +636,8 @@ export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
           ? `${summary.manualPurchaseQueueCount} orders need supplier purchase/payment`
           : "Supplier purchase/payment only when orders reach purchase review",
     },
+    scopedHealth,
+    prioritizedIncidents,
     anomalyGroups,
     recommendations,
     learningHub,

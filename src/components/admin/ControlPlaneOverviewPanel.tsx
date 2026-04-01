@@ -17,6 +17,22 @@ function severityTone(severity: "info" | "warning" | "critical") {
   return toneClass("info");
 }
 
+function scopedHealthTone(renderState: string) {
+  if (renderState === "HEALTHY") return toneClass("healthy");
+  if (renderState === "DEGRADED" || renderState === "ZERO" || renderState === "UNKNOWN") return toneClass("watch");
+  return toneClass("critical");
+}
+
+function incidentTone(tone: "info" | "warning" | "error") {
+  if (tone === "error") return toneClass("critical");
+  if (tone === "warning") return toneClass("watch");
+  return toneClass("info");
+}
+
+function stateLabel(value: string | null | undefined) {
+  return value ? value.replaceAll("_", " ").toLowerCase() : "unknown";
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "unknown";
   const date = new Date(value);
@@ -101,6 +117,64 @@ export function ControlPlaneOverviewPanel({
         <Stat label="Manual purchase queue" value={data.summary.manualPurchaseQueueCount} />
         <Stat label="Repeat customers" value={data.summary.repeatCustomerGrowth.repeatCustomers} />
       </div>
+
+      <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+        <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Scoped health enforcement</div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {data.scopedHealth.map((health) => (
+            <Link
+              key={health.domain}
+              href={health.actionableHref}
+              className={`rounded-2xl border p-3 ${scopedHealthTone(health.renderState)}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">{health.label}</div>
+                  <div className="mt-2 text-sm font-semibold text-white">{health.renderState.replaceAll("_", " ")}</div>
+                </div>
+                <div className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white/75">
+                  {stateLabel(health.incidentState)}
+                </div>
+              </div>
+              <div className="mt-2 text-sm leading-6 text-white/80">{health.detail}</div>
+              {health.blockedReason ? <div className="mt-2 text-xs text-white/65">Blocked reason: {health.blockedReason}</div> : null}
+              <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/50">Latest evidence {formatDateTime(health.latestEvidenceTs)}</div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {data.prioritizedIncidents.length ? (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Prioritized incidents</div>
+          <div className="grid gap-3 xl:grid-cols-2">
+            {data.prioritizedIncidents.map((incident) => (
+              <Link
+                key={incident.id}
+                href={incident.href}
+                className={`rounded-2xl border p-3 ${incidentTone(incident.tone)}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="text-sm font-semibold text-white">{incident.title}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {incident.count && incident.count > 1 ? (
+                      <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white/75">{incident.count}x</span>
+                    ) : null}
+                    {incident.incidentState ? (
+                      <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white/75">{stateLabel(incident.incidentState)}</span>
+                    ) : null}
+                    {incident.actionState ? (
+                      <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white/75">{stateLabel(incident.actionState)}</span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="mt-2 text-sm leading-6 text-white/85">{incident.detail}</div>
+                {incident.blockedReason ? <div className="mt-2 text-xs text-white/65">Blocked reason: {incident.blockedReason}</div> : null}
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
         <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Operating mode</div>

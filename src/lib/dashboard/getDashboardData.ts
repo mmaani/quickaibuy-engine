@@ -828,6 +828,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         r.job_name,
         r.job_id,
         r.status,
+        r.error,
         case
           when upper(coalesce(r.status, '')) = 'FAILED'
             and a.latest_worker_activity_ts is not null

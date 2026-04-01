@@ -3,6 +3,7 @@ import { getDashboardData, type StageStatus } from "@/lib/dashboard/getDashboard
 import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
 import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
 import { JORDAN_TIME_ZONE } from "@/lib/time/jordan";
+import { buildScopedHealth, deriveEvidenceState, deriveScopedHealthStatus, explainZeroState, summarizeIncidents } from "@/lib/dashboard/status";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -109,6 +110,26 @@ function toneLabel(tone: Tone): string {
 
 function renderStateLabel(value: StageStatus["renderState"] | null | undefined): string {
   return value ? value.replaceAll("_", " ").toLowerCase() : "unknown";
+}
+
+function incidentStateLabel(value: string | null | undefined): string {
+  return value ? value.replaceAll("_", " ").toLowerCase() : "unknown";
+}
+
+function latestActivityTs(rows: Row[]): string | null {
+  let best: number | null = null;
+  let bestRaw: string | null = null;
+  for (const row of rows) {
+    const raw = (row.finished_at ?? row.started_at) as string | null | undefined;
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (!Number.isFinite(ts)) continue;
+    if (best == null || ts > best) {
+      best = ts;
+      bestRaw = raw;
+    }
+  }
+  return bestRaw;
 }
 
 function StageMeter({
@@ -274,18 +295,46 @@ function AlertCard({
   detail,
   tone,
   href,
+  incidentState,
+  actionState,
+  blockedReason,
+  count,
 }: {
   title: string;
   detail: string;
   tone: Tone;
   href: string;
+  incidentState?: string | null;
+  actionState?: string | null;
+  blockedReason?: string | null;
+  count?: number | null;
 }) {
   return (
     <a href={href} className={`relative block overflow-hidden rounded-[1.6rem] border p-4 ${toneClass(tone)}`}>
       <div className={`pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b ${progressBarClass(tone)}`} />
       <div className="pl-3">
-        <div className="text-sm font-semibold">{title}</div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="text-sm font-semibold">{title}</div>
+          <div className="flex flex-wrap gap-2">
+            {count && count > 1 ? (
+              <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-white/72">
+                {count}x
+              </span>
+            ) : null}
+            {incidentState ? (
+              <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-white/72">
+                {incidentStateLabel(incidentState)}
+              </span>
+            ) : null}
+            {actionState ? (
+              <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-white/72">
+                {incidentStateLabel(actionState)}
+              </span>
+            ) : null}
+          </div>
+        </div>
         <div className="mt-2 text-sm leading-6 text-white/80">{detail}</div>
+        {blockedReason ? <div className="mt-2 text-xs leading-5 text-white/62">Blocked reason: {blockedReason}</div> : null}
       </div>
     </a>
   );
@@ -415,22 +464,227 @@ export default async function DashboardPage() {
   const profitabilityStage = stageByKey.get("profitability");
   const listingReadinessStage = stageByKey.get("listing_readiness");
 
-  const overallHealthTone: Tone = data.stages.some((stage) => stage.renderState === "QUERY_FAILED" || stage.renderState === "PARTIAL_FAILURE" || stage.renderState === "STALE")
-    ? "error"
-    : data.stages.some((stage) => stage.renderState === "DEGRADED" || stage.renderState === "UNKNOWN" || stage.renderState === "ZERO")
-      ? "warning"
-      : "ok";
   const profitabilityTone = profitabilityStage ? stageTone(profitabilityStage) : "default";
   const marketplaceTone = marketplaceStage ? stageTone(marketplaceStage) : "default";
   const trendTone = trendStage ? stageTone(trendStage) : "default";
   const supplierTone = supplierStage ? stageTone(supplierStage) : "default";
   const matchingTone = matchingStage ? stageTone(matchingStage) : "default";
   const listingReadinessTone = listingReadinessStage ? stageTone(listingReadinessStage) : "default";
-  const alertsTone: Tone = data.alerts.some((alert) => alert.tone === "error")
+  const renderTs = new Date(data.generatedAt).getTime();
+  const recentWorkerRuns = data.diagnostics.recentWorkerRuns;
+  const workerActivityTs = latestActivityTs(recentWorkerRuns);
+  const workerFresh = workerActivityTs != null && renderTs - new Date(workerActivityTs).getTime() <= 30 * 60 * 1000;
+  const orderSyncRuns = recentWorkerRuns.filter((row) => String(row.job_name ?? "") === "ORDER_SYNC");
+  const latestOrderSync = orderSyncRuns[0] ?? null;
+  const orderSyncError = String(latestOrderSync?.error ?? "");
+  const orderSyncAuthInvalid = /INVALID_GRANT|EBAY_REFRESH_TOKEN/i.test(orderSyncError);
+  const orderSyncCurrentFailures = orderSyncRuns.filter((row) => String(row.evidence_state ?? "") === "CURRENT_FAILURE").length;
+  const orderSyncHistoricalFailures = orderSyncRuns.filter((row) => String(row.evidence_state ?? "") === "HISTORICAL_WORKER_FAILURE").length;
+  const listingOptimizeRuns = recentWorkerRuns.filter((row) => String(row.job_name ?? "") === "LISTING_OPTIMIZE");
+  const latestListingOptimize = listingOptimizeRuns[0] ?? null;
+  const listingOptimizeTs = (latestListingOptimize?.finished_at ?? latestListingOptimize?.started_at ?? null) as string | null;
+  const listingPerformanceFresh = listingOptimizeTs != null && renderTs - new Date(listingOptimizeTs).getTime() <= 8 * 60 * 60 * 1000;
+  const listingPerformanceMissing = !listingPerformanceFresh;
+  const supplierContribution = data.matching.totalMatches + data.profitability.totalCandidates;
+
+  const scopedHealth = [
+    buildScopedHealth({
+      domain: "worker_heartbeat",
+      label: "Worker heartbeat",
+      state: deriveScopedHealthStatus({
+        domain: "worker_heartbeat",
+        totalRows: workerActivityTs ? 1 : 0,
+        freshRows: workerFresh ? 1 : 0,
+        staleRows: workerActivityTs && !workerFresh ? 1 : 0,
+        lastDataTs: workerActivityTs,
+        lastSuccessfulRunTs: workerActivityTs,
+        scheduleActive: true,
+      }),
+      actionableHref: "/admin/control?tab=diagnostics",
+      latestEvidenceTs: workerActivityTs,
+      detail: workerFresh
+        ? "Jobs worker heartbeat is current within the last 30 minutes."
+        : workerActivityTs
+          ? "Jobs worker heartbeat is stale and needs runtime investigation."
+          : "No canonical worker heartbeat evidence is currently available.",
+      zeroState: explainZeroState({
+        state: workerActivityTs ? "FRESH_HEALTHY" : "ZERO_VALID",
+        label: "Worker heartbeat",
+      }),
+    }),
+    buildScopedHealth({
+      domain: "supplier_discovery",
+      label: "Supplier discovery health",
+      state: deriveScopedHealthStatus({
+        domain: "supplier_discovery",
+        totalRows: data.supplier.totalRows,
+        freshRows: data.supplier.freshRows,
+        staleRows: data.supplier.staleRows,
+        lastDataTs: data.supplier.latestSnapshotTs,
+        lastSuccessfulRunTs: data.supplier.latestSuccessfulRunTs,
+        scheduleActive: supplierStage?.scheduleActive ?? true,
+        viableCount: data.supplier.freshRows,
+        downstreamContributionCount: supplierContribution,
+      }),
+      actionableHref: "/admin/review?supplier=cjdropshipping",
+      latestEvidenceTs: data.supplier.latestSnapshotTs,
+      blockedReason: data.supplier.freshRows > 0 && supplierContribution === 0 ? "fresh supplier rows are not contributing downstream" : null,
+      detail: data.supplier.freshRows > 0 && supplierContribution === 0
+        ? "Supplier discovery has fresh rows, but downstream contribution is still zero, so health remains degraded."
+        : data.supplier.freshRows === 0
+          ? "Supplier discovery is stale because no fresh supplier snapshots are within policy."
+          : "Supplier discovery health is based on fresh normalized supplier coverage plus downstream contribution.",
+    }),
+    buildScopedHealth({
+      domain: "marketplace_scan",
+      label: "Marketplace scan health",
+      state: deriveScopedHealthStatus({
+        domain: "marketplace_scan",
+        totalRows: data.marketplace.totalEbayRows,
+        freshRows: data.marketplace.freshEbayRows,
+        staleRows: data.marketplace.staleEbayRows,
+        lastDataTs: data.marketplace.latestSnapshotTs,
+        lastSuccessfulRunTs: data.marketplace.latestSuccessfulRunTs,
+        scheduleActive: marketplaceStage?.scheduleActive ?? true,
+      }),
+      actionableHref: "/admin/review?marketplace=ebay&reason=stale_snapshot",
+      latestEvidenceTs: data.marketplace.latestSnapshotTs,
+      blockedReason: data.marketplace.freshEbayRows === 0 ? "marketplace freshness is outside policy" : null,
+      detail: data.marketplace.freshEbayRows === 0
+        ? "Marketplace scan health is fail-closed because fresh eBay snapshot coverage is zero."
+        : data.marketplace.staleEbayRows > 0
+          ? "Marketplace scan health is degraded because stale eBay coverage remains in the active scope."
+          : "Marketplace scan health is backed by fresh eBay snapshot coverage and worker evidence.",
+    }),
+    buildScopedHealth({
+      domain: "order_sync",
+      label: "Order sync health",
+      state: deriveScopedHealthStatus({
+        domain: "order_sync",
+        totalRows: orderSyncRuns.length,
+        freshRows: latestOrderSync && String(latestOrderSync.status ?? "").toUpperCase() === "SUCCEEDED" ? 1 : 0,
+        staleRows: latestOrderSync && String(latestOrderSync.status ?? "").toUpperCase() !== "SUCCEEDED" ? 1 : 0,
+        lastDataTs: (latestOrderSync?.finished_at ?? latestOrderSync?.started_at ?? null) as string | null,
+        lastSuccessfulRunTs: orderSyncRuns.find((row) => String(row.status ?? "").toUpperCase() === "SUCCEEDED")?.finished_at as string | null ?? null,
+        latestFailedRunTs: orderSyncRuns.find((row) => String(row.status ?? "").toUpperCase() === "FAILED")?.finished_at as string | null ?? null,
+        scheduleActive: true,
+        repeatedFailures: orderSyncCurrentFailures >= 2 ? orderSyncCurrentFailures : 0,
+        authInvalid: orderSyncAuthInvalid,
+      }),
+      actionableHref: "/admin/orders?marketplace=ebay&status=sync_attention",
+      latestEvidenceTs: (latestOrderSync?.finished_at ?? latestOrderSync?.started_at ?? null) as string | null,
+      blockedReason: orderSyncAuthInvalid ? "eBay OAuth refresh failed for order sync" : orderSyncCurrentFailures >= 2 ? "repeated order sync failures" : null,
+      incidentState: orderSyncHistoricalFailures > 0 && orderSyncCurrentFailures === 0 ? deriveEvidenceState({ status: "FAILED", isLatestForWorker: false }) : undefined,
+      detail: orderSyncAuthInvalid
+        ? "Order sync is unhealthy because canonical worker evidence shows eBay auth/token refresh failure."
+        : orderSyncCurrentFailures >= 2
+          ? "Order sync is unhealthy because repeated failures are still current."
+          : latestOrderSync
+            ? "Order sync state is derived from canonical worker-run evidence."
+            : "No recent ORDER_SYNC worker evidence is currently visible on the dashboard.",
+      zeroState: explainZeroState({
+        state: orderSyncRuns.length === 0 ? "ZERO_VALID" : "FRESH_DEGRADED",
+        label: "Order sync",
+      }),
+    }),
+    buildScopedHealth({
+      domain: "listing_pipeline",
+      label: "Listing pipeline health",
+      state: deriveScopedHealthStatus({
+        domain: "listing_pipeline",
+        totalRows: data.listingReadiness.readyToPublish + data.listingReadiness.preview + data.listingReadiness.active + data.listingReadiness.publishFailed,
+        freshRows: listingPerformanceFresh ? 1 : 0,
+        staleRows: listingPerformanceFresh ? 0 : 1,
+        lastDataTs: data.listingReadiness.latestListingTs,
+        lastSuccessfulRunTs: listingOptimizeTs,
+        scheduleActive: true,
+        blockedCount: data.listingReadiness.publishFailed,
+      }),
+      actionableHref: `/admin/listings?marketplace=ebay&status=${data.listingReadiness.publishFailed > 0 ? "PUBLISH_FAILED" : "READY_TO_PUBLISH"}`,
+      latestEvidenceTs: listingOptimizeTs ?? data.listingReadiness.latestListingTs,
+      blockedReason: data.listingReadiness.publishFailed > 0 ? "active publish failures require triage before progression" : listingPerformanceMissing ? "listing performance freshness is missing or stale" : null,
+      detail: data.listingReadiness.publishFailed > 0
+        ? "Listing pipeline health is degraded because active publish failures are still in the current scope."
+        : listingPerformanceMissing
+          ? "Listing pipeline health is degraded because listing-performance freshness evidence is missing or stale."
+          : "Listing pipeline health is backed by current listing-performance worker evidence.",
+    }),
+  ];
+
+  const actionableFreshDetail = data.headline.actionableFreshCandidates > 0
+    ? "Candidates are fresh, approved, and listing-eligible."
+    : explainZeroState({
+        state: "ZERO_VALID",
+        label: "Fresh actionable candidates",
+        blocked: data.profitability.blockedByAvailability > 0 || data.profitability.blockedByStaleSnapshot > 0 || data.profitability.blockedByPolicyOrManualReview > 0,
+      }).detail;
+  const approvedFreshDetail = data.headline.approvedFreshCandidates > 0
+    ? "Approved candidates still sit within current freshness policy."
+    : explainZeroState({
+        state: "ZERO_VALID",
+        label: "Approved fresh candidates",
+        blocked: data.profitability.approved > 0 && data.headline.approvedFreshCandidates === 0,
+      }).detail;
+  const readyToPublishDetail = data.listingReadiness.readyToPublish > 0
+    ? "Listings are ready to publish under current canonical truth."
+    : explainZeroState({
+        state: "ZERO_VALID",
+        label: "Ready to publish listings",
+        blocked: data.listingReadiness.publishFailed > 0 || data.profitability.blockedByAvailability > 0,
+      }).detail;
+
+  const derivedAlerts = summarizeIncidents([
+    ...data.alerts.map((alert) => ({
+      ...alert,
+      incidentState: alert.incidentState ?? "CURRENT",
+      actionState: alert.actionState ?? (alert.title.toLowerCase().includes("failure") ? "BLOCKED" : "READ_ONLY"),
+      blockedReason:
+        alert.blockedReason ??
+        (alert.title.toLowerCase().includes("publish") ? "active publish failures" : null),
+    })),
+    ...(orderSyncAuthInvalid
+      ? [{
+          id: "order-sync-auth-failure-live",
+          tone: "error" as const,
+          title: "Order sync auth failure",
+          detail: "Canonical worker evidence shows eBay auth/token refresh failure for ORDER_SYNC.",
+          href: "/admin/orders?marketplace=ebay&reason=auth_failure",
+          domain: "order_sync" as const,
+          incidentState: "CURRENT" as const,
+          actionState: "BLOCKED" as const,
+          blockedReason: "invalid_grant or refresh-token mismatch",
+          count: Math.max(1, orderSyncCurrentFailures),
+        }]
+      : []),
+    ...(listingPerformanceMissing
+      ? [{
+          id: "listing-performance-freshness-live",
+          tone: "warning" as const,
+          title: "Listing performance freshness is missing",
+          detail: listingOptimizeTs
+            ? "LISTING_OPTIMIZE last succeeded more than 8 hours ago."
+            : "No successful LISTING_OPTIMIZE worker evidence is currently available.",
+          href: "/admin/listings?tab=performance",
+          domain: "listing_pipeline" as const,
+          incidentState: "CURRENT" as const,
+          actionState: "READ_ONLY" as const,
+          blockedReason: listingOptimizeTs ? "listing performance evidence is stale" : "listing performance evidence is missing",
+        }]
+      : []),
+  ]);
+
+  const alertsTone: Tone = derivedAlerts.some((alert) => alert.tone === "error")
     ? "error"
-    : data.alerts.some((alert) => alert.tone === "warning")
+    : derivedAlerts.some((alert) => alert.tone === "warning")
       ? "warning"
       : "ok";
+  const overallHealthTone: Tone = scopedHealth.some((health) => health.renderState === "QUERY_FAILED" || health.renderState === "PARTIAL_FAILURE" || health.renderState === "STALE")
+    ? "error"
+    : scopedHealth.some((health) => health.renderState === "DEGRADED" || health.renderState === "UNKNOWN" || health.renderState === "ZERO")
+      ? "warning"
+      : data.stages.some((stage) => stage.renderState === "QUERY_FAILED" || stage.renderState === "PARTIAL_FAILURE" || stage.renderState === "STALE")
+        ? "error"
+        : "ok";
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-app text-white">
@@ -478,13 +732,13 @@ export default async function DashboardPage() {
                   label="Fresh Actionable"
                   value={data.headline.actionableFreshCandidates}
                   tone={profitabilityTone}
-                  detail="Candidates that are fresh, approved, and listing-eligible."
+                  detail={actionableFreshDetail}
                 />
                 <HeroMetric
                   label="Approved And Fresh"
                   value={data.headline.approvedFreshCandidates}
                   tone={profitabilityTone}
-                  detail="Approved candidates that still sit within current freshness policy."
+                  detail={approvedFreshDetail}
                 />
                 <HeroMetric
                   label="Stale Snapshot Reviews"
@@ -515,7 +769,7 @@ export default async function DashboardPage() {
                   <CompactStat label="DB" value={data.infrastructure.db.status.toUpperCase()} tone={data.infrastructure.db.status === "ok" ? "ok" : "error"} />
                   <CompactStat label="Redis" value={data.infrastructure.redis.status.toUpperCase()} tone={data.infrastructure.redis.status === "ok" ? "ok" : "warning"} />
                   <CompactStat label="Stale eBay Snapshots" value={data.headline.staleMarketplaceSnapshots} tone={marketplaceTone} />
-                  <CompactStat label="Open Alerts" value={data.alerts.length} tone={alertsTone} />
+                  <CompactStat label="Open Alerts" value={derivedAlerts.length} tone={alertsTone} />
                 </div>
               </div>
 
@@ -539,20 +793,53 @@ export default async function DashboardPage() {
 
         {controlPlane ? <ControlPlaneOverviewPanel data={controlPlane} /> : null}
 
-        {data.alerts.length ? (
+        <Section
+          eyebrow="Scoped Health"
+          title="Scoped Health Enforcement"
+          description="Domain-scoped health states are enforced independently so no unrelated healthy domain can mask a blocked worker, auth failure, stale marketplace coverage, or listing-pipeline issue."
+        >
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            {scopedHealth.map((health) => (
+              <a
+                key={health.domain}
+                href={health.actionableHref}
+                className={`rounded-[1.5rem] border p-4 ${toneClass(health.renderState === "HEALTHY" ? "ok" : health.renderState === "DEGRADED" || health.renderState === "ZERO" || health.renderState === "UNKNOWN" ? "warning" : "error")}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-white/45">{health.label}</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{health.renderState.replaceAll("_", " ")}</div>
+                  </div>
+                  <div className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-white/72">
+                    {incidentStateLabel(health.incidentState)}
+                  </div>
+                </div>
+                <div className="mt-3 text-sm leading-6 text-white/78">{health.detail}</div>
+                {health.blockedReason ? <div className="mt-2 text-xs leading-5 text-white/62">Blocked reason: {health.blockedReason}</div> : null}
+                <div className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/50">Latest evidence {formatCompactDateTime(health.latestEvidenceTs)}</div>
+              </a>
+            ))}
+          </div>
+        </Section>
+
+        {derivedAlerts.length ? (
           <Section
             eyebrow="Immediate Attention"
             title="Operational Alerts"
             description="These warnings are generated directly from canonical freshness, status, and blocker checks."
           >
             <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-              {data.alerts.map((alert) => (
+              {derivedAlerts.map((alert) => (
                 <AlertCard
                   key={alert.id}
                   title={alert.title}
                   detail={alert.detail}
                   tone={alertToneToCard(alert.tone)}
                   href={alert.href}
+                  incidentState={alert.incidentState}
+                  actionState={alert.actionState}
+                  blockedReason={alert.blockedReason}
+                  count={alert.count}
                 />
               ))}
             </div>
@@ -619,6 +906,7 @@ export default async function DashboardPage() {
                 label="Ready To Publish"
                 value={data.listingReadiness.readyToPublish}
                 tone={listingReadinessTone}
+                detail={readyToPublishDetail}
               />
               <StatCard label="Preview" value={data.listingReadiness.preview} />
               <StatCard
