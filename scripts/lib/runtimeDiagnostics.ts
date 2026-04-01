@@ -19,6 +19,22 @@ export type DiagnosticResult = {
   detail?: string;
 };
 
+export type ExecutionContext = {
+  codespaces: boolean;
+  codexCi: boolean;
+  sandboxNetworkDisabled: boolean;
+  termProgram: string | null;
+};
+
+export function getExecutionContext(): ExecutionContext {
+  return {
+    codespaces: String(process.env.CODESPACES ?? "").trim().toLowerCase() === "true",
+    codexCi: String(process.env.CODEX_CI ?? "").trim() === "1",
+    sandboxNetworkDisabled: String(process.env.CODEX_SANDBOX_NETWORK_DISABLED ?? "").trim() === "1",
+    termProgram: String(process.env.TERM_PROGRAM ?? "").trim() || null,
+  };
+}
+
 function flattenErrorDetail(error: unknown): string {
   if (!error) return "unknown error";
   if (typeof error === "string") return error;
@@ -104,6 +120,7 @@ export function classifyError(error: unknown): {
   nextStep: string;
   detail: string;
 } {
+  const executionContext = getExecutionContext();
   const detail = flattenErrorDetail(error);
   const message = detail.toLowerCase();
 
@@ -115,8 +132,12 @@ export function classifyError(error: unknown): {
   ) {
     return {
       status: "DNS_FAILURE",
-      reason: "Hostname lookup failed",
-      nextStep: "Verify host DNS resolution and retry in 30-60 seconds.",
+      reason: executionContext.sandboxNetworkDisabled
+        ? "Hostname lookup failed in a sandbox-limited execution context"
+        : "Hostname lookup failed",
+      nextStep: executionContext.sandboxNetworkDisabled
+        ? "Rerun this diagnostic outside the sandbox or in a normal Codespaces terminal before treating this as a runtime regression."
+        : "Verify host DNS resolution and retry in 30-60 seconds.",
       detail,
     };
   }
@@ -145,8 +166,12 @@ export function classifyError(error: unknown): {
   ) {
     return {
       status: "NETWORK_UNREACHABLE",
-      reason: "Network endpoint unreachable",
-      nextStep: "Check firewall/network routing and endpoint status.",
+      reason: executionContext.sandboxNetworkDisabled
+        ? "Network endpoint unreachable in a sandbox-limited execution context"
+        : "Network endpoint unreachable",
+      nextStep: executionContext.sandboxNetworkDisabled
+        ? "Rerun this diagnostic outside the sandbox or in a normal Codespaces terminal before treating this as a runtime regression."
+        : "Check firewall/network routing and endpoint status.",
       detail,
     };
   }
@@ -290,6 +315,7 @@ export function printStructuredResults(title: string, results: DiagnosticResult[
   const payload = {
     title,
     status: hasFailures ? "FAILED" : "OK",
+    executionContext: getExecutionContext(),
     checks: results,
   };
   console.log(JSON.stringify(payload, null, 2));

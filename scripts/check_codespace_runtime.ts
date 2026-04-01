@@ -6,6 +6,7 @@ import { getReviewConsoleCredentials } from "../src/lib/review/auth";
 import { getDbTargetContext } from "./lib/dbTarget.mjs";
 import { getRuntimeDiagnostics } from "./lib/runtimeDiagnostics.mjs";
 import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
+import { getExecutionContext, type ExecutionContext } from "./lib/runtimeDiagnostics";
 
 type CheckResult = {
   check: string;
@@ -250,8 +251,39 @@ function summarizeRedisConnectivity(runtimeDiagnostics: Awaited<ReturnType<typeo
   };
 }
 
+function withSandboxContext(result: CheckResult, executionContext: ExecutionContext): CheckResult {
+  if (!executionContext.sandboxNetworkDisabled) return result;
+
+  if (
+    result.status === "WARN" &&
+    (result.check === "Postgres runtime probe" ||
+      result.check === "Postgres runtime connectivity" ||
+      result.check === "Redis runtime connectivity")
+  ) {
+    return {
+      ...result,
+      reason: `${result.reason} (sandbox-limited network context)`,
+      detail: result.detail
+        ? `${result.detail} | CODEX_SANDBOX_NETWORK_DISABLED=1`
+        : "CODEX_SANDBOX_NETWORK_DISABLED=1",
+    };
+  }
+
+  if (result.status === "WARN" && result.check === "Control page probe") {
+    return {
+      ...result,
+      detail: result.detail
+        ? `${result.detail} | if the app is running outside the sandbox, rerun this check in the same runtime context`
+        : "If the app is running outside the sandbox, rerun this check in the same runtime context.",
+    };
+  }
+
+  return result;
+}
+
 async function main() {
   const dotenvPath = loadRuntimeEnv();
+  const executionContext = getExecutionContext();
   const context = getDbTargetContext();
   const queue = getQueueNamespaceDiagnostics();
   const reviewConsole = getReviewConsoleCredentials();
@@ -383,8 +415,12 @@ async function main() {
     });
   }
 
-  checks.push(summarizePgConnectivity(runtimeDiagnostics));
-  checks.push(summarizeRedisConnectivity(runtimeDiagnostics));
+  checks.push(withSandboxContext(summarizePgConnectivity(runtimeDiagnostics), executionContext));
+  checks.push(withSandboxContext(summarizeRedisConnectivity(runtimeDiagnostics), executionContext));
+
+  for (let index = 0; index < checks.length; index += 1) {
+    checks[index] = withSandboxContext(checks[index], executionContext);
+  }
 
   const hasFailure = checks.some((check) => check.status === "FAILED");
 
@@ -396,6 +432,7 @@ async function main() {
         envSource: context.envSource,
         classification: context.classification,
         mutationSafety: context.mutationSafety.classification,
+        executionContext,
         queue,
         reviewConsole: {
           configured: Boolean(reviewConsole),
