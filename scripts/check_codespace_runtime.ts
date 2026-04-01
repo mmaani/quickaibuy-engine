@@ -251,6 +251,73 @@ function summarizeRedisConnectivity(runtimeDiagnostics: Awaited<ReturnType<typeo
   };
 }
 
+function summarizeWhatsappContactConfig(runtimeDiagnostics: Awaited<ReturnType<typeof getRuntimeDiagnostics>>): CheckResult {
+  const whatsapp = runtimeDiagnostics.contactNotifications?.whatsapp;
+  if (!whatsapp) {
+    return {
+      check: "Lead WhatsApp contact path",
+      status: "FAILED",
+      reason: "Lead WhatsApp diagnostics were not produced",
+    };
+  }
+
+  if (whatsapp.primaryReady) {
+    return {
+      check: "Lead WhatsApp contact path",
+      status: "OK",
+      reason: whatsapp.automatedReady
+        ? "WhatsApp contact path is ready with an automated provider."
+        : whatsapp.usingDefaultManualTarget
+          ? "WhatsApp contact path is ready via manual link using the built-in fallback target."
+          : "WhatsApp contact path is ready via manual link.",
+    };
+  }
+
+  return {
+    check: "Lead WhatsApp contact path",
+    status: "FAILED",
+    reason: "WhatsApp primary contact path is not ready in runtime env.",
+    detail: JSON.stringify({
+      mode: whatsapp.mode,
+      hasTwilioAccountSid: whatsapp.hasTwilioAccountSid,
+      hasWebhookUrl: whatsapp.hasWebhookUrl,
+      hasRecipient: whatsapp.hasRecipient,
+      hasManualTarget: whatsapp.hasManualTarget,
+    }),
+  };
+}
+
+function summarizeOptionalEmailConfig(runtimeDiagnostics: Awaited<ReturnType<typeof getRuntimeDiagnostics>>): CheckResult {
+  const email = runtimeDiagnostics.contactNotifications?.email;
+  if (!email) {
+    return {
+      check: "Lead email notification config",
+      status: "WARN",
+      reason: "Lead email diagnostics were not produced.",
+    };
+  }
+
+  if (email.ready) {
+    return {
+      check: "Lead email notification config",
+      status: "OK",
+      reason: "Lead email runtime is ready via " + email.mode + ".",
+    };
+  }
+
+  return {
+    check: "Lead email notification config",
+    status: "WARN",
+    reason: "Lead email is optional and not configured for the primary contact path.",
+    detail: JSON.stringify({
+      mode: email.mode,
+      hasResendApiKey: email.hasResendApiKey,
+      hasWebhookUrl: email.hasWebhookUrl,
+      hasRecipient: email.hasRecipient,
+    }),
+  };
+}
+
 function withSandboxContext(result: CheckResult, executionContext: ExecutionContext): CheckResult {
   if (!executionContext.sandboxNetworkDisabled) return result;
 
@@ -417,6 +484,8 @@ async function main() {
 
   checks.push(withSandboxContext(summarizePgConnectivity(runtimeDiagnostics), executionContext));
   checks.push(withSandboxContext(summarizeRedisConnectivity(runtimeDiagnostics), executionContext));
+  checks.push(withSandboxContext(summarizeWhatsappContactConfig(runtimeDiagnostics), executionContext));
+  checks.push(withSandboxContext(summarizeOptionalEmailConfig(runtimeDiagnostics), executionContext));
 
   for (let index = 0; index < checks.length; index += 1) {
     checks[index] = withSandboxContext(checks[index], executionContext);
