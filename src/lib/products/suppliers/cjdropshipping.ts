@@ -1,4 +1,3 @@
-import "server-only";
 import type { ProductVariant, ShippingEstimate, SupplierProduct } from "./types";
 import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 

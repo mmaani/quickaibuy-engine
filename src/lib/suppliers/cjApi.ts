@@ -1,4 +1,3 @@
-import "server-only";
 
 const CJ_API_BASE_URL = "https://developers.cjdropshipping.com/api2.0/v1";
 
