@@ -374,7 +374,7 @@ export function ControlPlaneOverviewPanel({
             <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75">
               <div>Canonical files: {data.runtime.sensitiveFilePolicy.canonical.filter((file) => file.present).map((file) => file.file).join(", ") || "none detected"}</div>
               <div className="mt-1">Compatibility files: {data.runtime.sensitiveFilePolicy.compatibility.filter((file) => file.present).map((file) => file.file).join(", ") || "none detected"}</div>
-              <div className="mt-1">Should remove from normal working exports: {data.runtime.sensitiveFilePolicy.shouldNotBePresent.filter((file) => file.present).map((file) => file.file).join(", ") || "none detected"}</div>
+              <div className="mt-1">Sensitive compatibility/export files: {data.runtime.sensitiveFilePolicy.compatibilitySensitive.filter((file) => file.present).map((file) => file.file).join(", ") || "none detected"}</div>
             </div>
           ) : null}
         </div>

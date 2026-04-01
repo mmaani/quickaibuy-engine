@@ -17,7 +17,7 @@ import {
 const FILE_POLICY = {
   canonical: [".env", ".env.active.json", ".env.dev", ".env.prod"],
   compatibility: [".env.local"],
-  shouldNotBePresent: [
+  compatibilitySensitive: [
     ".env.vercel",
     "codex.secrets.private",
     "codex.dev.secrets.private",
@@ -151,11 +151,14 @@ export async function getRuntimeDiagnostics(options = {}) {
   const sensitiveFilePolicy = {
     canonical: FILE_POLICY.canonical.map((file) => ({ file, present: exists(file) })),
     compatibility: FILE_POLICY.compatibility.map((file) => ({ file, present: exists(file) })),
-    shouldNotBePresent: FILE_POLICY.shouldNotBePresent.map((file) => ({ file, present: exists(file) })),
+    compatibilitySensitive: FILE_POLICY.compatibilitySensitive.map((file) => ({
+      file,
+      present: exists(file),
+    })),
     operatingBranch: /** @type {"main"} */ ("main"),
     canonicalFullCycleCommand: /** @type {"pnpm ops:full-cycle"} */ ("pnpm ops:full-cycle"),
   };
-  const sensitiveFilesPresent = sensitiveFilePolicy.shouldNotBePresent
+  const sensitiveFilesPresent = sensitiveFilePolicy.compatibilitySensitive
     .filter((item) => item.present)
     .map((item) => item.file);
 

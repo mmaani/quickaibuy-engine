@@ -25,6 +25,7 @@ async function main() {
   try {
     const summary = [];
     let recentWorkerActivityTs: string | null = null;
+    const now = Date.now();
     for (const stage of STAGES) {
       const result = await pool.query(
         `
@@ -39,16 +40,30 @@ async function main() {
         `,
         [stage.names]
       );
+      const latestSuccess = result.rows[0]?.latest_success ?? null;
+      const latestFailure = result.rows[0]?.latest_failure ?? null;
+      const latestSuccessTs = latestSuccess ? new Date(String(latestSuccess)).getTime() : NaN;
+      const staleThresholdMs =
+        stage.stage === "trend" || stage.stage === "supplier" || stage.stage === "listing_performance"
+          ? 8 * 60 * 60 * 1000
+          : 6 * 60 * 60 * 1000;
       summary.push({
         stage: stage.stage,
         jobNames: stage.names,
-        latestSuccess: result.rows[0]?.latest_success ?? null,
-        latestFailure: result.rows[0]?.latest_failure ?? null,
+        latestSuccess,
+        latestFailure,
         successCount: Number(result.rows[0]?.success_count ?? 0),
         failureCount: Number(result.rows[0]?.failure_count ?? 0),
+        minutesSinceLatestSuccess: Number.isFinite(latestSuccessTs)
+          ? Math.floor((now - latestSuccessTs) / (60 * 1000))
+          : null,
+        staleThresholdMinutes: Math.floor(staleThresholdMs / (60 * 1000)),
+        stale:
+          !Number.isFinite(latestSuccessTs) ||
+          now - latestSuccessTs > staleThresholdMs,
       });
 
-      const stageLatest = String(result.rows[0]?.latest_success ?? "");
+      const stageLatest = String(latestSuccess ?? "");
       if (stageLatest && (!recentWorkerActivityTs || new Date(stageLatest) > new Date(recentWorkerActivityTs))) {
         recentWorkerActivityTs = stageLatest;
       }
@@ -57,26 +72,24 @@ async function main() {
     const workerAlive =
       recentWorkerActivityTs != null &&
       Number.isFinite(new Date(recentWorkerActivityTs).getTime()) &&
-      Date.now() - new Date(recentWorkerActivityTs).getTime() <= 30 * 60 * 1000;
+      now - new Date(recentWorkerActivityTs).getTime() <= 30 * 60 * 1000;
+    const workerIdleMinutes =
+      recentWorkerActivityTs != null && Number.isFinite(new Date(recentWorkerActivityTs).getTime())
+        ? Math.floor((now - new Date(recentWorkerActivityTs).getTime()) / (60 * 1000))
+        : null;
 
     const staleStages = summary
-      .filter((stage) => {
-        if (!stage.latestSuccess) return true;
-        const latestSuccessTs = new Date(String(stage.latestSuccess)).getTime();
-        if (!Number.isFinite(latestSuccessTs)) return true;
-        const staleThresholdMs = stage.stage === "trend" || stage.stage === "supplier" || stage.stage === "listing_performance"
-          ? 8 * 60 * 60 * 1000
-          : 6 * 60 * 60 * 1000;
-        return Date.now() - latestSuccessTs > staleThresholdMs;
-      })
+      .filter((stage) => stage.stale)
       .map((stage) => stage.stage);
 
     console.log(
       JSON.stringify(
         {
           worker: "jobs.worker",
+          now: new Date(now).toISOString(),
           recentWorkerActivityTs,
           workerAlive,
+          workerIdleMinutes,
           staleStages,
           summary,
         },

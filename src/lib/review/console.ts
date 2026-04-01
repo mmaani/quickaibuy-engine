@@ -392,10 +392,6 @@ function canonicalEvidenceFromFees(
   const originConfidence =
     asFiniteNumber(shippingBreakdown?.originConfidence) ??
     asFiniteNumber(selectedSupplierOption?.shippingOriginConfidence);
-  const originValidity =
-    asString(shippingBreakdown?.originValidity)?.toUpperCase() ??
-    asString(selectedSupplierOption?.shippingOriginValidity)?.toUpperCase() ??
-    null;
   const totalShippingUsd = asFiniteNumber(shippingBreakdown?.totalShippingUsd);
   const baseShippingCostUsd =
     asFiniteNumber(shippingBreakdown?.baseShippingCostUsd) ??
@@ -406,10 +402,6 @@ function canonicalEvidenceFromFees(
   const maxDays =
     asFiniteNumber(shippingBreakdown?.deliveryEstimateMaxDays) ??
     asFiniteNumber(selectedSupplierOption?.deliveryEstimateMaxDays);
-  const destinationCountry =
-    asString(shippingBreakdown?.destinationCountry) ??
-    asString(selectedSupplierOption?.shippingDestinationCountry);
-
   const shippingTruth = deriveCanonicalShippingTruth({
     shippingValidity:
       asString(shippingBreakdown?.shippingValidity) ??

@@ -11,7 +11,7 @@ Current intended workspace state:
 - Active DB target: `PROD`
 - Env source: `.env.prod`
 - Mutation safety: `PROD_BLOCKED`
-- Codespaces attach check: `pnpm db:status`
+- Codespaces attach checks: `pnpm db:status`, `NODE_ENV=production pnpm codespace:check`
 
 Relevant files:
 

@@ -131,7 +131,7 @@ export type RuntimeDiagnostics = {
   sensitiveFilePolicy?: {
     canonical: Array<{ file: string; present: boolean }>;
     compatibility: Array<{ file: string; present: boolean }>;
-    shouldNotBePresent: Array<{ file: string; present: boolean }>;
+    compatibilitySensitive: Array<{ file: string; present: boolean }>;
     operatingBranch: "main";
     canonicalFullCycleCommand: "pnpm ops:full-cycle";
   };

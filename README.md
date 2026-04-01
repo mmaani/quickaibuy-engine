@@ -98,7 +98,7 @@ This repo now includes `.devcontainer/devcontainer.json` so new Codespaces start
 
 GitHub Codespaces idle shutdown is still controlled by GitHub account or organization policy, not by repository code. If a stopped Codespace opens as `https://*.github.dev/?autoStart=false`, start it from the Codespaces UI or remove the `autoStart=false` query parameter from the URL so the browser is allowed to start the Codespace.
 
-On Codespaces attach, the devcontainer now runs `pnpm db:status` so the shell prints the current DB target classification immediately. For this workspace, the recommended operating model is PROD for visibility and diagnostics, with prod mutation guards left closed unless an intentional override is required.
+On Codespaces attach, the devcontainer now runs `pnpm db:status` and `pnpm codespace:check` so the shell prints the DB target classification and validates the prod-safe Codespaces runtime path immediately. For this workspace, the recommended operating model is PROD for visibility and diagnostics, with prod mutation guards left closed unless an intentional override is required.
 
 ## Which worker should I run?
 

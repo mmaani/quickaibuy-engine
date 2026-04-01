@@ -22,5 +22,5 @@
     }
   },
   "postCreateCommand": "corepack enable && pnpm install --frozen-lockfile",
-  "postAttachCommand": "pnpm db:status"
+  "postAttachCommand": "pnpm db:status && NODE_ENV=production pnpm codespace:check"
 }

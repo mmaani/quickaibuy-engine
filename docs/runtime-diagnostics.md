@@ -69,6 +69,23 @@ Check runtime probe quickly:
 pnpm probe:runtime
 ```
 
+Check the Codespaces prod-safe runtime path:
+
+```bash
+pnpm codespace:check
+```
+
+This is the preferred validation command for this repository's PROD-targeted Codespaces workflow. It verifies:
+
+- PROD DB target classification
+- closed prod mutation guards
+- production-safe queue namespace
+- live DB and Redis runtime probes
+
+Transient infrastructure DNS/TCP failures in Codespaces, such as `EAI_AGAIN`, are reported as warnings so attach validation stays focused on repo/runtime correctness instead of failing on external networking jitter.
+
+`pnpm preflight:worker-runtime` remains useful for the Railway jobs worker shape, but it is stricter about worker-service shell variables such as `NODE_ENV=production`.
+
 Check DB fingerprint with classified failures:
 
 ```bash

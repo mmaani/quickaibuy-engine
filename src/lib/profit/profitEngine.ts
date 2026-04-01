@@ -179,13 +179,6 @@ function computeAgeHours(now: Date, snapshotTs: Date | null): number | null {
   return round2((now.getTime() - snapshotTs.getTime()) / (1000 * 60 * 60));
 }
 
-function compareNullableNumbersAsc(a: number | null, b: number | null): number {
-  const left = a ?? Number.POSITIVE_INFINITY;
-  const right = b ?? Number.POSITIVE_INFINITY;
-  if (left === right) return 0;
-  return left < right ? 1 : -1;
-}
-
 function buildSelectionGroupKey(option: CandidateOption): string {
   return `${option.marketplaceKey}:${option.marketplaceListingId}`;
 }
