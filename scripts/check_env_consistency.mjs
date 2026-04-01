@@ -9,6 +9,15 @@ function loadEnv(path) {
   return dotenv.parse(fs.readFileSync(path, "utf8"));
 }
 
+function loadActiveEnvMetadata(path) {
+  if (!fs.existsSync(path)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function parseDb(value) {
   if (!value) return null;
   try {
@@ -58,16 +67,32 @@ function compareProject(summaryA, summaryB) {
 }
 
 const envs = Object.fromEntries(FILES.map((file) => [file, buildSummary(file, loadEnv(file))]));
+const activeEnv = loadActiveEnvMetadata(".env.active.json");
 const warnings = [];
 
-if (envs[".env.local"]?.exists && envs[".env.local"]?.app_env !== "development") {
-  warnings.push(".env.local should declare APP_ENV=development");
-}
 if (envs[".env.vercel"]?.exists && envs[".env.vercel"]?.vercel_env !== "production") {
   warnings.push(".env.vercel should reflect VERCEL_ENV=production");
 }
-if (envs[".env.local"]?.exists && envs[".env.local"]?.bull_prefix && envs[".env.local"].bull_prefix !== "qaib-dev") {
-  warnings.push(".env.local should use BULL_PREFIX=qaib-dev");
+const localExpectedEnv =
+  activeEnv?.source === ".env.prod" ? "production" : activeEnv?.source === ".env.dev" ? "development" : null;
+const localExpectedBullPrefix =
+  activeEnv?.source === ".env.prod" ? "qaib-prod" : activeEnv?.source === ".env.dev" ? "qaib-dev" : null;
+
+if (
+  envs[".env.local"]?.exists &&
+  localExpectedEnv &&
+  envs[".env.local"]?.app_env &&
+  envs[".env.local"].app_env !== localExpectedEnv
+) {
+  warnings.push(`.env.local should declare APP_ENV=${localExpectedEnv} to mirror ${activeEnv.source}`);
+}
+if (
+  envs[".env.local"]?.exists &&
+  localExpectedBullPrefix &&
+  envs[".env.local"]?.bull_prefix &&
+  envs[".env.local"].bull_prefix !== localExpectedBullPrefix
+) {
+  warnings.push(`.env.local should use BULL_PREFIX=${localExpectedBullPrefix} to mirror ${activeEnv.source}`);
 }
 if (
   envs[".env.vercel"]?.exists &&
@@ -106,7 +131,7 @@ if (
 }
 
 const recommendations = [
-  "Keep .env.local mapped to the development Neon branch.",
+  "Keep .env.local aligned with the active env source recorded in .env.active.json.",
   "Keep .env.vercel mapped to the production Vercel/Neon branch.",
   "Use .env only as a local fallback; it should not contradict .env.local.",
 ];
@@ -115,6 +140,7 @@ console.log(
   JSON.stringify(
     {
       status: warnings.length ? "WARN" : "OK",
+      active_env: activeEnv,
       files: envs,
       project_alignment: {
         env_matches_local: compareProject(envs[".env"], envs[".env.local"]),
