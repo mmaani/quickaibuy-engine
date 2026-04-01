@@ -257,10 +257,6 @@ async function refreshCjAccessTokenUnlocked(): Promise<string> {
   return cjAccessTokenState.accessToken;
 }
 
-async function getCjAccessToken(): Promise<string> {
-  return withCjAccessTokenLock(() => getCjAccessTokenUnlocked());
-}
-
 async function refreshCjAccessToken(): Promise<string> {
   return withCjAccessTokenLock(() => refreshCjAccessTokenUnlocked());
 }
