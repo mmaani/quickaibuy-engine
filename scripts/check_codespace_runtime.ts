@@ -23,6 +23,11 @@ type ControlPageProbe = {
   reason: string;
 };
 
+type ControlPageProbeResult = {
+  curlExitCode: number;
+  httpStatus: number | null;
+};
+
 const execFileAsync = promisify(execFile);
 
 function isTransientNetworkError(error: unknown): boolean {
@@ -47,12 +52,27 @@ function isLocalServerUnavailable(error: unknown): boolean {
   return code === "7" || text.includes("econnrefused") || text.includes("bad port") || text.includes("exit code 7");
 }
 
-async function requestStatus(url: string, dotenvPath: string, timeoutMs: number): Promise<number> {
+function parseProbeResult(stdout: string): ControlPageProbeResult {
+  const text = String(stdout ?? "");
+  const curlExitMatch = text.match(/CURL_EXIT:(\d+)/);
+  const httpStatusMatch = text.match(/HTTP_STATUS:(\d{3})/);
+
+  if (!curlExitMatch) {
+    throw new Error(`Control page probe did not report curl exit code: ${text.trim()}`);
+  }
+
+  return {
+    curlExitCode: Number(curlExitMatch[1]),
+    httpStatus: httpStatusMatch ? Number(httpStatusMatch[1]) : null,
+  };
+}
+
+async function requestStatus(url: string, dotenvPath: string, timeoutMs: number): Promise<ControlPageProbeResult> {
   const { stdout } = await execFileAsync(
     "bash",
     [
       "-lc",
-      "set -a; source \"$DOTENV_PATH\"; set +a; curl -s -o /dev/null -w '%{http_code}' -u \"$REVIEW_CONSOLE_USERNAME:$REVIEW_CONSOLE_PASSWORD\" --max-time \"$MAX_TIME\" \"$PROBE_URL\"",
+      "set -a; source \"$DOTENV_PATH\"; set +a; curl -s -o /dev/null -w 'HTTP_STATUS:%{http_code}\n' -u \"$REVIEW_CONSOLE_USERNAME:$REVIEW_CONSOLE_PASSWORD\" --max-time \"$MAX_TIME\" \"$PROBE_URL\"; printf 'CURL_EXIT:%s\n' \"$?\"",
     ],
     {
       timeout: timeoutMs,
@@ -64,11 +84,7 @@ async function requestStatus(url: string, dotenvPath: string, timeoutMs: number)
       },
     }
   );
-  const status = Number(String(stdout).trim());
-  if (!Number.isFinite(status)) {
-    throw new Error(`Control page probe returned non-numeric HTTP status: ${String(stdout).trim()}`);
-  }
-  return status;
+  return parseProbeResult(stdout);
 }
 
 async function probeControlPage(
@@ -90,11 +106,45 @@ async function probeControlPage(
   }
 
   try {
-    const status = await requestStatus(
+    const result = await requestStatus(
       url,
       dotenvPath,
       Number(process.env.CODESPACE_CONTROL_PAGE_TIMEOUT_MS ?? 20000)
     );
+
+    if (result.curlExitCode === 7) {
+      return {
+        attempted: true,
+        url,
+        status: result.httpStatus,
+        ok: false,
+        outcome: "skipped",
+        reason: "No local app server is listening on the configured control page URL; probe skipped.",
+      };
+    }
+
+    if (result.curlExitCode !== 0) {
+      return {
+        attempted: true,
+        url,
+        status: result.httpStatus,
+        ok: false,
+        outcome: "failed",
+        reason: `Control page probe curl exit ${result.curlExitCode}.`,
+      };
+    }
+
+    const status = result.httpStatus;
+    if (!status || !Number.isFinite(status)) {
+      return {
+        attempted: true,
+        url,
+        status: null,
+        ok: false,
+        outcome: "failed",
+        reason: "Control page probe did not return a valid HTTP status.",
+      };
+    }
 
     if (status >= 200 && status < 300) {
       return {
