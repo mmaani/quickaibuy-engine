@@ -1,12 +1,11 @@
-import dotenv from "dotenv";
+import { loadRuntimeEnv } from "./lib/runtimeEnv.mjs";
 import {
   getEbayPublishEnvValidation,
   getEbaySellAccessToken,
   getInventoryLocations,
 } from "@/lib/marketplaces/ebayPublish";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+const envPath = loadRuntimeEnv();
 
 type OrderWindowSummary = {
   lookbackDays: number;
@@ -97,6 +96,7 @@ async function main() {
       {
         status: "OK",
         marketplaceId: config.marketplaceId,
+        envPath,
         websiteUrl: config.websiteUrl,
         merchantLocationKey: config.merchantLocationKey,
         inventoryLocations,

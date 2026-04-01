@@ -414,6 +414,7 @@ export type ControlPanelData = {
       executionPath: string | null;
       severity: string | null;
       reason: string | null;
+      occurrenceCount: number;
     }>;
     recentWorkerActivityTs: string | null;
     recentSuccessCount24h: number | null;
@@ -2961,14 +2962,49 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       recentJobs,
       recentJobFailures,
       recentAuditEvents,
-      recentCanonicalEnforcementViolations: recentCanonicalEnforcementViolations.map((row) => ({
-        eventTs: toStr(row.eventTs),
-        blockedAction: toStr(row.blockedAction),
-        violationType: toStr(row.violationType),
-        executionPath: toStr(row.executionPath),
-        severity: toStr(row.severity),
-        reason: toStr(row.reason),
-      })),
+      recentCanonicalEnforcementViolations: Array.from(
+        recentCanonicalEnforcementViolations.reduce((acc, row) => {
+          const normalized = {
+            eventTs: toStr(row.eventTs),
+            blockedAction: toStr(row.blockedAction),
+            violationType: toStr(row.violationType),
+            executionPath: toStr(row.executionPath),
+            severity: toStr(row.severity),
+            reason: toStr(row.reason),
+          };
+          const key = [
+            normalized.blockedAction ?? "unknown",
+            normalized.violationType ?? "unknown",
+            normalized.executionPath ?? "unknown",
+            normalized.severity ?? "unknown",
+            normalized.reason ?? "unspecified",
+          ].join("::");
+          const existing = acc.get(key);
+          if (!existing) {
+            acc.set(key, { ...normalized, occurrenceCount: 1 });
+            return acc;
+          }
+          const existingTs = existing.eventTs ? Date.parse(existing.eventTs) : NaN;
+          const nextTs = normalized.eventTs ? Date.parse(normalized.eventTs) : NaN;
+          acc.set(key, {
+            ...existing,
+            eventTs:
+              Number.isFinite(nextTs) && (!Number.isFinite(existingTs) || nextTs > existingTs)
+                ? normalized.eventTs
+                : existing.eventTs,
+            occurrenceCount: existing.occurrenceCount + 1,
+          });
+          return acc;
+        }, new Map<string, {
+          eventTs: string | null;
+          blockedAction: string | null;
+          violationType: string | null;
+          executionPath: string | null;
+          severity: string | null;
+          reason: string | null;
+          occurrenceCount: number;
+        }>()).values()
+      ),
       recentWorkerActivityTs,
       recentSuccessCount24h: recentWorkerSuccessCount24h,
       recentFailureCount24h: recentWorkerFailureCount24h,

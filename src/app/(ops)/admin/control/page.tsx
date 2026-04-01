@@ -1291,7 +1291,7 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <DataTable rows={data.workerQueueHealth.recentJobFailures} empty="No recent job failures." />
           </div>
           <div className="mt-4">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-white/55">Canonical enforcement violations (recent)</div>
+            <div className="mb-2 text-[11px] uppercase tracking-[0.2em] text-white/55">Canonical enforcement violations (deduped recent evidence)</div>
             <DataTable
               rows={data.workerQueueHealth.recentCanonicalEnforcementViolations.map((row) => ({
                 timestamp: row.eventTs ? formatDateTime(row.eventTs) : "unknown",
@@ -1299,7 +1299,9 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
                 violationType: row.violationType ?? "unknown",
                 executionPath: row.executionPath ?? "unknown",
                 severity: row.severity ?? "unknown",
+                occurrences: row.occurrenceCount > 1 ? row.occurrenceCount : 1,
                 reason: row.reason ?? "unspecified",
+                scope: "historical evidence",
               }))}
               empty="No canonical enforcement violations recorded recently."
             />
