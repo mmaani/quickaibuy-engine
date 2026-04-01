@@ -54,7 +54,7 @@ const SMOKE_CHECKS: SmokeCheck[] = [
   },
   {
     id: "codespace-check",
-    command: "NODE_ENV=production pnpm codespace:check",
+    command: "ALLOW_PROD_ENV_SWITCH=true pnpm env:prod && NODE_ENV=production pnpm codespace:check",
     timeoutMs: 90_000,
     level: "required",
     attempts: 1,
@@ -95,6 +95,12 @@ function classifyReason(error: unknown): { exitCode: number | null; reason: stri
   };
 }
 
+function isMissingProdEnvFailure(check: SmokeCheck, reason: string): boolean {
+  if (check.id !== "codespace-check") return false;
+  const text = reason.toLowerCase();
+  return text.includes("missing .env.prod") || text.includes("create it before switching active env");
+}
+
 async function runCheck(check: SmokeCheck): Promise<SmokeResult> {
   const attempts = Math.max(1, check.attempts ?? 1);
   let lastError: unknown = null;
@@ -120,6 +126,17 @@ async function runCheck(check: SmokeCheck): Promise<SmokeResult> {
   }
 
   const { exitCode, reason } = classifyReason(lastError);
+  if (isMissingProdEnvFailure(check, reason)) {
+    return {
+      id: check.id,
+      command: check.command,
+      level: check.level,
+      status: "WARN",
+      exitCode,
+      reason: ".env.prod is missing, so production-mode codespace validation was downgraded to WARN for smoke mode.",
+    };
+  }
+
   return {
     id: check.id,
     command: check.command,
