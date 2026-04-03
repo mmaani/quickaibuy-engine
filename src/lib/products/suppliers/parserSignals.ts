@@ -88,9 +88,11 @@ export function extractShippingEvidence(rawText: string): {
   const shippingTextMatch = compact.match(
     /(free shipping|shipping(?: to [a-z ]+)?[:=]?\s*\$?\d+(?:\.\d{1,2})?|delivery(?: to [a-z ]+)?[:=]?\s*\d+\s*(?:-|to)\s*\d+\s*(?:business\s*)?days|ships within\s+\d+\s+(?:business\s*)?days|arrives? (?:by|in|within)\s+[a-z0-9 ,\-]+|estimated delivery[:=]?\s*(?:\d+\s*(?:-|to)\s*\d+\s*days|[a-z]{3,9}\s+\d{1,2})|fast delivery|choice|aliexpress standard shipping|cainiao|e[- ]?packet|dollar express|standard shipping|us warehouse delivery)/i
   );
-  const shipsFromMatch = compact.match(/(?:ships?|shipping)\s+from\s+([a-z][a-z ,.\-]{1,60})/i);
+  const shipsFromMatch = compact.match(
+    /(?:ships?\s*from|shipping\s*from|shipsFrom|shipFrom|warehouse(?: location)?(?: in)?|dispatch(?:ed)? from)\s*[:=]?\s*"?([a-z][a-z0-9 ,.\-]{1,60}|[A-Z]{2})"?/i
+  );
   const shipFromCountryMatch = compact.match(
-    /(?:ship(?:s|ping)? from|warehouse(?: location)?(?: in)?|dispatch(?:ed)? from)\s+(united states|usa|us|china|cn|poland|pl|germany|de|spain|es|france|fr|italy|it|czech republic|cz|turkey|tr|united kingdom|uk)\b/i
+    /(?:ship(?:s|ping)? from|shipFromCountry|ship_from_country|originCountry|origin_country|warehouseCountry|warehouse_country|fromCountry|from_country|shipFromCode|ship_from_code|originCode|origin_code|warehouseCode|warehouse_code|dispatchFromCountry|dispatch_from_country|deliveryFromCountry|delivery_from_country)[^a-zA-Z0-9]{0,20}"?(united states|usa|us|china|cn|poland|pl|germany|de|spain|es|france|fr|italy|it|czech republic|cz|turkey|tr|united kingdom|uk)"?/i
   );
   const destinationMatch = compact.match(/(?:ship(?:ping)? to|delivery to)\s+(united states|usa|us|canada|ca|united kingdom|uk|australia|au|europe|eu)\b/i);
   const warehouseMatch = compact.match(

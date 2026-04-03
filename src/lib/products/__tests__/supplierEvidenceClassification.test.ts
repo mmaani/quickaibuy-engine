@@ -246,3 +246,23 @@ test("parser extracts ship-from and destination-aware shipping evidence", () => 
   assert.equal(shipping.shippingEstimates[0]?.etaMinDays, 5);
   assert.equal(shipping.shippingEstimates[0]?.etaMaxDays, 8);
 });
+
+test("parser extracts ship-from country from JSON-like AliExpress origin fields", () => {
+  const shipping = extractShippingEvidence(
+    `"shipFromCountry":"CN","shippingOption":"AliExpress Standard Shipping","estimated delivery": "7 to 10 business days"`
+  );
+
+  assert.equal(shipping.shipFromCountry, "CN");
+  assert.equal(shipping.signal, "PARTIAL");
+  assert.equal(shipping.shippingEstimates[0]?.ship_from_country, "CN");
+});
+
+test("parser extracts ship-from country from colon-style ships from labels", () => {
+  const shipping = extractShippingEvidence(
+    "Ships From: CN warehouse. AliExpress Standard Shipping. Estimated delivery 7 to 10 business days."
+  );
+
+  assert.equal(shipping.shipFromCountry, "CN");
+  assert.equal(shipping.shippingEstimates[0]?.etaMinDays, 7);
+  assert.equal(shipping.shippingEstimates[0]?.etaMaxDays, 10);
+});
