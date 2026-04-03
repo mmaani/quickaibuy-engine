@@ -355,6 +355,11 @@ export function inferShippingFromEvidence(input: {
     rawSignal === "PRESENT" ||
     rawSignal === "PARTIAL" ||
     rawSignal === "INFERRED";
+  const explicitDirectEvidence =
+    explicitCostUsd != null &&
+    (explicitMinDays != null || explicitMaxDays != null) &&
+    derived.originCountry != null &&
+    (rawSignal === "DIRECT" || rawSignal === "PRESENT");
   const strongProfile = Boolean(input.profile?.sampleCount && input.profile.sampleCount >= 4 && normalizedConsistency >= 0.55);
   const explanation = [
     methodKey ? `method=${methodKey}` : null,
@@ -382,6 +387,24 @@ export function inferShippingFromEvidence(input: {
       shippingMethod: methodKey,
       explanation,
       uncertaintyMultiplier: 1.7,
+    };
+  }
+
+  if (explicitDirectEvidence) {
+    return {
+      mode: "INFERRED_STRONG",
+      shippingCostUsd: round2(derived.shippingCostUsd),
+      estimatedMinDays: derived.estimatedMinDays,
+      estimatedMaxDays: derived.estimatedMaxDays,
+      originCountry: derived.originCountry,
+      originSource: originCountry.originSource,
+      originConfidence: originCountry.originConfidence,
+      originUnresolvedReason: originCountry.unresolvedReason,
+      confidence: Math.max(totalConfidence, 0.85),
+      sourceType: "shipping_inferred_strong",
+      shippingMethod: methodKey,
+      explanation,
+      uncertaintyMultiplier: 1.1,
     };
   }
 

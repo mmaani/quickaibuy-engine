@@ -217,16 +217,20 @@ export async function resolveShippingCost(input: {
     }
   }
 
-  const exactQuoteWeak =
+  const exactQuoteReplaceable =
     baseShippingUsd != null &&
-    !stale &&
-    confidence != null &&
-    confidence < config.minShippingConfidence &&
     inferred.shippingCostUsd != null &&
-    inferred.confidence != null &&
-    inferred.confidence > confidence;
+    (
+      stale ||
+      (
+        confidence != null &&
+        confidence < config.minShippingConfidence &&
+        inferred.confidence != null &&
+        inferred.confidence > confidence
+      )
+    );
 
-  if (baseShippingUsd == null || exactQuoteWeak) {
+  if (baseShippingUsd == null || exactQuoteReplaceable) {
     baseShippingUsd = inferred.shippingCostUsd;
     resolutionMode = inferred.mode;
     confidence = inferred.confidence;
