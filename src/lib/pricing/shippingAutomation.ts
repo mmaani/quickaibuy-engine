@@ -377,6 +377,7 @@ export async function automateShippingIntelligence(input?: {
 
     if (
       rootCause === "STALE_OR_MISSING_SUPPLIER_SNAPSHOT" ||
+      rootCause === "STALE_SHIPPING_QUOTE" ||
       rootCause === "SUPPLIER_PAYLOAD_LACKS_SHIPPING" ||
       rootCause === "PARSING_OR_PERSIST_GAP"
     ) {
