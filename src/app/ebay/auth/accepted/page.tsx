@@ -21,7 +21,7 @@ export default async function EbayAuthAcceptedPage({
   searchParams: Promise<SearchParams>;
 }) {
   noStore();
-
+  
   const resolvedSearchParams = await searchParams;
   const code = getParam(resolvedSearchParams, "code");
   const expiresIn = getParam(resolvedSearchParams, "expires_in");
