@@ -10,7 +10,7 @@ import { classifySupplierSnapshotQuality } from "@/lib/products/supplierQuality"
 import { searchAlibabaByKeyword } from "@/lib/products/suppliers/alibaba";
 import { searchAliExpressByKeyword } from "@/lib/products/suppliers/aliexpress";
 import { searchTemuByKeyword } from "@/lib/products/suppliers/temu";
-import { fetchCjDirectProduct } from "@/lib/products/suppliers/cjdropshipping";
+import { fetchCjDirectProduct, searchCjByKeyword } from "@/lib/products/suppliers/cjdropshipping";
 import type { SupplierProduct } from "@/lib/products/suppliers/types";
 import { recordSupplierRefreshLearning } from "@/lib/learningHub/pipelineWriters";
 import { shouldRejectSupplierEarly } from "@/lib/suppliers/intelligence";
@@ -74,6 +74,18 @@ function shouldProceedWithReevaluation(input: {
 } {
   const quality = String(input.snapshotQuality).toUpperCase();
   const availability = normalizeAvailabilitySignal(input.availabilityStatus);
+  const rawPayload =
+    input.rawPayload && typeof input.rawPayload === "object" && !Array.isArray(input.rawPayload)
+      ? (input.rawPayload as Record<string, unknown>)
+      : null;
+  const refreshMode = String(rawPayload?.refreshMode ?? "").trim();
+
+  if ((input.supplierKey === "cjdropshipping" || input.supplierKey === "cj dropshipping") && refreshMode === "direct-product-refresh-no-cj-api-key") {
+    return {
+      ready: false,
+      blockerReason: "supplier shipping refresh requires CJ_API_KEY to resolve missing shipping transparency",
+    };
+  }
 
   if (availability === "OUT_OF_STOCK") {
     return { ready: false, blockerReason: "supplier availability indicates out of stock" };
@@ -332,9 +344,85 @@ async function refreshSupplierSingleProduct(input: {
     }
 
     const direct = await fetchCjDirectProduct(current.sourceUrl);
+    const directHasPresentShipping = Array.isArray(direct.product.shippingEstimates)
+      && direct.product.shippingEstimates.some((estimate) =>
+        estimate && (estimate.etaMinDays != null || estimate.etaMaxDays != null || estimate.cost != null)
+      );
+    const hasCjApiKey = Boolean(String(process.env.CJ_API_KEY ?? "").trim());
+
+    if (!hasCjApiKey) {
+      return {
+        product: direct.product,
+        refreshMode: directHasPresentShipping
+          ? "direct-product-refresh"
+          : "direct-product-refresh-no-cj-api-key",
+        exactMatchFound: true,
+      };
+    }
+
+    const rows = await searchCjByKeyword(keyword, searchLimit);
+    const exact = rows.find((row) => String(row.supplierProductId ?? "").trim() === current.supplierProductId) ?? null;
+    const exactHasPresentShipping = Boolean(
+      exact
+      && Array.isArray(exact.shippingEstimates)
+      && exact.shippingEstimates.some((estimate) =>
+        estimate && (estimate.etaMinDays != null || estimate.etaMaxDays != null || estimate.cost != null)
+      )
+    );
+
+    if (exact && !directHasPresentShipping && exactHasPresentShipping) {
+      const mergedShippingEstimates = exact.shippingEstimates;
+      const firstEstimate = mergedShippingEstimates[0] ?? {};
+      const existingEvidenceText =
+        typeof direct.product.raw?.shippingEvidenceText === "string"
+          ? String(direct.product.raw.shippingEvidenceText).trim()
+          : "";
+      const mergedEvidenceText =
+        existingEvidenceText ||
+        (typeof exact.raw?.deliveryCycle === "string" && exact.raw.deliveryCycle.trim().length > 0
+          ? exact.raw.deliveryCycle.trim()
+          : null);
+
+      return {
+        product: {
+          ...direct.product,
+          shippingEstimates: mergedShippingEstimates,
+          raw: {
+            ...direct.product.raw,
+            shippingEstimates: mergedShippingEstimates,
+            shippingSignal: "PRESENT",
+            shippingTransparencyState: "PRESENT",
+            deliveryEstimateMinDays: firstEstimate.etaMinDays ?? null,
+            deliveryEstimateMaxDays: firstEstimate.etaMaxDays ?? null,
+            shippingPriceExplicit: firstEstimate.cost ?? null,
+            shippingCurrency: firstEstimate.currency ?? null,
+            shippingEvidenceText: mergedEvidenceText,
+            shipping: {
+              summary: mergedEvidenceText,
+              options: mergedShippingEstimates.map((estimate) => ({
+                label: estimate.label ?? null,
+                cost: estimate.cost ?? null,
+                currency: estimate.currency ?? null,
+                etaMinDays: estimate.etaMinDays ?? null,
+                etaMaxDays: estimate.etaMaxDays ?? null,
+                shipFromCountry: estimate.ship_from_country ?? direct.product.raw?.shipFromCountry ?? null,
+                destinationCountry: "US",
+              })),
+            },
+          },
+        },
+        refreshMode: "direct-product-refresh+search-shipping-merge",
+        exactMatchFound: true,
+      };
+    }
+
     return {
       product: direct.product,
-      refreshMode: "direct-product-refresh",
+      refreshMode: !exact
+        ? "direct-product-refresh-search-no-exact-match"
+        : !directHasPresentShipping && !exactHasPresentShipping
+          ? "direct-product-refresh-search-no-usable-shipping"
+          : "direct-product-refresh",
       exactMatchFound: true,
     };
   }
