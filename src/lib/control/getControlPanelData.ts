@@ -2525,8 +2525,8 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     futureOrdersAlerts.push({
       id: "cj-order-create-unproven",
       tone: "warning",
-      title: "CJ order-create remains unproven",
-      detail: "Auto-purchase must stay fail-closed for CJ until guarded live order-create proof succeeds.",
+      title: "CJ order-create proof regressed",
+      detail: "CJ order-create is no longer proven in this snapshot, so auto-purchase must return to fail-closed mode.",
     });
   }
   if (cjProofState.tracking !== "PROVEN") {

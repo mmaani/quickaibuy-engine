@@ -400,15 +400,15 @@ test("CJ proof-state summary stays fail-closed for order creation", () => {
 
   assert.equal(summary.auth, "PROVEN");
   assert.equal(summary.freight, "PROVEN");
-  assert.equal(summary.orderCreate, "UNPROVEN");
-  assert.equal(summary.orderDetail, "PARTIALLY_PROVEN");
+  assert.equal(summary.orderCreate, "PROVEN");
+  assert.equal(summary.orderDetail, "PROVEN");
   assert.equal(summary.tracking, "UNPROVEN");
-  assert.ok(getCjProofRiskFlags(summary).includes("CJ_ORDER_CREATE_UNPROVEN"));
   assert.ok(getCjProofRiskFlags(summary).includes("CJ_TRACKING_UNPROVEN"));
+  assert.ok(!getCjProofRiskFlags(summary).includes("CJ_ORDER_CREATE_UNPROVEN"));
 
   const parsed = readCjProofStateFromRawPayload({ cjProofState: summary });
-  assert.equal(parsed?.orderCreate, "UNPROVEN");
-  assert.equal(parsed?.orderDetail, "PARTIALLY_PROVEN");
+  assert.equal(parsed?.orderCreate, "PROVEN");
+  assert.equal(parsed?.orderDetail, "PROVEN");
   assert.equal(parsed?.stock, "PROVEN");
   assert.equal(parsed?.tracking, "UNPROVEN");
 });

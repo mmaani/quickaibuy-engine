@@ -1278,8 +1278,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     alerts.push({
       id: "cj-order-create-proof-missing",
       tone: "warning",
-      title: "CJ order-create remains unproven",
-      detail: "CJ candidate confidence and purchase automation stay capped until guarded live order-create proof succeeds.",
+      title: "CJ order-create proof regressed",
+      detail: "CJ order-create is no longer proven in this snapshot, so candidate confidence and purchase automation must return to fail-closed mode.",
       href: buildDashboardAlertHref({ surface: "control", params: { stage: "cj-proof" } }),
     });
   }

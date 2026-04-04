@@ -313,7 +313,7 @@ export async function prepareCjOrderProofHarnessRun(input?: {
       "immediate-order-detail-follow-up",
       "operator-visible-secret-safe-audit",
       "not-invocable-from-normal-customer-flows",
-      "normal-flows-remain-CJ_ORDER_CREATE_UNPROVEN",
+      "tracking-remains-CJ_TRACKING_UNPROVEN",
     ],
   };
 }

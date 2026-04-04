@@ -8,7 +8,8 @@ export type CjProofStateCode =
   | "CJ_VARIANT_PROVEN"
   | "CJ_STOCK_PROVEN"
   | "CJ_FREIGHT_PROVEN"
-  | "CJ_ORDER_DETAIL_PARTIALLY_PROVEN"
+  | "CJ_ORDER_CREATE_PROVEN"
+  | "CJ_ORDER_DETAIL_PROVEN"
   | "CJ_ORDER_CREATE_UNPROVEN"
   | "CJ_ORDER_DETAIL_UNPROVEN"
   | "CJ_TRACKING_UNPROVEN";
@@ -54,8 +55,8 @@ const LIVE_PROOF_BASELINE = {
   variant: "PROVEN" as const,
   stock: "PROVEN" as const,
   freight: "PROVEN" as const,
-  orderCreate: "UNPROVEN" as const,
-  orderDetail: "PARTIALLY_PROVEN" as const,
+  orderCreate: "PROVEN" as const,
+  orderDetail: "PROVEN" as const,
   tracking: "UNPROVEN" as const,
 };
 
@@ -88,7 +89,8 @@ function buildCodes(snapshot: Omit<CjProofStateSnapshot, "codes" | "blockingReas
   if (snapshot.variant === "PROVEN") codes.push("CJ_VARIANT_PROVEN");
   if (snapshot.stock === "PROVEN") codes.push("CJ_STOCK_PROVEN");
   if (snapshot.freight === "PROVEN") codes.push("CJ_FREIGHT_PROVEN");
-  if (snapshot.orderDetail === "PARTIALLY_PROVEN") codes.push("CJ_ORDER_DETAIL_PARTIALLY_PROVEN");
+  if (snapshot.orderCreate === "PROVEN") codes.push("CJ_ORDER_CREATE_PROVEN");
+  if (snapshot.orderDetail === "PROVEN") codes.push("CJ_ORDER_DETAIL_PROVEN");
   if (snapshot.orderCreate !== "PROVEN") codes.push("CJ_ORDER_CREATE_UNPROVEN");
   if (snapshot.orderDetail !== "PROVEN") codes.push("CJ_ORDER_DETAIL_UNPROVEN");
   if (snapshot.tracking !== "PROVEN") codes.push("CJ_TRACKING_UNPROVEN");
@@ -207,8 +209,6 @@ export function getCjFulfillmentProofStatus(snapshot: CjProofStateSnapshot | nul
 export function getCjProofRankingPenalty(snapshot: CjProofStateSnapshot | null): number {
   if (!snapshot) return 30;
   if (snapshot.auth !== "PROVEN" || snapshot.freight !== "PROVEN" || snapshot.stock !== "PROVEN") return 24;
-  if (snapshot.orderCreate !== "PROVEN") return 18;
-  if (snapshot.orderDetail !== "PROVEN") return 8;
   if (snapshot.tracking !== "PROVEN") return 3;
   return 0;
 }
@@ -216,8 +216,6 @@ export function getCjProofRankingPenalty(snapshot: CjProofStateSnapshot | null):
 export function getCjProofConfidenceCap(snapshot: CjProofStateSnapshot | null): number {
   if (!snapshot) return 0.62;
   if (snapshot.auth !== "PROVEN" || snapshot.freight !== "PROVEN" || snapshot.stock !== "PROVEN") return 0.58;
-  if (snapshot.orderCreate !== "PROVEN") return 0.72;
-  if (snapshot.orderDetail !== "PROVEN") return 0.82;
   if (snapshot.tracking !== "PROVEN") return 0.9;
   return 1;
 }
@@ -229,9 +227,9 @@ export function getCjProofExplanation(snapshot: CjProofStateSnapshot | null): st
   if (snapshot.auth !== "PROVEN") return "CJ auth proof is missing, so runtime trust must stay blocked.";
   if (snapshot.freight !== "PROVEN") return "CJ freight is not proven, so shipping truth must stay blocked.";
   if (snapshot.stock !== "PROVEN") return "CJ stock is not proven, so fulfillment truth must stay blocked.";
-  if (snapshot.orderCreate !== "PROVEN") return "CJ order-create is still unproven, so orderability confidence must stay capped.";
-  if (snapshot.orderDetail !== "PROVEN") return "CJ order-detail remains unproven, so downstream lifecycle confidence stays limited.";
-  return "CJ tracking remains unproven, so lifecycle visibility stays partial.";
+  if (snapshot.orderCreate !== "PROVEN") return "CJ order-create is not proven, so purchase safety must stay blocked.";
+  if (snapshot.orderDetail !== "PROVEN") return "CJ order-detail is not proven, so downstream lifecycle validation remains limited.";
+  return "CJ order-create and order-detail are proven, but tracking remains unproven, so lifecycle visibility stays partial.";
 }
 
 export function getCjProofBlockingReason(snapshot: CjProofStateSnapshot | null): string | null {

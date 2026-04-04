@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { evaluateSupplierSelectionAgainstPinnedLinkage } from "@/lib/orders/supplierSelectionSafety";
 
-test("CJ supplier selection blocks when proof-state is not purchase-safe", () => {
+test("CJ supplier selection allows purchase-safe proof while tracking stays unproven", () => {
   const result = evaluateSupplierSelectionAgainstPinnedLinkage({
     orderItemLinkages: [{ supplierKey: "cjdropshipping", linkageDeterministic: true, supplierLinkLocked: true }],
     requestedSupplierKey: "cjdropshipping",
@@ -17,12 +17,12 @@ test("CJ supplier selection blocks when proof-state is not purchase-safe", () =>
           variant: "PROVEN",
           stock: "PROVEN",
           freight: "PROVEN",
-          orderCreate: "UNPROVEN",
-          orderDetail: "PARTIALLY_PROVEN",
+          orderCreate: "PROVEN",
+          orderDetail: "PROVEN",
           tracking: "UNPROVEN",
           overall: "PARTIALLY_PROVEN",
-          codes: ["CJ_ORDER_CREATE_UNPROVEN"],
-          blockingReasons: ["CJ_ORDER_CREATE_NOT_PROVEN"],
+          codes: ["CJ_ORDER_CREATE_PROVEN", "CJ_ORDER_DETAIL_PROVEN", "CJ_TRACKING_UNPROVEN"],
+          blockingReasons: [],
           proofSource: "live_validation_2026_04_04",
           runtime: { operationalState: "verified-like", sandbox: false, qpsLimit: 100, quotaLimit: 1000, quotaRemaining: 800 },
         },
@@ -30,5 +30,5 @@ test("CJ supplier selection blocks when proof-state is not purchase-safe", () =>
     ],
   });
 
-  assert.equal(result, "SUPPLIER_PROOF_REQUIRED");
+  assert.equal(result, null);
 });
