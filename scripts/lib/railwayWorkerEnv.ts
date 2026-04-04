@@ -160,7 +160,7 @@ export const WORKER_OPTIONAL_OVERRIDE_GROUPS: EnvGroup[] = [
     id: "cj_provider",
     bucket: "optional_override",
     description: "CJ source coverage and discover tuning.",
-    keys: ["CJ_API_KEY", "CJ_DISCOVER_COUNTRY_CODE", "CJ_DISCOVER_MIN_INVENTORY"],
+    keys: ["CJ_API_KEY", "CJ_PLATFORM_TOKEN", "CJ_DISCOVER_COUNTRY_CODE", "CJ_DISCOVER_MIN_INVENTORY"],
   },
   {
     id: "marketplace_scan",

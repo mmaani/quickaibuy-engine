@@ -64,10 +64,6 @@ function hasUsableToken(state: CjAccessTokenState | null, now = Date.now()): sta
   return Boolean(state && state.accessTokenExpiresAtMs > now + CJ_ACCESS_TOKEN_REFRESH_WINDOW_MS);
 }
 
-function hasRefreshableToken(state: CjAccessTokenState | null, now = Date.now()): state is CjAccessTokenState {
-  return Boolean(state?.refreshToken && state.refreshTokenExpiresAtMs && state.refreshTokenExpiresAtMs > now + 60_000);
-}
-
 function getApiKey(): string | null {
   return cleanString(process.env.CJ_API_KEY);
 }

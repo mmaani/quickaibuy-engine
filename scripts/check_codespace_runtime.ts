@@ -62,20 +62,6 @@ function isLocalServerUnavailable(error: unknown): boolean {
   return code === "7" || text.includes("econnrefused") || text.includes("bad port") || text.includes("exit code 7");
 }
 
-function parseProbeResult(stdout: string): ControlPageProbeResult {
-  const text = String(stdout ?? "");
-  const curlExitMatch = text.match(/CURL_EXIT:(\d+)/);
-  const httpStatusMatch = text.match(/HTTP_STATUS:(\d{3})/);
-
-  if (!curlExitMatch) {
-    throw new Error(`Control page probe did not report curl exit code: ${text.trim()}`);
-  }
-
-  return {
-    curlExitCode: Number(curlExitMatch[1]),
-    httpStatus: httpStatusMatch ? Number(httpStatusMatch[1]) : null,
-  };
-}
 
 async function requestStatus(url: string, timeoutMs: number): Promise<ControlPageProbeResult> {
   const { stdout } = await execFileAsync(
