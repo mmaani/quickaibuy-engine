@@ -367,7 +367,7 @@ async function probeBubblewrap(): Promise<BubblewrapProbe> {
         runnable: false,
         blockedByContainerPolicy: namespaceBlocked,
         reason: namespaceBlocked
-          ? "bubblewrap is installed but namespace creation is blocked by the workspace/container policy; no repo-side fix remains, so rebuild the Codespace or use a runtime that allows unprivileged user namespaces."
+          ? "bubblewrap is installed but namespace creation is blocked by the workspace/container policy; this is not a missing-image problem, so rebuilding only helps if an older image lacked bubblewrap. No repo-side fix remains unless the runtime allows unprivileged user namespaces."
           : "bubblewrap is installed but the readiness probe failed.",
         detail,
       };
