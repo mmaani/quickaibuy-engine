@@ -17,6 +17,7 @@ import {
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
 import { getCjProofBlockingReason, getCjProofStateSummary, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
+import { getCjRuntimeDiagnostics } from "@/lib/suppliers/cj/settings";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -67,6 +68,16 @@ export type DashboardData = {
     tracking: string;
     blockingReason: string | null;
     blockedCandidates: number | null;
+  };
+  cjRuntime: {
+    runtimeTruthStatus: string;
+    sandbox: boolean | null;
+    qpsLimit: number | null;
+    quotaLimit: number | null;
+    quotaRemaining: number | null;
+    shopsCount: number | null;
+    lastSuccessfulSettingsRefreshAt: string | null;
+    portalWarningPolicyNote: string;
   };
   infrastructure: {
     db: { status: HealthState; detail?: string };
@@ -413,6 +424,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     scheduleVisibility,
     cjProofPayloadRows,
     cjProofBlockedCandidateRows,
+    cjRuntime,
   ] = await Promise.all([
     getDbHealth().catch((error) => ({
       status: "error" as const,
@@ -907,6 +919,7 @@ export async function getDashboardData(): Promise<DashboardData> {
             or upper(coalesce(reason, '')) like '%CJ PROOF%'
           )
       `), []),
+    getCjRuntimeDiagnostics().catch(() => null),
   ]);
 
   const [repeatableJobs, jobSchedulers] = scheduleVisibility as [QueueScheduleEntry[], QueueScheduleEntry[]];
@@ -1269,6 +1282,15 @@ export async function getDashboardData(): Promise<DashboardData> {
       href: buildDashboardAlertHref({ surface: "control", params: { stage: "cj-proof" } }),
     });
   }
+  if (cjRuntime && cjRuntime.runtimeTruthStatus === "LIVE_VERIFIED") {
+    alerts.push({
+      id: "cj-runtime-truth-preferred",
+      tone: "warning",
+      title: "CJ runtime truth is live-verified",
+      detail: "If the CJ portal still shows an API-store warning, treat that warning as informational context only.",
+      href: buildDashboardAlertHref({ surface: "control", params: { stage: "cj-proof" } }),
+    });
+  }
   if (cjProofState.tracking !== "PROVEN") {
     alerts.push({
       id: "cj-tracking-proof-missing",
@@ -1368,6 +1390,16 @@ export async function getDashboardData(): Promise<DashboardData> {
       tracking: cjProofState.tracking,
       blockingReason: getCjProofBlockingReason(cjProofState),
       blockedCandidates: cjBlockedCandidates,
+    },
+    cjRuntime: {
+      runtimeTruthStatus: cjRuntime?.runtimeTruthStatus ?? "UNAVAILABLE",
+      sandbox: cjRuntime?.settings?.sandbox ?? null,
+      qpsLimit: cjRuntime?.settings?.qpsLimit ?? null,
+      quotaLimit: cjRuntime?.settings?.quotaLimit ?? null,
+      quotaRemaining: cjRuntime?.settings?.quotaRemaining ?? null,
+      shopsCount: cjRuntime?.shopsCount ?? null,
+      lastSuccessfulSettingsRefreshAt: cjRuntime?.settings?.lastSuccessfulRefreshAt ?? null,
+      portalWarningPolicyNote: cjRuntime?.portalWarningPolicyNote ?? "",
     },
     infrastructure: {
       db: dbHealth,

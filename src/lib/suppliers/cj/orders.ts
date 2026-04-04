@@ -1,5 +1,6 @@
 import { cjRequest } from "./client";
 import { CjError } from "./errors";
+import { CJ_CANONICAL_CREATE_ORDER_ENDPOINT } from "./policy";
 import type { CjCreateOrderInput, CjCreateOrderResult, CjOrderStatusResult } from "./types";
 
 export type CjOrderListItem = Record<string, unknown>;
@@ -101,7 +102,7 @@ export async function createCjOrder(input: CjCreateOrderInput): Promise<CjCreate
   assertCreateOrderInput(input);
   const wrapped = await cjRequest<Record<string, unknown>>({
     method: "POST",
-    path: "/shopping/order/createOrderV3",
+    path: CJ_CANONICAL_CREATE_ORDER_ENDPOINT,
     operation: "cj.orders.createOrderV3",
     includePlatformToken: true,
     body: {

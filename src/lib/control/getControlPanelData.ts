@@ -12,6 +12,7 @@ import { getScaleRolloutAlertThresholds, getScaleRolloutCaps } from "./scaleRoll
 import { getAutoPurchaseRateLimitState } from "@/lib/orders/autoPurchaseRateLimiter";
 import { getOrderOpsScheduleSnapshot } from "@/lib/jobs/enqueueOrderOpsSchedules";
 import { getCjProofBlockingReason, getCjProofStateSummary, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
+import { getCjRuntimeDiagnostics } from "@/lib/suppliers/cj/settings";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -38,6 +39,23 @@ export type ControlPanelData = {
       readyCandidates: number | null;
       purchasePending: number | null;
       trackingPending: number | null;
+    };
+  };
+  cjRuntime: {
+    runtimeTruthStatus: string;
+    runtimeTruthReason: string;
+    portalWarningPolicyNote: string;
+    sandbox: boolean | null;
+    qpsLimit: number | null;
+    quotaLimit: number | null;
+    quotaRemaining: number | null;
+    shopsCount: number | null;
+    lastSuccessfulSettingsRefreshAt: string | null;
+    auth: {
+      tokenFresh: boolean;
+      tokenSource: string | null;
+      tokenCreatedAt: string | null;
+      lastTokenRefreshAt: string | null;
     };
   };
   health: {
@@ -830,6 +848,7 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     getCount("trend_signals", true),
     getCount("trend_candidates", true),
   ]);
+  const cjRuntime = await getCjRuntimeDiagnostics().catch(() => null);
   const cjProofPayloadRow = productsRawExists
     ? (
         await runQuery(`
@@ -2734,6 +2753,23 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         readyCandidates: cjReadyCandidates,
         purchasePending: cjPurchasePending,
         trackingPending: cjTrackingPending,
+      },
+    },
+    cjRuntime: {
+      runtimeTruthStatus: cjRuntime?.runtimeTruthStatus ?? "UNAVAILABLE",
+      runtimeTruthReason: cjRuntime?.runtimeTruthReason ?? "CJ runtime diagnostics unavailable.",
+      portalWarningPolicyNote: cjRuntime?.portalWarningPolicyNote ?? "",
+      sandbox: cjRuntime?.settings?.sandbox ?? null,
+      qpsLimit: cjRuntime?.settings?.qpsLimit ?? null,
+      quotaLimit: cjRuntime?.settings?.quotaLimit ?? null,
+      quotaRemaining: cjRuntime?.settings?.quotaRemaining ?? null,
+      shopsCount: cjRuntime?.shopsCount ?? null,
+      lastSuccessfulSettingsRefreshAt: cjRuntime?.settings?.lastSuccessfulRefreshAt ?? null,
+      auth: {
+        tokenFresh: cjRuntime?.auth.tokenFresh ?? false,
+        tokenSource: cjRuntime?.auth.tokenSource ?? null,
+        tokenCreatedAt: cjRuntime?.auth.tokenCreatedAt ?? null,
+        lastTokenRefreshAt: cjRuntime?.auth.lastTokenRefreshAt ?? null,
       },
     },
     health: {

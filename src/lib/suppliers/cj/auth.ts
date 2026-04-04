@@ -16,6 +16,7 @@ let currentTokenState: CjAccessTokenState | null = null;
 let tokenPromise: Promise<string | null> | null = null;
 let authRequestQueue: Promise<void> = Promise.resolve();
 let lastAuthRequestAtMs = 0;
+let lastTokenRefreshAtMs = 0;
 
 function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -129,12 +130,19 @@ async function requestAuth(mode: "getAccessToken" | "refreshAccessToken", payloa
 
 async function requestFreshAccessToken(apiKey: string): Promise<string> {
   currentTokenState = await requestAuth("getAccessToken", { apiKey });
+  lastTokenRefreshAtMs = Date.now();
   return currentTokenState.accessToken;
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<string> {
   currentTokenState = await requestAuth("refreshAccessToken", { refreshToken });
+  lastTokenRefreshAtMs = Date.now();
   return currentTokenState.accessToken;
+}
+
+function toIsoOrNull(value: number | null | undefined): string | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return new Date(value).toISOString();
 }
 
 async function getTokenUnlocked(): Promise<string | null> {
@@ -197,6 +205,12 @@ export function getCjAuthSnapshot() {
     accessTokenExpiresAtMs: currentTokenState?.accessTokenExpiresAtMs ?? null,
     refreshTokenExpiresAtMs: currentTokenState?.refreshTokenExpiresAtMs ?? null,
     tokenSource: currentTokenState?.source ?? null,
+    tokenCreatedAtMs: currentTokenState?.createdAtMs ?? null,
+    lastTokenRefreshAtMs: lastTokenRefreshAtMs || null,
+    accessTokenExpiresAt: toIsoOrNull(currentTokenState?.accessTokenExpiresAtMs ?? null),
+    refreshTokenExpiresAt: toIsoOrNull(currentTokenState?.refreshTokenExpiresAtMs ?? null),
+    tokenCreatedAt: toIsoOrNull(currentTokenState?.createdAtMs ?? null),
+    lastTokenRefreshAt: toIsoOrNull(lastTokenRefreshAtMs || null),
   };
 }
 
@@ -209,4 +223,5 @@ export function __resetCjAuthForTests(): void {
   tokenPromise = null;
   authRequestQueue = Promise.resolve();
   lastAuthRequestAtMs = 0;
+  lastTokenRefreshAtMs = 0;
 }

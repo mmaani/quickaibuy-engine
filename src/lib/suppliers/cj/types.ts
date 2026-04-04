@@ -88,6 +88,32 @@ export type CjSettingsSummary = {
   salesLevel: string | null;
   sandbox: boolean | null;
   operationalState: "verified-like" | "unverified-like" | "unknown";
+  lastSuccessfulRefreshAt: string | null;
+};
+
+export type CjRuntimeDiagnostics = {
+  settings: CjSettingsSummary | null;
+  shopsCount: number | null;
+  shopHealth: "healthy" | "limited" | "unknown";
+  runtimeTruthStatus: "LIVE_VERIFIED" | "LIVE_LIMITED" | "UNAVAILABLE";
+  runtimeTruthReason: string;
+  portalWarningPolicyNote: string;
+  endpointPolicy: {
+    primaryEndpoints: string[];
+    deprecatedEndpoints: string[];
+    canonicalCreateEndpoint: string;
+    documentedCreateEndpoints: string[];
+  };
+  auth: {
+    hasApiKey: boolean;
+    hasPlatformToken: boolean;
+    tokenFresh: boolean;
+    tokenSource: "access" | "refresh" | null;
+    tokenCreatedAt: string | null;
+    accessTokenExpiresAt: string | null;
+    refreshTokenExpiresAt: string | null;
+    lastTokenRefreshAt: string | null;
+  };
 };
 
 export type CjCreateOrderInput = {

@@ -1,5 +1,13 @@
 import { cjRequest } from "./client";
-import type { CjSettingsPayload, CjSettingsSummary } from "./types";
+import { getCjAuthSnapshot } from "./auth";
+import {
+  CJ_CANONICAL_CREATE_ORDER_ENDPOINT,
+  CJ_DEPRECATED_RUNTIME_ENDPOINTS,
+  CJ_DOCUMENTED_CREATE_ORDER_ENDPOINTS,
+  CJ_PORTAL_WARNING_POLICY_NOTE,
+  CJ_PRIMARY_RUNTIME_ENDPOINTS,
+} from "./policy";
+import type { CjRuntimeDiagnostics, CjSettingsPayload, CjSettingsSummary } from "./types";
 
 export type CjShopSummary = Record<string, unknown>;
 
@@ -8,6 +16,8 @@ type CjQuotaLimitRow = {
   quotaLimit?: number | string;
   requestedNum?: number | string;
 };
+
+let lastSuccessfulSettingsRefreshAtMs = 0;
 
 function toFiniteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -80,6 +90,7 @@ export async function getCjSettingsSummary(): Promise<CjSettingsSummary | null> 
       const used = firstPositiveNumber(payload?.usedQuota, settingsQuota?.requestedNum);
       return quotaLimit != null && used != null ? Math.max(0, quotaLimit - used) : null;
     })();
+  lastSuccessfulSettingsRefreshAtMs = Date.now();
 
   return {
     raw: payload,
@@ -90,6 +101,7 @@ export async function getCjSettingsSummary(): Promise<CjSettingsSummary | null> 
     salesLevel: cleanString(payload?.salesLevel),
     sandbox: parseNullableBoolean(payload?.sandbox) ?? parseNullableBoolean(payload?.isSandbox),
     operationalState: inferOperationalState(payload),
+    lastSuccessfulRefreshAt: new Date(lastSuccessfulSettingsRefreshAtMs).toISOString(),
   };
 }
 
@@ -107,4 +119,56 @@ export async function getCjShops(): Promise<CjShopSummary[]> {
     if (Array.isArray(value)) return value as CjShopSummary[];
   }
   return [];
+}
+
+export function getLastSuccessfulCjSettingsRefreshAt(): string | null {
+  return lastSuccessfulSettingsRefreshAtMs ? new Date(lastSuccessfulSettingsRefreshAtMs).toISOString() : null;
+}
+
+export async function getCjRuntimeDiagnostics(): Promise<CjRuntimeDiagnostics> {
+  const authBefore = getCjAuthSnapshot();
+  const settings = await getCjSettingsSummary().catch(() => null);
+  const shops = await getCjShops().catch(() => []);
+  const auth = getCjAuthSnapshot();
+  const runtimeSignals = [
+    settings?.operationalState === "verified-like",
+    (settings?.qpsLimit ?? 0) > 1,
+    (settings?.quotaLimit ?? 0) > 0,
+    shops.length > 0,
+  ].filter(Boolean).length;
+  const runtimeTruthStatus = settings == null
+    ? "UNAVAILABLE"
+    : runtimeSignals >= 3
+      ? "LIVE_VERIFIED"
+      : "LIVE_LIMITED";
+  const runtimeTruthReason = settings == null
+    ? "CJ live settings could not be refreshed, so runtime truth is unavailable."
+    : runtimeTruthStatus === "LIVE_VERIFIED"
+      ? "Live CJ settings, qps/quota values, shop visibility, and endpoint success indicate an active runtime even if portal warning text disagrees."
+      : "CJ live settings are partially available, but runtime truth is still limited and should not be inferred from portal warning text alone.";
+
+  return {
+    settings,
+    shopsCount: shops.length,
+    shopHealth: shops.length > 0 ? "healthy" : settings ? "limited" : "unknown",
+    runtimeTruthStatus,
+    runtimeTruthReason,
+    portalWarningPolicyNote: CJ_PORTAL_WARNING_POLICY_NOTE,
+    endpointPolicy: {
+      primaryEndpoints: [...CJ_PRIMARY_RUNTIME_ENDPOINTS],
+      deprecatedEndpoints: [...CJ_DEPRECATED_RUNTIME_ENDPOINTS],
+      canonicalCreateEndpoint: CJ_CANONICAL_CREATE_ORDER_ENDPOINT,
+      documentedCreateEndpoints: [...CJ_DOCUMENTED_CREATE_ORDER_ENDPOINTS],
+    },
+    auth: {
+      hasApiKey: auth.hasApiKey || authBefore.hasApiKey,
+      hasPlatformToken: auth.hasPlatformToken || authBefore.hasPlatformToken,
+      tokenFresh: auth.tokenFresh,
+      tokenSource: auth.tokenSource,
+      tokenCreatedAt: auth.tokenCreatedAt,
+      accessTokenExpiresAt: auth.accessTokenExpiresAt,
+      refreshTokenExpiresAt: auth.refreshTokenExpiresAt,
+      lastTokenRefreshAt: auth.lastTokenRefreshAt,
+    },
+  };
 }

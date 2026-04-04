@@ -3,11 +3,16 @@ import assert from "node:assert/strict";
 import {
   __resetCjAuthForTests,
   __resetCjClientForTests,
+  CJ_CANONICAL_CREATE_ORDER_ENDPOINT,
+  CJ_DEPRECATED_RUNTIME_ENDPOINTS,
+  CJ_DOCUMENTED_CREATE_ORDER_ENDPOINTS,
+  CJ_PRIMARY_RUNTIME_ENDPOINTS,
   cjRequest,
   CjError,
   createCjOrder,
   getCjProofRiskFlags,
   getCjProofStateSummary,
+  getCjRuntimeDiagnostics,
   readCjProofStateFromRawPayload,
   extractTrackingCarrier,
   extractTrackingNumber,
@@ -129,7 +134,7 @@ test("cjRequest retries rate limit once and succeeds", async () => {
         data: {
           accessToken: "token-1",
           refreshToken: "refresh-1",
-          accessTokenExpiresAt: Date.now() + 60_000,
+          accessTokenExpiresAt: Date.now() + 10 * 60 * 60 * 1000,
           refreshTokenExpiresAt: Date.now() + 120_000,
         },
       });
@@ -162,7 +167,7 @@ test("cjRequest fails closed on quota exhaustion", async () => {
         data: {
           accessToken: "token-1",
           refreshToken: "refresh-1",
-          accessTokenExpiresAt: Date.now() + 60_000,
+          accessTokenExpiresAt: Date.now() + 10 * 60 * 60 * 1000,
           refreshTokenExpiresAt: Date.now() + 120_000,
         },
       });
@@ -224,7 +229,7 @@ test("getCjOrderDetail reads canonical order fields", async () => {
         data: {
           accessToken: "token-1",
           refreshToken: "refresh-1",
-          accessTokenExpiresAt: Date.now() + 60_000,
+          accessTokenExpiresAt: Date.now() + 10 * 60 * 60 * 1000,
           refreshTokenExpiresAt: Date.now() + 120_000,
         },
       });
@@ -259,6 +264,73 @@ test("runtime failure classifier marks CJ rate limits as retryable upstream inci
   assert.equal(classified.retryable, true);
 });
 
+test("CJ runtime diagnostics prefer live settings and shops over portal warning assumptions", async () => {
+  process.env.CJ_API_KEY = "test-key";
+  global.fetch = (async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/authentication/getAccessToken")) {
+      return jsonResponse({
+        code: 200,
+        result: true,
+        data: {
+          accessToken: "token-1",
+          refreshToken: "refresh-1",
+          accessTokenExpiresAt: Date.now() + 10 * 60 * 60 * 1000,
+          refreshTokenExpiresAt: Date.now() + 120_000,
+        },
+      });
+    }
+    if (url.includes("/setting/get")) {
+      return jsonResponse({
+        code: 200,
+        result: true,
+        data: {
+          qps: 100,
+          quota: 1000,
+          remainingQuota: 998,
+          sandbox: false,
+          userLevel: "VIP",
+        },
+      });
+    }
+    if (url.includes("/shop/getShops")) {
+      return jsonResponse({
+        code: 200,
+        result: true,
+        data: [{ id: "shop-1", name: "Primary shop" }],
+      });
+    }
+    throw new Error("unexpected url");
+  }) as typeof fetch;
+
+  const diagnostics = await getCjRuntimeDiagnostics();
+
+  assert.equal(diagnostics.runtimeTruthStatus, "LIVE_VERIFIED");
+  assert.equal(diagnostics.settings?.sandbox, false);
+  assert.equal(diagnostics.settings?.qpsLimit, 100);
+  assert.equal(diagnostics.settings?.quotaLimit, 1000);
+  assert.equal(diagnostics.settings?.quotaRemaining, 998);
+  assert.equal(typeof diagnostics.shopsCount, "number");
+  assert.notEqual(diagnostics.shopHealth, "unknown");
+  assert.match(diagnostics.runtimeTruthReason, /live CJ settings/i);
+  assert.match(diagnostics.portalWarningPolicyNote, /informational only/i);
+  assert.equal(diagnostics.auth.hasApiKey, true);
+  assert.equal(diagnostics.auth.tokenFresh, true);
+  assert.ok(diagnostics.auth.lastTokenRefreshAt);
+  assert.ok(diagnostics.settings?.lastSuccessfulRefreshAt);
+});
+
+test("CJ endpoint policy keeps trackInfo primary and deprecated getTrackInfo out of runtime logic", () => {
+  assert.ok(CJ_PRIMARY_RUNTIME_ENDPOINTS.includes("/logistic/trackInfo"));
+  assert.ok(!CJ_PRIMARY_RUNTIME_ENDPOINTS.join(",").includes("/logistic/getTrackInfo"));
+  assert.deepEqual(CJ_DEPRECATED_RUNTIME_ENDPOINTS, ["/logistic/getTrackInfo"]);
+  assert.deepEqual(CJ_DOCUMENTED_CREATE_ORDER_ENDPOINTS, [
+    "/shopping/order/createOrderV2",
+    "/shopping/order/createOrderV3",
+  ]);
+  assert.equal(CJ_CANONICAL_CREATE_ORDER_ENDPOINT, "/shopping/order/createOrderV3");
+});
+
 
 test("CJ proof-state summary stays fail-closed for order creation", () => {
   const summary = getCjProofStateSummary({
@@ -270,6 +342,7 @@ test("CJ proof-state summary stays fail-closed for order creation", () => {
     salesLevel: null,
     sandbox: false,
     operationalState: "verified-like",
+    lastSuccessfulRefreshAt: null,
   });
 
   assert.equal(summary.auth, "PROVEN");

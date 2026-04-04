@@ -1,8 +1,8 @@
-import { getValidCjAccessToken } from "@/lib/suppliers/cj/auth";
+import { getCjAuthSnapshot, getValidCjAccessToken } from "@/lib/suppliers/cj/auth";
 import { extractTrackingNumber, getCjTrackingInfo, calculateCjFreight, calculateCjFreightTip } from "@/lib/suppliers/cj/logistics";
 import { formatCjErrorForOperator } from "@/lib/suppliers/cj/errors";
 import { getCjOrderDetail, listCjOrders } from "@/lib/suppliers/cj/orders";
-import { getCjSettingsSummary, getCjShops } from "@/lib/suppliers/cj/settings";
+import { getCjRuntimeDiagnostics, getCjSettingsSummary, getCjShops } from "@/lib/suppliers/cj/settings";
 import { getCjDirectProductSnapshot, queryCjProductById, queryCjStockByVid, queryCjVariantByVid, queryCjVariantsByPid, searchCjProducts } from "@/lib/suppliers/cj/products";
 
 function clean(value: unknown): string | null {
@@ -35,7 +35,9 @@ async function main() {
   const startWarehouseInventory = Math.max(1, Number(process.env.CJ_DISCOVER_MIN_INVENTORY ?? 10));
 
   const token = await getValidCjAccessToken();
+  const authSnapshot = getCjAuthSnapshot();
   const settings = await getCjSettingsSummary();
+  const runtime = await getCjRuntimeDiagnostics();
   const shops = await getCjShops();
   const search = await searchCjProducts({ keyword, size: 3, countryCode, startWarehouseInventory });
   const first = search.products[0] ?? null;
@@ -86,13 +88,25 @@ async function main() {
     JSON.stringify(
       {
         ok: Boolean(token),
-        auth: { tokenAvailable: Boolean(token) },
+        auth: {
+          tokenAvailable: Boolean(token),
+          tokenFresh: authSnapshot.tokenFresh,
+          tokenSource: authSnapshot.tokenSource,
+          tokenCreatedAt: authSnapshot.tokenCreatedAt,
+          lastTokenRefreshAt: authSnapshot.lastTokenRefreshAt,
+        },
         settings: {
           qpsLimit: settings?.qpsLimit ?? null,
           quotaLimit: settings?.quotaLimit ?? null,
           quotaRemaining: settings?.quotaRemaining ?? null,
           operationalState: settings?.operationalState ?? null,
           sandbox: settings?.sandbox ?? null,
+          lastSuccessfulRefreshAt: settings?.lastSuccessfulRefreshAt ?? null,
+        },
+        runtimeTruth: {
+          status: runtime.runtimeTruthStatus,
+          reason: runtime.runtimeTruthReason,
+          portalWarningPolicyNote: runtime.portalWarningPolicyNote,
         },
         shops: { count: shops.length, first: shops[0] ?? null },
         product: {
