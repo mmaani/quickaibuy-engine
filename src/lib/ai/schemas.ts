@@ -5,6 +5,8 @@ export type ListingPackTrustFlag =
   | "RISKY_PRODUCT"
   | "SELLER_ACCOUNT_LIMITED"
   | "PRICING_UNCERTAIN"
+  | "CJ_PROOF_LIMITED"
+  | "CJ_RUNTIME_LIMITED"
   | "SUPPLIER_PAYLOAD_SPARSE"
   | "MEDIA_QUALITY_LOW";
 
@@ -183,6 +185,8 @@ export function validateListingPackOutput(value: unknown): ListingPackValidation
     "RISKY_PRODUCT",
     "SELLER_ACCOUNT_LIMITED",
     "PRICING_UNCERTAIN",
+    "CJ_PROOF_LIMITED",
+    "CJ_RUNTIME_LIMITED",
     "SUPPLIER_PAYLOAD_SPARSE",
     "MEDIA_QUALITY_LOW",
   ]);

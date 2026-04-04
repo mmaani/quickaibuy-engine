@@ -493,6 +493,7 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
     ? readCjProofStateFromRawPayload(input.supplierRawPayload)
     : null;
   const cjProofBlockingReason = cjProofState ? getCjProofBlockingReason(cjProofState) : null;
+  const cjRuntimeLimited = Boolean(cjProofState && cjProofState.runtime.operationalState !== "verified-like");
   try {
     const prompt = buildVerifyEbayListingPrompt({
       generatedPack: input.generatedPack,
@@ -523,7 +524,11 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
       ok: true,
       pack: {
         ...reconciled.data,
-        risk_flags: Array.from(new Set([...reconciled.data.risk_flags, ...(cjProofState ? getCjProofRiskFlags(cjProofState) : [])])),
+        risk_flags: Array.from(new Set([
+          ...reconciled.data.risk_flags,
+          ...(cjProofState ? getCjProofRiskFlags(cjProofState) : []),
+          ...(cjRuntimeLimited ? ["CJ_RUNTIME_LIMITED"] : []),
+        ])),
         verification_confidence: cjProofState
           ? Math.min(reconciled.data.verification_confidence, getCjProofConfidenceCap(cjProofState))
           : reconciled.data.verification_confidence,
@@ -537,6 +542,10 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
         evidenceCount: evidence.summary.length,
         cjProofBlockingReason,
         cjProofExplanation: cjProofState ? getCjProofExplanation(cjProofState) : null,
+        cjRuntimeOperationalState: cjProofState?.runtime.operationalState ?? null,
+        supplierTruthPreference: cjProofState
+          ? "Prefer canonical CJ runtime truth over portal warning text or optimistic assumptions."
+          : null,
       },
     };
   } catch (error) {
@@ -557,7 +566,11 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
       ok: true,
       pack: {
         ...fallback.data,
-        risk_flags: Array.from(new Set([...fallback.data.risk_flags, ...(cjProofState ? getCjProofRiskFlags(cjProofState) : [])])),
+        risk_flags: Array.from(new Set([
+          ...fallback.data.risk_flags,
+          ...(cjProofState ? getCjProofRiskFlags(cjProofState) : []),
+          ...(cjRuntimeLimited ? ["CJ_RUNTIME_LIMITED"] : []),
+        ])),
         verification_confidence: cjProofState
           ? Math.min(fallback.data.verification_confidence, getCjProofConfidenceCap(cjProofState))
           : fallback.data.verification_confidence,
@@ -573,6 +586,10 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
         evidenceCount: evidence.summary.length,
         cjProofBlockingReason,
         cjProofExplanation: cjProofState ? getCjProofExplanation(cjProofState) : null,
+        cjRuntimeOperationalState: cjProofState?.runtime.operationalState ?? null,
+        supplierTruthPreference: cjProofState
+          ? "Prefer canonical CJ runtime truth over portal warning text or optimistic assumptions."
+          : null,
       },
     };
   }

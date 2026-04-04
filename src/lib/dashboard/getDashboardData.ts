@@ -831,6 +831,7 @@ export async function getDashboardData(): Promise<DashboardData> {
           job_name,
           job_id,
           status,
+          error,
           duration_ms,
           started_at,
           finished_at,

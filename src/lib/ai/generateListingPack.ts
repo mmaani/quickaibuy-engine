@@ -1,5 +1,12 @@
 import { buildEbayListingPrompt } from "./prompts/ebayListing";
 import {
+  getCjProofBlockingReason,
+  getCjProofExplanation,
+  getCjProofRiskFlags,
+  isCjSupplierKey,
+  readCjProofStateFromRawPayload,
+} from "@/lib/suppliers/cj";
+import {
   LISTING_PACK_LOW_CONFIDENCE_THRESHOLD,
   LISTING_SPECIFIC_KEYS,
   validateListingPackOutput,
@@ -255,7 +262,9 @@ export async function generateListingPack(input: GenerateListingPackInput): Prom
       ? readCjProofStateFromRawPayload(input.supplierRawPayload)
       : null;
     const cjProofBlockingReason = cjProofState ? getCjProofBlockingReason(cjProofState) : null;
-    const cjTrustFlags: ListingPackTrustFlag[] = cjProofState && cjProofBlockingReason ? ["PRICING_UNCERTAIN"] : [];
+    const cjTrustFlags: ListingPackTrustFlag[] = [];
+    if (cjProofState && cjProofBlockingReason) cjTrustFlags.push("CJ_PROOF_LIMITED", "PRICING_UNCERTAIN");
+    if (cjProofState && cjProofState.runtime.operationalState !== "verified-like") cjTrustFlags.push("CJ_RUNTIME_LIMITED");
     const lowConfidence =
       confidence.overall < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
       confidence.category < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
@@ -275,6 +284,11 @@ export async function generateListingPack(input: GenerateListingPackInput): Prom
         confidence,
         cjProofBlockingReason,
         cjProofExplanation: cjProofState ? getCjProofExplanation(cjProofState) : null,
+        cjProofRiskFlags: cjProofState ? getCjProofRiskFlags(cjProofState) : [],
+        cjRuntimeOperationalState: cjProofState?.runtime.operationalState ?? null,
+        supplierTruthPreference: cjProofState
+          ? "Prefer canonical CJ runtime truth over portal warning text or optimistic assumptions."
+          : null,
       },
     };
   } catch (error) {
@@ -289,4 +303,3 @@ export async function generateListingPack(input: GenerateListingPackInput): Prom
     };
   }
 }
-import { getCjProofBlockingReason, getCjProofExplanation, isCjSupplierKey, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
