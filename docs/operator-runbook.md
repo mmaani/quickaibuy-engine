@@ -214,6 +214,16 @@ Listings may be blocked for safety reasons.
   3. verify stock availability
   4. operator review required before re-promotion
 
+### Supplier Ship-From Block
+
+- **Cause:** Supplier origin remains unresolved or shipping truth is not deterministic.
+- **Procedure:**
+  1. confirm the block reason is `MISSING_SHIP_FROM_COUNTRY` or equivalent shipping-origin failure
+  2. refresh supplier evidence through the canonical worker-backed path
+  3. prefer richer supplier-native logistics endpoints when available
+  4. do not substitute seller base country for supplier ship-from country
+  5. keep the listing blocked until deterministic origin evidence is present
+
 **v1 rule:** Listings must never automatically reenter the publish queue.
 
 ## Section 4 — Order Safety Procedures

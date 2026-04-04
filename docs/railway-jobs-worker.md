@@ -121,6 +121,7 @@ These are read by worker-executed code but have defaults or are source-specific 
   - `SUPPLIER_FETCH_PROXY_TOKEN`
   - `ZENROWS_API_KEY`
   - `SCRAPINGBEE_API_KEY`
+
 - Listing performance and image-hosting tuning:
   - `LISTING_PERF_WINDOW_DAYS`
   - `LISTING_PERF_MAX_ATTEMPTS`
@@ -143,6 +144,12 @@ These are read by worker-executed code but have defaults or are source-specific 
   - `ORDER_SYNC_DEBUG`
   - `ENABLE_EBAY_TRACKING_SYNC`
   - `ENABLE_EBAY_LIVE_PUBLISH=false`
+
+### CJ-specific runtime note
+
+- `src/lib/products/suppliers/cjdropshipping.ts` now prefers `logistic/freightCalculateTip` during direct-product refresh and only falls back to `logistic/freightCalculate` when the richer quote cannot be produced.
+- Railway worker coverage for CJ is materially better when the CJ account is verified. Public CJ docs state unverified users are capped at `1,000 calls/day per interface` and the lowest tier is limited to `1 request/second`.
+- Treat the CJ API key as sensitive. Do not copy it into runbooks, logs, or tickets.
 
 ### Must not be manually set in Railway worker
 

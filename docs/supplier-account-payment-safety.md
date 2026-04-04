@@ -21,6 +21,8 @@ The following suppliers are present for sourcing or discovery, but are not curre
 ### CJ Dropshipping
 
 - Account created: `TBD`
+- API-connected store verification: `NOT VERIFIED`
+  Portal warning observed: `This API-connected store is not yet verified. Please contact the CJ team via online chat with your API usage details to activate the store.`
 - Business verification complete: `TBD`
 - Payment method configured on supplier site: `TBD`
   Only store a descriptor such as `corporate card label` or `PayPal Business`; never store raw payment details here.
@@ -28,6 +30,8 @@ The following suppliers are present for sourcing or discovery, but are not curre
 - Refund/dispute process known: `TBD`
 - Transaction alerts monitored: `TBD`
 - Operational owner: `TBD`
+- Integration constraint: public CJ docs state unverified users are capped at `1,000 calls/day per interface` and the lowest access tier is limited to `1 request/second`.
+- Secret-handling note: treat the CJ API key as sensitive and never copy it into commits, docs, tickets, or logs.
 
 ### AliExpress
 
@@ -40,6 +44,7 @@ The following suppliers are present for sourcing or discovery, but are not curre
 - Refund/dispute process known: `TBD`
 - Transaction alerts monitored: `TBD`
 - Operational owner: `TBD`
+- Current sourcing note: AliExpress remains discovery-only and still fails closed when deterministic ship-from-country evidence is missing.
 
 ### Alibaba
 
@@ -78,6 +83,12 @@ Use this section for operational metadata only:
   Example of forbidden detail: full card number, expiry, security code, or billing address secrets.
 - Transaction alert destination: `TBD`
 - Escalation contact: `TBD`
+
+## Current operator guidance
+
+- Do not route new candidate effort into CJ just because the supplier is fulfillment-capable; current CJ candidate economics remain blocked.
+- Prefer discovery-only, non-electronics candidates when they have stronger marketplace fit, but keep AliExpress fail-closed until ship-from-country becomes deterministic.
+- Current leading discovery-only candidate family is donut-lamp / ambient-light style home decor, not electronics.
 
 ## Non-goals
 

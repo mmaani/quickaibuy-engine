@@ -18,6 +18,8 @@ Current focus:
 - manual approval gates before listing execution
 - manual-assisted order workflow and tracking sync controls
 - admin consoles for review, listings, orders, and incident control
+- deterministic supplier ship-from and shipping truth before publish progression
+- worker-backed supplier discovery with fail-closed candidate advancement
 
 ---
 
@@ -73,17 +75,17 @@ pnpm exec tsx scripts/queue_namespace_diagnostics.ts
 
 - `pnpm worker:jobs`
   - Generic BullMQ jobs consumer for the `jobs` queue
-  - Consumes queued jobs such as `supplier-discover`
+  - Consumes queued jobs such as `supplier-discover`, `MATCH_PRODUCT`, and `EVAL_PROFIT`
 - `pnpm worker:engine:dev`
-  - Uses `DOTENV_CONFIG_PATH=.env.local`
+  - Runs `pnpm env:dev` first
   - Boots the engine/runtime worker path
   - Not the generic consumer for all queued jobs
 - `pnpm worker:engine:prod`
-  - Uses `DOTENV_CONFIG_PATH=.env.vercel`
-  - Boots the same engine/runtime worker path against prod-linked env
+  - Runs `ALLOW_PROD_ENV_SWITCH=true pnpm env:prod` first
+  - Boots the same engine/runtime worker path against the prod-linked runtime
   - Not the generic consumer for all queued jobs
-- `pnpm worker:engine`
-  - Alias to `pnpm worker:engine:dev`
+
+There is no standalone `pnpm worker:engine` alias in the current package scripts.
 
 `worker:engine:*` commands run dependency preflight before boot and fail fast with classified errors:
 - `CONFIG_MISSING` for missing `DATABASE_URL` or `REDIS_URL`
@@ -91,6 +93,10 @@ pnpm exec tsx scripts/queue_namespace_diagnostics.ts
 - `NETWORK_UNREACHABLE` when host resolves but endpoint is not reachable
 
 When `DNS_FAILURE` or `NETWORK_UNREACHABLE` appears in restricted environments, the fix is external networking access (allow outbound DNS/TCP), not queue/runtime code changes.
+
+Current operator note:
+- `pnpm worker:jobs` was re-verified on `2026-04-04` against the production-classified runtime and remained the canonical path for supplier discovery progression.
+- Current non-electronics discovery work is still blocked primarily by missing ship-from-country truth, not by queue-consumption failures.
 
 ## Codespaces note
 

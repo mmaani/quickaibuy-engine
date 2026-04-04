@@ -127,6 +127,36 @@ type CjFreightCalculateQuote = {
   totalPostageFee?: number | string;
 };
 
+type CjFreightCalculateTipQuote = {
+  arrivalTime?: string;
+  discountFee?: number | string;
+  postage?: number | string;
+  wrapPostage?: number | string;
+  taxesFee?: number | string;
+  clearanceOperationFee?: number | string;
+  option?: {
+    enName?: string;
+    cnName?: string;
+    id?: string;
+  };
+  channel?: {
+    enName?: string;
+    cnName?: string;
+    id?: string;
+  };
+  srcArea?: {
+    shortCode?: string;
+    enName?: string;
+  };
+  destArea?: {
+    shortCode?: string;
+    enName?: string;
+  };
+  message?: string;
+  error?: string;
+  errorEn?: string;
+};
+
 export type CjDirectProductResult = {
   product: SupplierProduct;
   priceMin: string | null;
@@ -149,6 +179,9 @@ const CJ_API_BASE_URL = "https://developers.cjdropshipping.com/api2.0/v1";
 const CJ_ACCESS_TOKEN_REFRESH_WINDOW_MS = 6 * 60 * 60 * 1000;
 const CJ_DEFAULT_ACCESS_TOKEN_TTL_MS = 15 * 24 * 60 * 60 * 1000;
 const CJ_DEFAULT_REFRESH_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const CJ_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS = 200;
+const CJ_FREIGHT_TIP_DEFAULT_VOLUME_CM3 = 1000;
+const CJ_FREIGHT_TIP_DEFAULT_PLATFORM = "Shopify";
 let cjAccessTokenState: CjAccessTokenState | null = null;
 let cjAccessTokenPromise: Promise<string | null> | null = null;
 
@@ -788,6 +821,209 @@ function selectBestCjFreightQuote(quotes: CjFreightCalculateQuote[] | undefined)
   return ranked[0]?.quote ?? null;
 }
 
+function selectBestCjFreightTipQuote(
+  quotes: CjFreightCalculateTipQuote[] | undefined
+): CjFreightCalculateTipQuote | null {
+  const normalized = (Array.isArray(quotes) ? quotes : []).filter((quote) => quote && typeof quote === "object");
+  if (!normalized.length) return null;
+
+  const ranked = normalized
+    .map((quote) => {
+      const price =
+        toFiniteNumber(quote.discountFee) ??
+        toFiniteNumber(quote.wrapPostage) ??
+        toFiniteNumber(quote.postage);
+      const aging = parseDeliveryCycleDays(quote.arrivalTime);
+      const maxDays = aging.maxDays ?? Number.POSITIVE_INFINITY;
+      const hasExplicitError = Boolean(toNonEmptyString(quote.error) || toNonEmptyString(quote.errorEn));
+      return { quote, price, maxDays, hasExplicitError };
+    })
+    .filter((entry) => !entry.hasExplicitError)
+    .sort((left, right) => {
+      if (left.price != null && right.price != null && left.price !== right.price) {
+        return left.price - right.price;
+      }
+      if (left.price != null) return -1;
+      if (right.price != null) return 1;
+      return left.maxDays - right.maxDays;
+    });
+
+  return ranked[0]?.quote ?? null;
+}
+
+function buildCjFreightTipSkuInputs(
+  detail: CjProductDetailData
+): Array<{ sku: string; vid: string | null; skuQuantity: number }> {
+  const stanProducts = Array.isArray(detail.stanProducts) ? detail.stanProducts : [];
+  const fromVariants = stanProducts
+    .map((variant) => ({
+      sku: toNonEmptyString(variant.SKU),
+      vid: toNonEmptyString(variant.ID),
+      skuQuantity: 1,
+    }))
+    .filter((entry): entry is { sku: string; vid: string | null; skuQuantity: number } => Boolean(entry.sku));
+
+  const deduped = Array.from(new Map(fromVariants.map((entry) => [entry.sku, entry])).values()).slice(0, 3);
+  if (deduped.length) return deduped;
+
+  const fallbackSku = toNonEmptyString(detail.SKU);
+  if (!fallbackSku) return [];
+  return [{ sku: fallbackSku, vid: null, skuQuantity: 1 }];
+}
+
+function buildCjFreightTipPayload(input: {
+  detail: CjProductDetailData;
+  warehouseCountry: string | null;
+}): {
+  startCountryCode: string;
+  skuInputs: Array<{ sku: string; vid: string | null; skuQuantity: number }>;
+  payload: Record<string, unknown>;
+} | null {
+  const skuInputs = buildCjFreightTipSkuInputs(input.detail);
+  if (!skuInputs.length) return null;
+
+  const startCountryCode = normalizeShipFromCountry(input.warehouseCountry ?? "CN") ?? "CN";
+  const itemCount = skuInputs.reduce((sum, entry) => sum + entry.skuQuantity, 0);
+  const weight = Math.max(CJ_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS, itemCount * CJ_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS);
+  const volume = Math.max(CJ_FREIGHT_TIP_DEFAULT_VOLUME_CM3, itemCount * CJ_FREIGHT_TIP_DEFAULT_VOLUME_CM3);
+  const totalGoodsAmount =
+    parsePriceRange(input.detail.SELLPRICE).max ??
+    (Array.isArray(input.detail.stanProducts) ? input.detail.stanProducts : []).reduce<number | null>((best, variant) => {
+      const parsed = parsePriceRange(variant.SELLPRICE);
+      if (parsed.max == null) return best;
+      return best == null ? parsed.max : Math.max(best, parsed.max);
+    }, null);
+
+  return {
+    startCountryCode,
+    skuInputs,
+    payload: {
+      reqDTOS: [
+        {
+          srcAreaCode: startCountryCode,
+          destAreaCode: "US",
+          skuList: skuInputs.map((entry) => entry.sku),
+          freightTrialSkuList: skuInputs.map((entry) => ({
+            sku: entry.sku,
+            vid: entry.vid ?? undefined,
+            skuQuantity: entry.skuQuantity,
+          })),
+          weight,
+          wrapWeight: 0,
+          volume,
+          productProp: ["COMMON"],
+          platforms: [CJ_FREIGHT_TIP_DEFAULT_PLATFORM],
+          totalGoodsAmount: totalGoodsAmount ?? undefined,
+        },
+      ],
+    },
+  };
+}
+
+async function fetchCjFreightTrialEstimateTip(input: {
+  detail: CjProductDetailData;
+  warehouseCountry: string | null;
+}): Promise<{
+  estimate: ShippingEstimate | null;
+  diagnostics: Record<string, unknown>;
+}> {
+  const request = buildCjFreightTipPayload(input);
+  if (!request) {
+    return {
+      estimate: null,
+      diagnostics: {
+        source: "cj-freight-calculate-tip",
+        attempted: false,
+        reason: "missing-sku",
+      },
+    };
+  }
+
+  const result = await fetchCjAuthenticatedJson<CjFreightCalculateTipQuote[]>(
+    `${CJ_API_BASE_URL}/logistic/freightCalculateTip`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(request.payload),
+    },
+    { allowMissingAuth: true }
+  );
+
+  if (!result) {
+    return {
+      estimate: null,
+      diagnostics: {
+        source: "cj-freight-calculate-tip",
+        attempted: false,
+        reason: "missing-auth",
+        startCountryCode: request.startCountryCode,
+        skuList: request.skuInputs.map((entry) => entry.sku),
+      },
+    };
+  }
+
+  const quotes = Array.isArray(result.wrapped.data) ? result.wrapped.data : [];
+  const selected = selectBestCjFreightTipQuote(quotes);
+  if (!selected) {
+    return {
+      estimate: null,
+      diagnostics: {
+        source: "cj-freight-calculate-tip",
+        attempted: true,
+        reason: "no-quotes",
+        startCountryCode: request.startCountryCode,
+        skuList: request.skuInputs.map((entry) => entry.sku),
+        quoteCount: quotes.length,
+      },
+    };
+  }
+
+  const aging = parseDeliveryCycleDays(selected.arrivalTime);
+  const price = toPriceString(
+    toFiniteNumber(selected.discountFee) ??
+      toFiniteNumber(selected.wrapPostage) ??
+      toFiniteNumber(selected.postage)
+  );
+  const shipFromCountry =
+    normalizeShipFromCountry(selected.srcArea?.shortCode ?? selected.srcArea?.enName ?? request.startCountryCode) ??
+    request.startCountryCode;
+
+  return {
+    estimate: {
+      label:
+        toNonEmptyString(selected.option?.enName) ??
+        toNonEmptyString(selected.channel?.enName) ??
+        "CJ freight calculation tip",
+      cost: price,
+      currency: price ? "USD" : null,
+      etaMinDays: aging.minDays,
+      etaMaxDays: aging.maxDays,
+      ship_from_country: shipFromCountry,
+    },
+    diagnostics: {
+      source: "cj-freight-calculate-tip",
+      attempted: true,
+      startCountryCode: request.startCountryCode,
+      skuList: request.skuInputs.map((entry) => entry.sku),
+      quoteCount: quotes.length,
+      selectedLabel:
+        toNonEmptyString(selected.option?.enName) ??
+        toNonEmptyString(selected.channel?.enName) ??
+        null,
+      selectedArrivalTime: toNonEmptyString(selected.arrivalTime),
+      selectedDiscountFee: toFiniteNumber(selected.discountFee),
+      selectedWrapPostage: toFiniteNumber(selected.wrapPostage),
+      selectedPostage: toFiniteNumber(selected.postage),
+      selectedMessage: toNonEmptyString(selected.message),
+      srcAreaCode: toNonEmptyString(selected.srcArea?.shortCode),
+      destAreaCode: toNonEmptyString(selected.destArea?.shortCode),
+    },
+  };
+}
+
 async function fetchCjFreightTrialEstimate(input: {
   detail: CjProductDetailData;
   warehouseCountry: string | null;
@@ -1126,11 +1362,20 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
   const warehouseCountry =
     toNonEmptyString(inventories[0]?.countryCode) ?? toNonEmptyString(inventories[0]?.countryNameEn);
   const detailShippingEvidence = buildCjDetailShippingEvidence(detail, warehouseCountry);
-  const freightTrial =
+  const freightTrialTip =
     detailShippingEvidence.signal === "PRESENT"
       ? null
+      : await fetchCjFreightTrialEstimateTip({ detail, warehouseCountry });
+  const freightTrialFallback =
+    detailShippingEvidence.signal === "PRESENT" || freightTrialTip?.estimate != null
+      ? null
       : await fetchCjFreightTrialEstimate({ detail, warehouseCountry });
+  const freightTrial = freightTrialTip?.estimate != null ? freightTrialTip : freightTrialFallback;
   const freightTrialEstimate = freightTrial?.estimate ?? null;
+  const freightEvidenceSource =
+    freightTrialEstimate != null
+      ? String(freightTrial?.diagnostics?.source ?? "cj-freight-calculate")
+      : null;
   const shippingEvidence =
     freightTrialEstimate != null
       ? {
@@ -1150,6 +1395,19 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
               : 0.88,
         }
       : detailShippingEvidence;
+  const shippingOriginEvidenceSource = shippingEvidence.shipFromCountry
+    ? warehouseCountry
+      ? "warehouse_inventory"
+      : freightEvidenceSource ?? "detail_shipping_text"
+    : null;
+  const shippingTrialDiagnostics =
+    freightTrialTip != null && freightTrialFallback != null
+      ? {
+          tip: freightTrialTip.diagnostics,
+          fallback: freightTrialFallback.diagnostics,
+          selectedSource: freightEvidenceSource,
+        }
+      : freightTrial?.diagnostics ?? freightTrialTip?.diagnostics ?? null;
   const variantMapping = buildCjVariantMapping(detail.stanProducts);
   const videoUrls = normalizeVideoUrls(detail);
   const mediaQualityScore = computeCjMediaQualityScore(images.length, videoUrls.length);
@@ -1203,14 +1461,10 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       ship_from_country: shippingEvidence.shipFromCountry,
       shipFromLocation: shippingEvidence.shipFromCountry ? `${shippingEvidence.shipFromCountry} warehouse` : null,
       ship_from_location: shippingEvidence.shipFromCountry ? `${shippingEvidence.shipFromCountry} warehouse` : null,
-      shippingOriginEvidenceSource: shippingEvidence.shipFromCountry
-        ? warehouseCountry
-          ? "warehouse_inventory"
-          : "detail_shipping_text"
-        : null,
+      shippingOriginEvidenceSource,
       shippingEvidenceSource:
         freightTrialEstimate != null
-          ? "cj-freight-calculate"
+          ? freightEvidenceSource
           : detailShippingEvidence.evidenceText
             ? "detail_shipping_text"
             : null,
@@ -1263,7 +1517,7 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       stanProducts: Array.isArray(detail.stanProducts) ? detail.stanProducts.slice(0, 20) : [],
       detailPayload: detail,
       inventoryPayload: inventory,
-      shippingTrialDiagnostics: freightTrial?.diagnostics ?? null,
+      shippingTrialDiagnostics,
       snapshotQuality: "HIGH",
       telemetrySignals: ["parsed"],
     },

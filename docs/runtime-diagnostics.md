@@ -230,3 +230,11 @@ Operational interpretation:
 - `missing_title_or_source_url` dominating usually indicates blocked or degraded supplier fetch/parsing.
 - `shipping_or_availability_weak` dominating means the source returned parsed rows, but the commercial gate kept them fail-closed.
 - `updated_existing_count` staying `0` is expected today because canonical `products_raw` writes are insert-only; discovery currently improves freshness by persisting new snapshots, not by mutating old rows in place.
+
+## Current Verified Operator State
+
+- On `2026-04-04`, `pnpm worker:jobs` was re-run successfully on the production-classified runtime and completed scheduled supplier, marketplace, match, and profit stages.
+- The freshest verified downstream state still had zero `APPROVED` candidates.
+- The current best materialized non-electronics candidate remained an AliExpress doughnut lamp row blocked by `MISSING_SHIP_FROM_COUNTRY`.
+- A stronger emerging non-electronics lead exists in `matches`: the AliExpress Bauhaus donut lamp family. It still needs deterministic origin recovery before it can progress.
+- Current CJ direct-product refresh now prefers the richer `logistic/freightCalculateTip` path before falling back to the simple quote path.
