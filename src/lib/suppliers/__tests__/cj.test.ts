@@ -246,6 +246,7 @@ test("getCjOrderDetail reads canonical order fields", async () => {
   assert.equal(detail.trackNumber, "TRACK-1");
 });
 
+
 test("runtime failure classifier marks CJ rate limits as retryable upstream incidents", () => {
   const classified = classifyRuntimeFailure("RATE_LIMITED | code=1600200 | operation=cj.getAccessToken | CJ request failed: 429 Too Many Requests, QPS limit is 1 time/1second");
   assert.equal(classified.reasonCode, "UPSTREAM_RATE_LIMIT");

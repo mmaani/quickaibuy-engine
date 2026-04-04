@@ -15,7 +15,18 @@ async function main() {
 
   const listed = !orderIdArg && !trackArg ? await listCjOrders({ pageNum: 1, pageSize: 10 }) : [];
   const orderId = orderIdArg || pickOrderId((listed[0] ?? null) as Record<string, unknown> | null);
-  const detail = orderId ? await getCjOrderDetail(orderId) : null;
+
+  let detail = null;
+  let detailError: string | null = null;
+  if (orderId) {
+    try {
+      detail = await getCjOrderDetail(orderId);
+    } catch (error) {
+      detailError = formatCjErrorForOperator(error);
+      if (!trackArg) throw error;
+    }
+  }
+
   const trackNumber = trackArg || detail?.trackNumber || extractTrackingNumber(detail?.raw ?? null);
   if (!trackNumber) throw new Error("No CJ tracking number available for tracking validation");
 
@@ -29,6 +40,7 @@ async function main() {
         selectedTrackNumber: trackNumber,
         listedCount: listed.length,
         detail,
+        detailError,
         tracking,
       },
       null,

@@ -1,4 +1,5 @@
 import { cjRequest } from "./client";
+import { CjError } from "./errors";
 import type { CjCreateOrderInput, CjCreateOrderResult, CjOrderStatusResult } from "./types";
 
 export type CjOrderListItem = Record<string, unknown>;
@@ -12,6 +13,55 @@ function cleanString(value: unknown): string | null {
 
 function cleanArray(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(cleanString(value)))));
+}
+
+function pickLookupId(row: Record<string, unknown> | null): string | null {
+  if (!row) return null;
+  for (const key of ["orderId", "cjOrderId", "id"]) {
+    const value = cleanString(row[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function shouldResolveOrderDetailFallback(error: unknown): boolean {
+  return (
+    error instanceof CjError &&
+    (error.category === "UPSTREAM_UNAVAILABLE" || error.category === "PARAM_INVALID" || error.category === "UNKNOWN")
+  );
+}
+
+async function fetchOrderDetailByLookupId(orderId: string): Promise<CjOrderStatusResult> {
+  const wrapped = await cjRequest<Record<string, unknown>>({
+    method: "GET",
+    path: "/shopping/order/getOrderDetail",
+    operation: "cj.orders.getOrderDetail",
+    query: {
+      orderId,
+      features: "LOGISTICS_TIMELINESS",
+    },
+    cacheTtlMs: 15_000,
+  });
+  const data = (wrapped?.data ?? {}) as Record<string, unknown>;
+  return {
+    orderId: cleanString(data.orderId),
+    orderNum: cleanString(data.orderNum),
+    cjOrderId: cleanString(data.cjOrderId),
+    orderStatus: cleanString(data.orderStatus),
+    logisticName: cleanString(data.logisticName),
+    fromCountryCode: cleanString(data.fromCountryCode),
+    trackNumber: cleanString(data.trackNumber),
+    raw: wrapped?.data ?? null,
+  };
+}
+
+async function resolveOrderLookupId(identifier: string): Promise<string | null> {
+  const directMatches = await listCjOrders({ pageNum: 1, pageSize: 5, orderId: identifier }).catch(() => []);
+  const directId = pickLookupId((directMatches[0] ?? null) as Record<string, unknown> | null);
+  if (directId) return directId;
+
+  const numberMatches = await listCjOrders({ pageNum: 1, pageSize: 5, orderNumber: identifier }).catch(() => []);
+  return pickLookupId((numberMatches[0] ?? null) as Record<string, unknown> | null);
 }
 
 function assertCreateOrderInput(input: CjCreateOrderInput): void {
@@ -125,28 +175,18 @@ export async function listCjOrders(input?: {
   return [];
 }
 
-export async function getCjOrderDetail(orderId: string): Promise<CjOrderStatusResult> {
-  const wrapped = await cjRequest<Record<string, unknown>>({
-    method: "GET",
-    path: "/shopping/order/getOrderDetail",
-    operation: "cj.orders.getOrderDetail",
-    query: {
-      orderId,
-      features: "LOGISTICS_TIMELINESS",
-    },
-    cacheTtlMs: 15_000,
-  });
-  const data = (wrapped?.data ?? {}) as Record<string, unknown>;
-  return {
-    orderId: cleanString(data.orderId),
-    orderNum: cleanString(data.orderNum),
-    cjOrderId: cleanString(data.cjOrderId),
-    orderStatus: cleanString(data.orderStatus),
-    logisticName: cleanString(data.logisticName),
-    fromCountryCode: cleanString(data.fromCountryCode),
-    trackNumber: cleanString(data.trackNumber),
-    raw: wrapped?.data ?? null,
-  };
+export async function getCjOrderDetail(orderIdOrRef: string): Promise<CjOrderStatusResult> {
+  const identifier = cleanString(orderIdOrRef);
+  if (!identifier) throw new Error("CJ order validation failed: orderId is required");
+
+  try {
+    return await fetchOrderDetailByLookupId(identifier);
+  } catch (error) {
+    if (!shouldResolveOrderDetailFallback(error)) throw error;
+    const resolvedLookupId = await resolveOrderLookupId(identifier);
+    if (!resolvedLookupId || resolvedLookupId === identifier) throw error;
+    return fetchOrderDetailByLookupId(resolvedLookupId);
+  }
 }
 
 export async function confirmCjOrder(orderId: string): Promise<string | null> {

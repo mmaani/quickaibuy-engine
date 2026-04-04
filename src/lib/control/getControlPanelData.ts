@@ -537,6 +537,14 @@ function classifyOperatorFailure(raw: string | null): string {
   if (text.includes("STALE") || text.includes("FRESH")) {
     return "freshness gate";
   }
+  if (
+    (text.includes("CJ") || text.includes("1600200") || text.includes("1600201")) &&
+    (text.includes("RATE_LIMITED") || text.includes("TOO MANY REQUESTS") || text.includes("QPS LIMIT") || text.includes("QUOTA_EXHAUSTED") || text.includes("QUOTA"))
+  ) {
+    return text.includes("1600201") || text.includes("QUOTA_EXHAUSTED")
+      ? "CJ upstream quota exhausted"
+      : "CJ upstream rate limit";
+  }
   if (text.includes("NO ") || text.includes("EMPTY") || text.includes("NOT FOUND")) {
     return "source produced no usable data";
   }
