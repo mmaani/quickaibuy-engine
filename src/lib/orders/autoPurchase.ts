@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { supplierOrders } from "@/lib/db/schema";
 import { BULL_PREFIX, JOB_NAMES, JOBS_QUEUE_NAME } from "@/lib/jobs/jobNames";
 import { markJobQueued } from "@/lib/jobs/jobLedger";
-import { createOrder, getOrderStatus as getCjOrderStatus } from "@/lib/suppliers/cjApi";
+import { createCjOrder, formatCjErrorForOperator, getCjOrderDetail, mapCjOrderStatusToPurchaseStatus } from "@/lib/suppliers/cj";
 import { getManualOverrideSnapshot } from "@/lib/control/manualOverrides";
 import { getScaleRolloutCaps } from "@/lib/control/scaleRolloutConfig";
 import { createOrderEvent } from "./orderEvents";
@@ -167,13 +167,6 @@ function resolveCjSku(rawPayload: unknown): { sku: string | null; fromCountryCod
   };
 }
 
-function mapCjOrderStatusToPurchaseStatus(value: string | null): "SUBMITTED" | "CONFIRMED" {
-  const normalized = cleanString(value)?.toUpperCase() ?? "";
-  if (normalized === "UNSHIPPED" || normalized === "SHIPPED" || normalized === "DELIVERED") {
-    return "CONFIRMED";
-  }
-  return "SUBMITTED";
-}
 
 async function getLatestAttempt(orderId: string, supplierKey: string) {
   const rows = await db
@@ -506,7 +499,7 @@ async function processOneOrder(input: {
     null;
 
   try {
-    const created = await createOrder({
+    const created = await createCjOrder({
       orderNumber: order.marketplaceOrderId,
       shippingZip: recipient.postalCode,
       shippingCountry: recipient.countryCode,
@@ -531,7 +524,7 @@ async function processOneOrder(input: {
     });
 
     const statusResult =
-      created.orderId != null ? await getCjOrderStatus(created.orderId).catch(() => null) : null;
+      created.orderId != null ? await getCjOrderDetail(created.orderId).catch(() => null) : null;
     const supplierOrderRef =
       cleanString(statusResult?.orderId) ??
       cleanString(created.orderId) ??
@@ -564,7 +557,7 @@ async function processOneOrder(input: {
       supplierOrderRef,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatCjErrorForOperator(error);
     await createFailedAttempt({
       orderId: input.orderId,
       supplierKey: "cjdropshipping",

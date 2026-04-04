@@ -1,9 +1,10 @@
 import type { ProductVariant, ShippingEstimate, SupplierProduct } from "./types";
 import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 import {
-  cjRequest,
-  getValidCjAccessToken as getCanonicalValidCjAccessToken,
-  invalidateCjAccessToken as invalidateCanonicalCjAccessToken,
+  calculateCjFreight,
+  calculateCjFreightTip,
+  getCjDirectProductSnapshot,
+  searchCjProducts,
 } from "@/lib/suppliers/cj";
 
 type CjInventoryEntry = {
@@ -63,13 +64,6 @@ type CjProductDetailData = {
   xiaoShouJianYi?: string;
 };
 
-type CjWrappedResponse<T> = {
-  code?: number;
-  data?: T;
-  message?: string;
-  success?: boolean;
-  result?: boolean;
-};
 
 
 type CjSearchProduct = {
@@ -100,13 +94,6 @@ type CjSearchProduct = {
   variantKeyEn?: string;
 };
 
-type CjSearchResponse = {
-  content?: Array<{
-    productList?: CjSearchProduct[];
-    keyWord?: string;
-    relatedCategoryList?: Array<{ categoryId?: string; categoryName?: string }>;
-  }>;
-};
 
 type CjFreightCalculateQuote = {
   logisticAging?: string;
@@ -158,7 +145,6 @@ export type CjDirectProductResult = {
   inventoryCacheUrl: string;
 };
 
-const CJ_API_BASE_URL = "https://developers.cjdropshipping.com/api2.0/v1";
 const CJ_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS = 200;
 const CJ_FREIGHT_TIP_DEFAULT_VOLUME_CM3 = 1000;
 const CJ_FREIGHT_TIP_DEFAULT_PLATFORM = "Shopify";
@@ -385,64 +371,6 @@ function looksLikeCorruptedTitle(value: string | null): boolean {
   return false;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      Accept: "application/json,text/plain,*/*",
-    },
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    throw new Error(`CJ fetch failed: ${res.status} ${url}`);
-  }
-
-  return (await res.json()) as T;
-}
-
-export async function getCjAccessToken(): Promise<string | null> {
-  return getCanonicalValidCjAccessToken();
-}
-
-export async function refreshCjAccessToken(): Promise<string | null> {
-  invalidateCanonicalCjAccessToken();
-  return getCanonicalValidCjAccessToken();
-}
-
-export async function getValidCjAccessToken(): Promise<string | null> {
-  return getCanonicalValidCjAccessToken();
-}
-
-async function fetchCjAuthenticatedJson<T>(
-  url: string,
-  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
-  options?: { allowMissingAuth?: boolean },
-): Promise<{ response: Response; wrapped: CjWrappedResponse<T> } | null> {
-  const parsed = new URL(url);
-  const query = Object.fromEntries(parsed.searchParams.entries());
-  const path = parsed.pathname.replace(/^\/api2\.0\/v1/, "") || parsed.pathname;
-  const body =
-    typeof init.body === "string" && init.body.trim().length > 0
-      ? JSON.parse(init.body)
-      : init.body ?? undefined;
-  const wrapped = await cjRequest<T>({
-    method: (init.method ?? "GET") as "GET" | "POST",
-    path,
-    query,
-    body,
-    allowMissingAuth: options?.allowMissingAuth,
-    operation: `cj.products.${path.split("/").filter(Boolean).join(".")}`,
-  });
-
-  if (!wrapped) return null;
-  return {
-    response: new Response(null, { status: 200 }),
-    wrapped: wrapped as CjWrappedResponse<T>,
-  };
-}
 
 function parseDeliveryCycleDays(value: unknown): { minDays: number | null; maxDays: number | null } {
   const raw = String(value ?? "").trim();
@@ -719,33 +647,23 @@ async function fetchCjFreightTrialEstimateTip(input: {
     };
   }
 
-  const result = await fetchCjAuthenticatedJson<CjFreightCalculateTipQuote[]>(
-    `${CJ_API_BASE_URL}/logistic/freightCalculateTip`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(request.payload),
-    },
-    { allowMissingAuth: true }
-  );
-
-  if (!result) {
+  let quotes: CjFreightCalculateTipQuote[] = [];
+  try {
+    quotes = await calculateCjFreightTip(request.payload as { reqDTOS: Array<Record<string, unknown>> });
+  } catch (error) {
     return {
       estimate: null,
       diagnostics: {
         source: "cj-freight-calculate-tip",
         attempted: false,
-        reason: "missing-auth",
+        reason: error instanceof Error && error.message.includes("missing CJ_API_KEY") ? "missing-auth" : "request-failed",
         startCountryCode: request.startCountryCode,
         skuList: request.skuInputs.map((entry) => entry.sku),
+        error: error instanceof Error ? error.message : String(error),
       },
     };
   }
 
-  const quotes = Array.isArray(result.wrapped.data) ? result.wrapped.data : [];
   const selected = selectBestCjFreightTipQuote(quotes);
   if (!selected) {
     return {
@@ -832,37 +750,27 @@ async function fetchCjFreightTrialEstimate(input: {
     };
   }
 
-  const result = await fetchCjAuthenticatedJson<CjFreightCalculateQuote[]>(
-    `${CJ_API_BASE_URL}/logistic/freightCalculate`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        startCountryCode,
-        endCountryCode: "US",
-        products: variantIds.map((vid) => ({ quantity: 1, vid })),
-      }),
-    },
-    { allowMissingAuth: true }
-  );
-
-  if (!result) {
+  let quotes: CjFreightCalculateQuote[] = [];
+  try {
+    quotes = await calculateCjFreight({
+      startCountryCode,
+      endCountryCode: "US",
+      products: variantIds.map((vid) => ({ quantity: 1, vid })),
+    });
+  } catch (error) {
     return {
       estimate: null,
       diagnostics: {
         source: "cj-freight-calculate",
         attempted: false,
-        reason: "missing-auth",
+        reason: error instanceof Error && error.message.includes("missing CJ_API_KEY") ? "missing-auth" : "request-failed",
         startCountryCode,
         variantIds,
+        error: error instanceof Error ? error.message : String(error),
       },
     };
   }
 
-  const quotes = Array.isArray(result.wrapped.data) ? result.wrapped.data : [];
   const selected = selectBestCjFreightQuote(quotes);
   if (!selected) {
     return {
@@ -1029,32 +937,17 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
   if (!trimmedKeyword) return [];
 
   const pageSize = Math.max(1, Math.min(Number(limit) || 20, 100));
-  const url = new URL(`${CJ_API_BASE_URL}/product/listV2`);
-  url.searchParams.set("page", "1");
-  url.searchParams.set("size", String(pageSize));
-  url.searchParams.set("keyWord", trimmedKeyword);
-  url.searchParams.set("countryCode", String(process.env.CJ_DISCOVER_COUNTRY_CODE ?? "US").trim() || "US");
-  url.searchParams.set("verifiedWarehouse", "1");
-  url.searchParams.set("startWarehouseInventory", String(process.env.CJ_DISCOVER_MIN_INVENTORY ?? "10"));
-  url.searchParams.set("orderBy", "4");
-  url.searchParams.set("sort", "desc");
-  url.searchParams.set("features", "enable_description,enable_category,enable_video");
+  const countryCode = String(process.env.CJ_DISCOVER_COUNTRY_CODE ?? "US").trim() || "US";
+  const startWarehouseInventory = Math.max(1, Number(process.env.CJ_DISCOVER_MIN_INVENTORY ?? 10));
+  const search = await searchCjProducts({
+    keyword: trimmedKeyword,
+    size: pageSize,
+    countryCode,
+    startWarehouseInventory,
+  });
+  if (!search.wrapped) return [];
 
-  const result = await fetchCjAuthenticatedJson<CjSearchResponse>(
-    url.toString(),
-    {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    },
-    { allowMissingAuth: true },
-  );
-  if (!result) return [];
-
-  const { response, wrapped } = result;
-  const content = Array.isArray(wrapped.data?.content) ? wrapped.data.content : [];
-  const products = content.flatMap((entry) => (Array.isArray(entry.productList) ? entry.productList : []));
+  const products = search.products;
   const mappedProducts = products
     .map((product) => mapSearchProductToSupplierProduct(product, trimmedKeyword))
     .filter((product): product is SupplierProduct => product != null)
@@ -1063,10 +956,14 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
       ...product,
       raw: {
         ...product.raw,
-        searchUrl: url.toString(),
-        fetchStatus: response.status,
-        apiResponseCode: wrapped.code ?? null,
-        apiResponseMessage: wrapped.message ?? null,
+        searchQuery: {
+          keyword: trimmedKeyword,
+          countryCode,
+          startWarehouseInventory,
+          pageSize,
+        },
+        apiResponseCode: search.wrapped?.code ?? null,
+        apiResponseMessage: search.wrapped?.message ?? null,
         resultCount: products.length,
         pageSize,
       },
@@ -1078,10 +975,10 @@ export async function searchCjByKeyword(keyword: string, limit = 20): Promise<Su
         supplier: "cjdropshipping",
         event: "CJ_SEARCH_NO_RESULTS",
         keyword: trimmedKeyword,
-        searchUrl: url.toString(),
-        fetchStatus: response.status,
-        apiResponseCode: wrapped.code ?? null,
-        apiResponseMessage: wrapped.message ?? null,
+        countryCode,
+        startWarehouseInventory,
+        apiResponseCode: search.wrapped?.code ?? null,
+        apiResponseMessage: search.wrapped?.message ?? null,
         resultCount: products.length,
         pageSize,
       })
@@ -1097,13 +994,8 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
     throw new Error("Unable to parse CJ product id from source URL");
   }
 
-  const detailCacheUrl = `https://cache.cjdropshipping.com/productDetail/${supplierProductId}.json`;
-  const inventoryCacheUrl = `https://cache.cjdropshipping.com/inventory/${supplierProductId}.json`;
-
-  const detailWrapped = await fetchJson<CjWrappedResponse<CjProductDetailData>>(detailCacheUrl);
-  const inventoryWrapped = await fetchJson<
-    CjWrappedResponse<{ inventories?: CjInventoryEntry[]; variantInventories?: CjVariantInventory[] }>
-  >(inventoryCacheUrl);
+  const { detailCacheUrl, inventoryCacheUrl, detailWrapped, inventoryWrapped } =
+    await getCjDirectProductSnapshot(supplierProductId);
 
   const detail = detailWrapped.data;
   if (!detail?.ID) {

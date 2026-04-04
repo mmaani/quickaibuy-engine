@@ -19,6 +19,8 @@ export function classifyRuntimeFailure(error: unknown): RuntimeFailureClassifica
   const redisSignal = /UPSTASH|REDIS/i.test(upper);
   const dbSignal =
     /NEON|POSTGRES|DATABASE_URL|FAILED QUERY:|INFORMATION_SCHEMA|PG_/i.test(upper) || !redisSignal;
+  const cjRateLimited = /\bRATE_LIMITED\b|\bCODE=1600200\b|\bQPS LIMIT\b|\bTOO MANY REQUESTS\b/.test(upper);
+  const cjQuotaExhausted = /\bQUOTA_EXHAUSTED\b|\bCODE=1600201\b|\bDAILY LIMIT\b|\bQUOTA\b/.test(upper);
 
   if (infraDns && redisSignal) {
     return {
@@ -66,6 +68,26 @@ export function classifyRuntimeFailure(error: unknown): RuntimeFailureClassifica
       class: "infrastructure",
       service: "db",
       retryable: true,
+      message,
+    };
+  }
+
+  if (cjRateLimited) {
+    return {
+      reasonCode: "UPSTREAM_RATE_LIMIT",
+      class: "infrastructure",
+      service: "runtime",
+      retryable: true,
+      message,
+    };
+  }
+
+  if (cjQuotaExhausted) {
+    return {
+      reasonCode: "UPSTREAM_QUOTA_EXHAUSTED",
+      class: "infrastructure",
+      service: "runtime",
+      retryable: false,
       message,
     };
   }

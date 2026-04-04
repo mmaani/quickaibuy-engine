@@ -7,11 +7,16 @@ import {
   type CjAuthResponse,
   type CjWrappedResponse,
 } from "./types";
-import { buildCjError, isCjWrappedSuccess } from "./errors";
+import { buildCjError, CjError, isCjWrappedSuccess } from "./errors";
+
+const AUTH_MIN_INTERVAL_MS = 1_100;
+const AUTH_RETRY_DELAYS_MS = [1_200, 2_500] as const;
 
 let currentTokenState: CjAccessTokenState | null = null;
 let tokenPromise: Promise<string | null> | null = null;
 let lastAccessTokenRequestAtMs = 0;
+let authRequestQueue: Promise<void> = Promise.resolve();
+let lastAuthRequestAtMs = 0;
 const refreshRequestHistoryMs: number[] = [];
 
 function cleanString(value: unknown): string | null {
@@ -72,25 +77,56 @@ function getPlatformToken(): string | null {
   return cleanString(process.env.CJ_PLATFORM_TOKEN);
 }
 
-async function requestAuth(mode: "getAccessToken" | "refreshAccessToken", payload: Record<string, string>) {
-  const response = await fetch(`${CJ_API_BASE_URL}/authentication/${mode}`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-    cache: "no-store",
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function acquireAuthRequestSlot(): Promise<void> {
+  const previous = authRequestQueue;
+  let release = () => {};
+  authRequestQueue = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  const wrapped = (await response.json().catch(() => ({}))) as CjWrappedResponse<CjAuthResponse>;
-  if (!response.ok || !isCjWrappedSuccess(wrapped)) {
-    throw buildCjError({
-      operation: `cj.${mode}`,
-      status: response.status,
-      wrapped,
-    });
+  await previous;
+  const waitMs = Math.max(0, AUTH_MIN_INTERVAL_MS - (Date.now() - lastAuthRequestAtMs));
+  if (waitMs > 0) await sleep(waitMs);
+  lastAuthRequestAtMs = Date.now();
+  release();
+}
+
+function shouldRetryAuthError(error: unknown): boolean {
+  return error instanceof CjError && (error.category === "RATE_LIMITED" || error.category === "UPSTREAM_UNAVAILABLE");
+}
+
+async function requestAuth(mode: "getAccessToken" | "refreshAccessToken", payload: Record<string, string>) {
+  for (let attempt = 0; attempt <= AUTH_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await acquireAuthRequestSlot();
+      const response = await fetch(`${CJ_API_BASE_URL}/authentication/${mode}`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+      });
+      const wrapped = (await response.json().catch(() => ({}))) as CjWrappedResponse<CjAuthResponse>;
+      if (!response.ok || !isCjWrappedSuccess(wrapped)) {
+        throw buildCjError({
+          operation: `cj.${mode}`,
+          status: response.status,
+          wrapped,
+        });
+      }
+      return buildAccessTokenState(wrapped.data ?? {}, mode === "getAccessToken" ? "access" : "refresh");
+    } catch (error) {
+      const retryDelayMs = AUTH_RETRY_DELAYS_MS[attempt];
+      if (!shouldRetryAuthError(error) || retryDelayMs == null) throw error;
+      await sleep(retryDelayMs);
+    }
   }
-  return buildAccessTokenState(wrapped.data ?? {}, mode === "getAccessToken" ? "access" : "refresh");
+  throw new Error(`CJ auth retry budget exhausted for ${mode}`);
 }
 
 async function requestFreshAccessToken(apiKey: string): Promise<string> {
@@ -181,5 +217,7 @@ export function __resetCjAuthForTests(): void {
   currentTokenState = null;
   tokenPromise = null;
   lastAccessTokenRequestAtMs = 0;
+  authRequestQueue = Promise.resolve();
+  lastAuthRequestAtMs = 0;
   refreshRequestHistoryMs.length = 0;
 }

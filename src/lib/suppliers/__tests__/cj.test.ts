@@ -11,6 +11,7 @@ import {
   getCjOrderDetail,
   mapCjOrderStatusToPurchaseStatus,
 } from "@/lib/suppliers/cj";
+import { classifyRuntimeFailure } from "@/lib/operations/runtimeFailure";
 
 const originalFetch = global.fetch;
 const originalApiKey = process.env.CJ_API_KEY;
@@ -112,7 +113,7 @@ test("cjRequest fails closed on invalid refresh token", async () => {
   );
 });
 
-test("cjRequest maps rate limit and quota exhaustion codes", async () => {
+test("cjRequest retries rate limit once and succeeds", async () => {
   process.env.CJ_API_KEY = "test-key";
   let attempt = 0;
   global.fetch = (async (input: string | URL | Request) => {
@@ -130,17 +131,41 @@ test("cjRequest maps rate limit and quota exhaustion codes", async () => {
       });
     }
     attempt += 1;
-    return jsonResponse(
-      attempt === 1
-        ? { code: 1600200, result: false, message: "rate limited" }
-        : { code: 1600201, result: false, message: "quota exhausted" }
-    );
+    if (attempt === 1) {
+      return jsonResponse({ code: 1600200, result: false, message: "rate limited" }, 429);
+    }
+    return jsonResponse({ code: 200, result: true, data: { ok: true } });
   }) as typeof fetch;
 
-  await assert.rejects(
-    () => cjRequest({ method: "GET", path: "/setting/get", operation: "cj.test.rate-limit" }),
-    (error: unknown) => error instanceof CjError && error.category === "RATE_LIMITED"
-  );
+  const wrapped = await cjRequest<{ ok: boolean }>({
+    method: "GET",
+    path: "/setting/get",
+    operation: "cj.test.rate-limit-retry",
+  });
+
+  assert.equal(wrapped?.data?.ok, true);
+  assert.equal(attempt, 2);
+});
+
+test("cjRequest fails closed on quota exhaustion", async () => {
+  process.env.CJ_API_KEY = "test-key";
+  global.fetch = (async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/authentication/getAccessToken")) {
+      return jsonResponse({
+        code: 200,
+        result: true,
+        data: {
+          accessToken: "token-1",
+          refreshToken: "refresh-1",
+          accessTokenExpiresAt: Date.now() + 60_000,
+          refreshTokenExpiresAt: Date.now() + 120_000,
+        },
+      });
+    }
+    return jsonResponse({ code: 1600201, result: false, message: "quota exhausted" });
+  }) as typeof fetch;
+
   await assert.rejects(
     () => cjRequest({ method: "GET", path: "/setting/get", operation: "cj.test.quota" }),
     (error: unknown) => error instanceof CjError && error.category === "QUOTA_EXHAUSTED"
@@ -160,6 +185,8 @@ test("createCjOrder validates payload and order status mapping stays fail-closed
         shippingPhone: "123",
         shippingCustomerName: "Buyer",
         shippingAddress: "1 Market",
+        logisticName: "CJPacket",
+        fromCountryCode: "CN",
         products: [{ quantity: 1 }],
       }),
     /sku or vid/
@@ -217,4 +244,12 @@ test("getCjOrderDetail reads canonical order fields", async () => {
   assert.equal(detail.orderId, "123");
   assert.equal(detail.orderStatus, "SHIPPED");
   assert.equal(detail.trackNumber, "TRACK-1");
+});
+
+test("runtime failure classifier marks CJ rate limits as retryable upstream incidents", () => {
+  const classified = classifyRuntimeFailure("RATE_LIMITED | code=1600200 | operation=cj.getAccessToken | CJ request failed: 429 Too Many Requests, QPS limit is 1 time/1second");
+  assert.equal(classified.reasonCode, "UPSTREAM_RATE_LIMIT");
+  assert.equal(classified.class, "infrastructure");
+  assert.equal(classified.service, "runtime");
+  assert.equal(classified.retryable, true);
 });

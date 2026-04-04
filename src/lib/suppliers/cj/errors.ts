@@ -61,21 +61,12 @@ export function isCjWrappedSuccess<T>(wrapped: CjWrappedResponse<T>): boolean {
 export function mapCjErrorCategory(input: {
   status: number;
   code: number | null;
-  message?: string | null;
 }): CjErrorCategory {
   if (input.status === 429) return "RATE_LIMITED";
   if (input.status >= 500) return "UPSTREAM_UNAVAILABLE";
   if (input.code != null && CATEGORY_BY_CODE.has(input.code)) {
     return CATEGORY_BY_CODE.get(input.code)!;
   }
-
-  const message = String(input.message ?? "").toLowerCase();
-  if (message.includes("quota")) return "QUOTA_EXHAUSTED";
-  if (message.includes("rate")) return "RATE_LIMITED";
-  if (message.includes("inventory")) return "INVENTORY_FAILED";
-  if (message.includes("logistic")) return "LOGISTIC_INVALID";
-  if (message.includes("param")) return "PARAM_INVALID";
-  if (message.includes("token")) return "AUTH_INVALID";
   return "UNKNOWN";
 }
 
@@ -94,6 +85,29 @@ export function isCjRateOrQuotaFailure(error: unknown): boolean {
   );
 }
 
+export function formatCjErrorForOperator(error: unknown): string {
+  if (!(error instanceof CjError)) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  const parts: string[] = [error.category];
+  if (error.code != null) parts.push(`code=${error.code}`);
+  if (error.requestId) parts.push(`requestId=${error.requestId}`);
+  if (error.retryable) parts.push("retryable=true");
+  if (error.operation) parts.push(`operation=${error.operation}`);
+  return parts.join(" | ");
+}
+
+export function getCjErrorMeta(error: unknown) {
+  if (!(error instanceof CjError)) return null;
+  return {
+    category: error.category,
+    code: error.code,
+    requestId: error.requestId,
+    retryable: error.retryable,
+    operation: error.operation,
+  };
+}
+
 export function buildCjError<T>(input: {
   operation: string;
   status: number;
@@ -104,7 +118,6 @@ export function buildCjError<T>(input: {
   const category = mapCjErrorCategory({
     status: input.status,
     code,
-    message: input.wrapped.message ?? null,
   });
   const retryable =
     category === "RATE_LIMITED" ||
@@ -112,7 +125,7 @@ export function buildCjError<T>(input: {
     category === "UPSTREAM_UNAVAILABLE";
 
   return new CjError({
-    message: `${input.operation} failed: ${category}${code != null ? ` (${code})` : ""}${input.wrapped.message ? ` ${input.wrapped.message}` : ""}`,
+    message: `${input.operation} failed: ${category}${code != null ? ` (${code})` : ""}`,
     status: input.status,
     code,
     requestId: typeof input.wrapped.requestId === "string" ? input.wrapped.requestId : null,

@@ -4,6 +4,7 @@ import { CJ_API_BASE_URL, type CjRequestOptions, type CjWrappedResponse } from "
 
 const LOW_TIER_DEFAULT_QPS = 1;
 const MIN_INTERVAL_MS = Math.ceil(1000 / LOW_TIER_DEFAULT_QPS);
+const REQUEST_RETRY_DELAYS_MS = [1_200, 2_500] as const;
 const requestCache = new Map<string, { expiresAt: number; value: unknown }>();
 let requestQueue: Promise<void> = Promise.resolve();
 let lastRequestAtMs = 0;
@@ -55,29 +56,42 @@ async function acquireRequestSlot(): Promise<void> {
   release();
 }
 
+function shouldRetryRequestError(error: unknown): boolean {
+  return error instanceof CjError && (error.category === "RATE_LIMITED" || error.category === "UPSTREAM_UNAVAILABLE");
+}
+
 async function execute<T>(input: CjRequestOptions, accessToken: string): Promise<CjWrappedResponse<T>> {
-  await acquireRequestSlot();
-  const response = await fetch(buildUrl(input), {
-    method: input.method,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "CJ-Access-Token": accessToken,
-      platformToken: input.includePlatformToken ? getConfiguredCjPlatformToken() : "",
-    },
-    body: input.body == null ? undefined : JSON.stringify(input.body),
-    cache: "no-store",
-  });
-  const wrapped = (await response.json().catch(() => ({}))) as CjWrappedResponse<T>;
-  if (!response.ok || !isCjWrappedSuccess(wrapped)) {
-    throw buildCjError({
-      operation: input.operation,
-      status: response.status,
-      wrapped,
-      details: { path: input.path, query: input.query ?? null },
-    });
+  for (let attempt = 0; attempt <= REQUEST_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await acquireRequestSlot();
+      const response = await fetch(buildUrl(input), {
+        method: input.method,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "CJ-Access-Token": accessToken,
+          platformToken: input.includePlatformToken ? getConfiguredCjPlatformToken() : "",
+        },
+        body: input.body == null ? undefined : JSON.stringify(input.body),
+        cache: "no-store",
+      });
+      const wrapped = (await response.json().catch(() => ({}))) as CjWrappedResponse<T>;
+      if (!response.ok || !isCjWrappedSuccess(wrapped)) {
+        throw buildCjError({
+          operation: input.operation,
+          status: response.status,
+          wrapped,
+          details: { path: input.path, query: input.query ?? null },
+        });
+      }
+      return wrapped;
+    } catch (error) {
+      const retryDelayMs = REQUEST_RETRY_DELAYS_MS[attempt];
+      if (!shouldRetryRequestError(error) || retryDelayMs == null) throw error;
+      await sleep(retryDelayMs);
+    }
   }
-  return wrapped;
+  throw new Error(`CJ request retry budget exhausted for ${input.operation}`);
 }
 
 export async function cjRequest<T>(input: CjRequestOptions): Promise<CjWrappedResponse<T> | null> {
