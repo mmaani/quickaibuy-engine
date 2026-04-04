@@ -122,6 +122,59 @@ test("cjRequest falls back to getAccessToken when refresh token is invalid", asy
   assert.equal(accessTokenCalls, 2);
 });
 
+test("cjRequest uses access token as platformToken fallback when env token is unset", async () => {
+  process.env.CJ_API_KEY = "test-key";
+  delete process.env.CJ_PLATFORM_TOKEN;
+
+  let observedPlatformToken = null;
+  let observedAccessToken = null;
+
+  global.fetch = (async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/authentication/getAccessToken")) {
+      return jsonResponse({
+        code: 200,
+        result: true,
+        data: {
+          accessToken: "token-1",
+          refreshToken: "refresh-1",
+          accessTokenExpiresAt: Date.now() + 10 * 60 * 60 * 1000,
+          refreshTokenExpiresAt: Date.now() + 120_000,
+        },
+      });
+    }
+
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    observedAccessToken = headers["CJ-Access-Token"] ?? null;
+    observedPlatformToken = headers.platformToken ?? null;
+
+    return jsonResponse({
+      code: 200,
+      result: true,
+      data: { orderId: "CJ-1" },
+    });
+  });
+
+  const result = await createCjOrder({
+    orderNumber: "CJ-PROOF-1",
+    shippingZip: "08817",
+    shippingCountry: "United States",
+    shippingCountryCode: "US",
+    shippingProvince: "New Jersey",
+    shippingCity: "Edison",
+    shippingPhone: "+15712654718",
+    shippingCustomerName: "QuickAIBuy Internal Proof",
+    shippingAddress: "63 DULEY Ave INTERNAL PROOF",
+    logisticName: "YunExpress Sensitive",
+    fromCountryCode: "CN",
+    products: [{ vid: "1681189962735165440", quantity: 1 }],
+  });
+
+  assert.equal(result.orderId, "CJ-1");
+  assert.equal(observedAccessToken, "token-1");
+  assert.equal(observedPlatformToken, "token-1");
+});
+
 test("cjRequest retries rate limit once and succeeds", async () => {
   process.env.CJ_API_KEY = "test-key";
   let attempt = 0;

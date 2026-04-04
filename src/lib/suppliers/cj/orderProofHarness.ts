@@ -74,7 +74,6 @@ export function prepareCjOrderProofHarnessRun(input?: {
   }
 
   if (execute) {
-    requireEnv("CJ_PLATFORM_TOKEN", env);
     const confirmation = requireEnv("CJ_PROOF_HARNESS_CONFIRM", env);
     if (confirmation !== "CREATE_REAL_CJ_PROOF_ORDER") {
       throw new Error("CJ_PROOF_HARNESS_CONFIRM must equal CREATE_REAL_CJ_PROOF_ORDER when --execute is used");

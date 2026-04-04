@@ -70,7 +70,7 @@ async function execute<T>(input: CjRequestOptions, accessToken: string): Promise
           Accept: "application/json",
           "Content-Type": "application/json",
           "CJ-Access-Token": accessToken,
-          platformToken: input.includePlatformToken ? getConfiguredCjPlatformToken() : "",
+          platformToken: input.includePlatformToken ? getConfiguredCjPlatformToken(accessToken) : "",
         },
         body: input.body == null ? undefined : JSON.stringify(input.body),
         cache: "no-store",

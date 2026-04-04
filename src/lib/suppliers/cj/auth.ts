@@ -214,8 +214,8 @@ export function getCjAuthSnapshot() {
   };
 }
 
-export function getConfiguredCjPlatformToken(): string {
-  return getPlatformToken() ?? "";
+export function getConfiguredCjPlatformToken(accessToken?: string | null): string {
+  return getPlatformToken() ?? cleanString(accessToken) ?? "";
 }
 
 export function __resetCjAuthForTests(): void {

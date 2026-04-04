@@ -42,7 +42,6 @@ test("CJ proof harness requires explicit confirmation before execute mode", () =
         env: {
           CJ_PROOF_HARNESS_MODE: "internal_non_customer",
           CJ_PROOF_OPERATOR_ID: "internal-proof-operator",
-          CJ_PLATFORM_TOKEN: "platform-token",
           CJ_PROOF_INTERNAL_RECIPIENT_NAME: "Internal Proof Recipient",
           CJ_PROOF_INTERNAL_ADDRESS1: "QuickAiBuy Internal Office 123",
           CJ_PROOF_INTERNAL_CITY: "Austin",
