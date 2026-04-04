@@ -84,17 +84,19 @@ test("cjRequest refreshes after invalid access token once", async () => {
   assert.ok(calls.some((call) => call.url.includes("/authentication/refreshAccessToken")));
 });
 
-test("cjRequest fails closed on invalid refresh token", async () => {
+test("cjRequest falls back to getAccessToken when refresh token is invalid", async () => {
   process.env.CJ_API_KEY = "test-key";
+  let accessTokenCalls = 0;
   global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     if (url.includes("/authentication/getAccessToken")) {
+      accessTokenCalls += 1;
       return jsonResponse({
         code: 200,
         result: true,
         data: {
-          accessToken: "token-1",
-          refreshToken: "refresh-1",
+          accessToken: accessTokenCalls === 1 ? "token-1" : "token-2",
+          refreshToken: accessTokenCalls === 1 ? "refresh-1" : "refresh-2",
           accessTokenExpiresAt: Date.now() + 10 * 60 * 60 * 1000,
           refreshTokenExpiresAt: Date.now() + 5 * 60 * 1000,
         },
@@ -110,10 +112,9 @@ test("cjRequest fails closed on invalid refresh token", async () => {
     return jsonResponse({ code: 200, result: true, data: { ok: true } });
   }) as typeof fetch;
 
-  await assert.rejects(
-    () => cjRequest({ method: "GET", path: "/setting/get", operation: "cj.test.invalid-refresh" }),
-    (error: unknown) => error instanceof CjError && error.category === "REFRESH_INVALID"
-  );
+  const wrapped = await cjRequest<{ ok: boolean }>({ method: "GET", path: "/setting/get", operation: "cj.test.invalid-refresh" });
+  assert.equal(wrapped?.data?.ok, true);
+  assert.equal(accessTokenCalls, 2);
 });
 
 test("cjRequest retries rate limit once and succeeds", async () => {

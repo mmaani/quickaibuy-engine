@@ -7,17 +7,15 @@ import {
   type CjAuthResponse,
   type CjWrappedResponse,
 } from "./types";
-import { buildCjError, CjError, isCjWrappedSuccess } from "./errors";
+import { buildCjError, CjError, isCjRefreshFailure, isCjWrappedSuccess } from "./errors";
 
 const AUTH_MIN_INTERVAL_MS = 1_100;
 const AUTH_RETRY_DELAYS_MS = [1_200, 2_500] as const;
 
 let currentTokenState: CjAccessTokenState | null = null;
 let tokenPromise: Promise<string | null> | null = null;
-let lastAccessTokenRequestAtMs = 0;
 let authRequestQueue: Promise<void> = Promise.resolve();
 let lastAuthRequestAtMs = 0;
-const refreshRequestHistoryMs: number[] = [];
 
 function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -130,25 +128,11 @@ async function requestAuth(mode: "getAccessToken" | "refreshAccessToken", payloa
 }
 
 async function requestFreshAccessToken(apiKey: string): Promise<string> {
-  const now = Date.now();
-  const sinceLast = now - lastAccessTokenRequestAtMs;
-  if (lastAccessTokenRequestAtMs > 0 && sinceLast < 5 * 60 * 1000) {
-    throw new Error("CJ auth fail-closed: getAccessToken is limited to once every 5 minutes");
-  }
-  lastAccessTokenRequestAtMs = now;
   currentTokenState = await requestAuth("getAccessToken", { apiKey });
   return currentTokenState.accessToken;
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<string> {
-  const now = Date.now();
-  while (refreshRequestHistoryMs.length > 0 && now - refreshRequestHistoryMs[0]! > 60_000) {
-    refreshRequestHistoryMs.shift();
-  }
-  if (refreshRequestHistoryMs.length >= 5) {
-    throw new Error("CJ auth fail-closed: refreshAccessToken exceeded 5 calls per minute");
-  }
-  refreshRequestHistoryMs.push(now);
   currentTokenState = await requestAuth("refreshAccessToken", { refreshToken });
   return currentTokenState.accessToken;
 }
@@ -169,7 +153,14 @@ async function getTokenUnlocked(): Promise<string | null> {
     currentState.refreshTokenExpiresAtMs != null &&
     currentState.refreshTokenExpiresAtMs > now + 60_000
   ) {
-    return refreshAccessToken(currentState.refreshToken);
+    try {
+      return await refreshAccessToken(currentState.refreshToken);
+    } catch (error) {
+      const apiKey = getApiKey();
+      if (!(error instanceof CjError) || !isCjRefreshFailure(error.code) || !apiKey) throw error;
+      currentTokenState = null;
+      return requestFreshAccessToken(apiKey);
+    }
   }
 
   const apiKey = getApiKey();
@@ -216,8 +207,6 @@ export function getConfiguredCjPlatformToken(): string {
 export function __resetCjAuthForTests(): void {
   currentTokenState = null;
   tokenPromise = null;
-  lastAccessTokenRequestAtMs = 0;
   authRequestQueue = Promise.resolve();
   lastAuthRequestAtMs = 0;
-  refreshRequestHistoryMs.length = 0;
 }
