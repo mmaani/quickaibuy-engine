@@ -100,11 +100,11 @@ Current operator note:
 
 ## Codespaces note
 
-This repo now includes `.devcontainer/devcontainer.json` so new Codespaces start in a defined Node 24 / pnpm environment.
+This repo now includes `.devcontainer/devcontainer.json` plus `.devcontainer/Dockerfile`, so new Codespaces start in a defined Node 22 / pnpm environment with `bubblewrap` preinstalled for Codex sandbox support.
 
 GitHub Codespaces idle shutdown is still controlled by GitHub account or organization policy, not by repository code. If a stopped Codespace opens as `https://*.github.dev/?autoStart=false`, start it from the Codespaces UI or remove the `autoStart=false` query parameter from the URL so the browser is allowed to start the Codespace.
 
-On Codespaces attach, the devcontainer now runs `pnpm db:status` and `pnpm codespace:check` so the shell prints the DB target classification and validates the prod-safe Codespaces runtime path immediately. For this workspace, the recommended operating model is PROD for visibility and diagnostics, with prod mutation guards left closed unless an intentional override is required.
+On Codespaces attach, the devcontainer now runs `pnpm db:status` and `pnpm codespace:check` so the shell prints the DB target classification and validates the prod-safe Codespaces runtime path immediately. That validation now also checks Codex sandbox namespace readiness by running `bwrap --ro-bind / / true`. If that check fails after a rebuild, the remaining blocker is workspace/container policy rather than repo code. For this workspace, the recommended operating model is PROD for visibility and diagnostics, with prod mutation guards left closed unless an intentional override is required.
 
 ## Which worker should I run?
 

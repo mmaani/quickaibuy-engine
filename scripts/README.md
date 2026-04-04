@@ -11,7 +11,7 @@ This folder is no longer the operator-facing command surface by default. Human o
 | Learning refresh | `pnpm ops:learning-refresh` | Canonical Learning Hub refresh. |
 | Supplier wave refresh | `pnpm ops:supplier-wave` | Canonical supplier discovery plus rebuild wave. |
 | Runtime diagnostics | `pnpm runtime:diag` | Canonical env/runtime classification. |
-| Codespaces attach/runtime validation | `NODE_ENV=production pnpm codespace:check` | Confirms prod target, mutation safety, review-console auth readiness, and local control-page probe status. |
+| Codespaces attach/runtime validation | `NODE_ENV=production pnpm codespace:check` | Confirms prod target, mutation safety, review-console auth readiness, local control-page probe status, and Codex sandbox namespace readiness via `bwrap`. |
 | Scripts catalog audit | `pnpm scripts:check` | Syntax/type audit across the top-level `scripts/` catalog. |
 | Scripts runtime smoke | `pnpm scripts:smoke` | Read-only runtime smoke suite for deterministic automation-safe checks. |
 | Live integrity diagnostics | `pnpm check:live-integrity` | Canonical listing/integrity scan. |

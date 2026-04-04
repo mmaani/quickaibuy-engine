@@ -8,6 +8,14 @@ case ":$PATH:" in
   *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
 
+echo "==> Verifying bubblewrap"
+if ! command -v bwrap >/dev/null 2>&1; then
+  echo "==> bubblewrap missing; installing fallback package for existing Codespaces"
+  sudo apt-get update
+  sudo apt-get install -y bubblewrap
+fi
+bwrap --version
+
 echo "==> Installing Codex"
 npm install -g @openai/codex
 

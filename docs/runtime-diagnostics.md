@@ -80,7 +80,10 @@ This is the preferred validation command for this repository's PROD-targeted Cod
 - PROD DB target classification
 - closed prod mutation guards
 - production-safe queue namespace
+- Codex sandbox namespace readiness via `bwrap --ro-bind / / true`
 - live DB and Redis runtime probes
+
+If the `Codex sandbox namespace readiness` check fails because `bubblewrap` is missing, rebuild the container so the updated devcontainer image is applied. If `bubblewrap` is installed but namespace creation is denied, treat the remaining issue as Codespaces/container policy rather than application runtime drift.
 
 Transient infrastructure DNS/TCP failures in Codespaces, such as `EAI_AGAIN`, are reported as warnings so attach validation stays focused on repo/runtime correctness instead of failing on external networking jitter.
 

@@ -35,3 +35,10 @@ Summary: Runtime env selection is explicit and DB targeting is classified before
 - Compatibility-only local file: `.env.local`
 - Generated/export file for Railway worker handoff: `railway_worker.env`
 - Sensitive compatibility/export files that should not drive normal local runtime: `.env.vercel`, `codex*.private`
+
+## Codex sandbox readiness
+
+- Codex/Spark sandboxed edits depend on `bubblewrap` plus workspace support for unprivileged namespace creation.
+- The repo-side fix is now built into the Codespaces devcontainer image and validated by `NODE_ENV=production pnpm codespace:check`.
+- That check runs `bwrap --ro-bind / / true` and fails closed if `bubblewrap` is missing or namespace creation is denied.
+- If the check fails in an updated Codespace, rebuild the container first. If it still fails, the remaining blocker is Codespaces/container policy, not application runtime env or DB targeting.

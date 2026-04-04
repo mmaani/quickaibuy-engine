@@ -29,6 +29,14 @@ type ControlPageProbeResult = {
   httpStatus: number | null;
 };
 
+type BubblewrapProbe = {
+  installed: boolean;
+  version: string | null;
+  runnable: boolean;
+  reason: string;
+  detail?: string;
+};
+
 const execFileAsync = promisify(execFile);
 
 function isTransientNetworkError(error: unknown): boolean {
@@ -318,6 +326,64 @@ function summarizeOptionalEmailConfig(runtimeDiagnostics: Awaited<ReturnType<typ
   };
 }
 
+function extractExecFailure(error: unknown): string {
+  if (!error || typeof error !== "object") return String(error ?? "").trim();
+
+  const stderr = "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "").trim() : "";
+  const stdout = "stdout" in error ? String((error as { stdout?: unknown }).stdout ?? "").trim() : "";
+  const message = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
+
+  return [stderr, stdout, message].filter(Boolean).join(" | ");
+}
+
+async function probeBubblewrap(): Promise<BubblewrapProbe> {
+  try {
+    const versionResult = await execFileAsync("bwrap", ["--version"]);
+    const version = String(versionResult.stdout ?? "").trim() || null;
+
+    try {
+      await execFileAsync("bwrap", ["--ro-bind", "/", "/", "true"]);
+      return {
+        installed: true,
+        version,
+        runnable: true,
+        reason: "bubblewrap is installed and namespace creation succeeded.",
+      };
+    } catch (error) {
+      const detail = extractExecFailure(error);
+      const normalized = detail.toLowerCase();
+      const namespaceBlocked =
+        normalized.includes("no permissions to create new namespace") ||
+        normalized.includes("kernel does not allow non-privileged user namespaces") ||
+        normalized.includes("operation not permitted");
+
+      return {
+        installed: true,
+        version,
+        runnable: false,
+        reason: namespaceBlocked
+          ? "bubblewrap is installed but namespace creation is blocked by the workspace/container policy."
+          : "bubblewrap is installed but the readiness probe failed.",
+        detail,
+      };
+    }
+  } catch (error) {
+    const detail = extractExecFailure(error);
+    const normalized = detail.toLowerCase();
+    const missing = normalized.includes("enoent") || normalized.includes("not found");
+
+    return {
+      installed: false,
+      version: null,
+      runnable: false,
+      reason: missing
+        ? "bubblewrap is not installed in this workspace image."
+        : "bubblewrap version probe failed.",
+      detail,
+    };
+  }
+}
+
 function withSandboxContext(result: CheckResult, executionContext: ExecutionContext): CheckResult {
   if (!executionContext.sandboxNetworkDisabled) return result;
 
@@ -349,6 +415,7 @@ function withSandboxContext(result: CheckResult, executionContext: ExecutionCont
 }
 
 async function main() {
+  const shellNodeEnv = String(process.env.NODE_ENV ?? "").trim().toLowerCase();
   const dotenvPath = loadRuntimeEnv();
   const executionContext = getExecutionContext();
   const context = getDbTargetContext();
@@ -356,6 +423,7 @@ async function main() {
   const reviewConsole = getReviewConsoleCredentials();
   const runtimeDiagnostics = await getRuntimeDiagnostics({ includeConnectivity: true });
   const controlPageProbe = await probeControlPage(reviewConsole, dotenvPath);
+  const bubblewrap = await probeBubblewrap();
   const checks: CheckResult[] = [];
 
   checks.push(
@@ -407,7 +475,7 @@ async function main() {
   );
 
   checks.push(
-    String(process.env.NODE_ENV ?? "").trim().toLowerCase() === "production"
+    shellNodeEnv === "production"
       ? {
           check: "NODE_ENV",
           status: "OK",
@@ -417,7 +485,23 @@ async function main() {
           check: "NODE_ENV",
           status: "WARN",
           reason: "Shell NODE_ENV is not production",
-          detail: "Codespaces diagnostics can still be valid, but Railway worker preflight will flag this shell.",
+          detail: "Pass NODE_ENV=production in the shell that launches codespace:check; the .env file value alone is not treated as sufficient here.",
+        }
+  );
+
+  checks.push(
+    bubblewrap.installed && bubblewrap.runnable
+      ? {
+          check: "Codex sandbox namespace readiness",
+          status: "OK",
+          reason: bubblewrap.reason,
+          detail: bubblewrap.version ?? undefined,
+        }
+      : {
+          check: "Codex sandbox namespace readiness",
+          status: "FAILED",
+          reason: bubblewrap.reason,
+          detail: bubblewrap.detail ?? bubblewrap.version ?? undefined,
         }
   );
 
@@ -501,8 +585,10 @@ async function main() {
         envSource: context.envSource,
         classification: context.classification,
         mutationSafety: context.mutationSafety.classification,
+        shellNodeEnv,
         executionContext,
         queue,
+        bubblewrap,
         reviewConsole: {
           configured: Boolean(reviewConsole),
           usernameSet: Boolean(String(process.env.REVIEW_CONSOLE_USERNAME ?? "").trim()),
