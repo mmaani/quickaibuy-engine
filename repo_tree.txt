@@ -227,6 +227,7 @@
 │   ├── check_cj_connectivity.ts
 │   ├── check_cj_freight.ts
 │   ├── check_cj_live_suite.ts
+│   ├── check_cj_order_create_proof.ts
 │   ├── check_cj_order_detail.ts
 │   ├── check_cj_order_tracking_smoke.ts
 │   ├── check_cj_product_fetch.ts
@@ -581,6 +582,8 @@
 │   │   │   │   └── verifyEbayListing.ts
 │   │   │   ├── rankProducts.ts
 │   │   │   ├── schemas.ts
+│   │   │   ├── __tests__
+│   │   │   │   └── rankProducts.test.ts
 │   │   │   └── verifyListingPack.ts
 │   │   ├── audit
 │   │   │   └── writeAuditLog.ts
@@ -737,6 +740,8 @@
 │   │   │   ├── supplierSelectionSafety.ts
 │   │   │   ├── syncEbayOrders.ts
 │   │   │   ├── syncTrackingToEbay.ts
+│   │   │   ├── __tests__
+│   │   │   │   └── supplierSelectionSafety.test.ts
 │   │   │   ├── trackingSync.ts
 │   │   │   ├── transitions.ts
 │   │   │   ├── types.ts
@@ -817,7 +822,9 @@
 │   │   │   │   ├── errors.ts
 │   │   │   │   ├── index.ts
 │   │   │   │   ├── logistics.ts
+│   │   │   │   ├── orderProofHarness.ts
 │   │   │   │   ├── orders.ts
+│   │   │   │   ├── policy.ts
 │   │   │   │   ├── products.ts
 │   │   │   │   ├── proof.ts
 │   │   │   │   ├── settings.ts
@@ -829,6 +836,7 @@
 │   │   │   ├── policySurface.ts
 │   │   │   ├── telemetry.ts
 │   │   │   └── __tests__
+│   │   │       ├── cjOrderProofHarness.test.ts
 │   │   │       ├── cj.test.ts
 │   │   │       ├── discoveryWave.test.ts
 │   │   │       ├── intelligence.test.ts
@@ -854,4 +862,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-129 directories, 726 files
+131 directories, 732 files
