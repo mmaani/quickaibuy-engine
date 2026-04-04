@@ -10,6 +10,8 @@ const CJ_PROOF_FREIGHT_TIP_DEFAULT_PLATFORM = "Shopify";
 type FreightTipResolver = (input: { reqDTOS: Array<Record<string, unknown>> }) => Promise<CjFreightCalculateTipQuote[]>;
 type VariantLookupResolver = (vid: string) => Promise<CjVariantRecord | null>;
 
+type CjFreightTipLogisticsOption = NonNullable<CjFreightCalculateTipQuote["logisticsList"]>[number];
+
 export type CjProofHarnessPreparedRun = {
   execute: boolean;
   actorId: string;
@@ -77,35 +79,20 @@ function extractVariantSku(row: CjVariantRecord | null): string | null {
   return null;
 }
 
-function extractFreightTipLogisticName(quote: CjFreightCalculateTipQuote | null): string | null {
-  if (!quote) return null;
-  for (const value of [quote.option?.enName, quote.channel?.enName, quote.option?.cnName, quote.channel?.cnName]) {
-    const cleaned = cleanString(value);
-    if (cleaned) return cleaned;
+function isValidLogisticsOption(option: CjFreightTipLogisticsOption | null | undefined): option is CjFreightTipLogisticsOption {
+  if (!option) return false;
+  return !cleanString(option.error) && !cleanString(option.errorEn) && Boolean(cleanString(option.logisticName));
+}
+
+function selectFirstValidLogisticsOption(quotes: CjFreightCalculateTipQuote[]): { option: CjFreightTipLogisticsOption; quoteCount: number } | null {
+  for (const quote of quotes) {
+    const logisticsList = Array.isArray(quote.logisticsList) ? quote.logisticsList : [];
+    const firstValid = logisticsList.find((entry) => isValidLogisticsOption(entry));
+    if (firstValid) {
+      return { option: firstValid, quoteCount: quotes.length };
+    }
   }
   return null;
-}
-
-function isValidFreightTipQuote(quote: CjFreightCalculateTipQuote | null): boolean {
-  if (!quote) return false;
-  return !cleanString(quote.error) && !cleanString(quote.errorEn) && Boolean(extractFreightTipLogisticName(quote));
-}
-
-async function resolveFreightTipSkus(input: {
-  productVids: string[];
-  productSkus: string[];
-  queryVariantByVid: VariantLookupResolver;
-}): Promise<Array<{ sku: string; vid?: string; skuQuantity: number }>> {
-  const explicitSkuEntries = input.productSkus.map((sku) => ({ sku, skuQuantity: 1 }));
-  const variantEntries = await Promise.all(
-    input.productVids.map(async (vid) => {
-      const variant = await input.queryVariantByVid(vid);
-      const sku = extractVariantSku(variant);
-      if (!sku) throw new Error(`CJ proof harness could not resolve sku for vid ${vid}`);
-      return { sku, vid, skuQuantity: 1 };
-    })
-  );
-  return [...explicitSkuEntries, ...variantEntries];
 }
 
 async function resolveProofHarnessLogisticName(input: {
@@ -113,51 +100,76 @@ async function resolveProofHarnessLogisticName(input: {
   destinationCountryCode: string;
   fromCountryCode: string;
   productVids: string[];
-  productSkus: string[];
   quantity: number;
   calculateFreightTip: FreightTipResolver;
   queryVariantByVid: VariantLookupResolver;
-}): Promise<{ logisticName: string; source: "manual-override" | "freight-tip"; quoteCount: number }> {
+}): Promise<{
+  logisticName: string;
+  source: "manual-override" | "freight-tip-logistics-list";
+  quoteCount: number;
+  requestedVid: string;
+  requestedQuantity: number;
+  requestedDestinationCountryCode: string;
+}> {
   const manualOverride = cleanString(input.env.CJ_PROOF_INTERNAL_LOGISTIC_NAME);
   if (manualOverride) {
-    return { logisticName: manualOverride, source: "manual-override", quoteCount: 0 };
+    return {
+      logisticName: manualOverride,
+      source: "manual-override",
+      quoteCount: 0,
+      requestedVid: input.productVids[0] ?? "",
+      requestedQuantity: input.quantity,
+      requestedDestinationCountryCode: input.destinationCountryCode,
+    };
   }
 
-  const skuEntries = await resolveFreightTipSkus({
-    productVids: input.productVids,
-    productSkus: input.productSkus,
-    queryVariantByVid: input.queryVariantByVid,
-  });
-  const totalItemCount = Math.max(1, skuEntries.reduce((sum, entry) => sum + entry.skuQuantity, 0) * input.quantity);
+  const requestedVid = cleanString(input.productVids[0]);
+  if (!requestedVid) {
+    throw new Error("CJ proof harness requires CJ_PROOF_TEST_VIDS when no explicit logisticName override is provided");
+  }
+
+  const variant = await input.queryVariantByVid(requestedVid);
+  const sku = extractVariantSku(variant);
+  if (!sku) {
+    throw new Error(`CJ proof harness could not resolve sku for vid ${requestedVid}`);
+  }
+
   const quotes = await input.calculateFreightTip({
     reqDTOS: [
       {
         srcAreaCode: input.fromCountryCode,
         destAreaCode: input.destinationCountryCode,
-        skuList: skuEntries.map((entry) => entry.sku),
-        freightTrialSkuList: skuEntries.map((entry) => ({
-          sku: entry.sku,
-          vid: entry.vid,
-          skuQuantity: entry.skuQuantity * input.quantity,
-        })),
-        weight: Math.max(CJ_PROOF_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS, totalItemCount * CJ_PROOF_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS),
+        skuList: [sku],
+        freightTrialSkuList: [
+          {
+            sku,
+            vid: requestedVid,
+            skuQuantity: input.quantity,
+          },
+        ],
+        weight: Math.max(CJ_PROOF_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS, input.quantity * CJ_PROOF_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS),
         wrapWeight: 0,
-        volume: Math.max(CJ_PROOF_FREIGHT_TIP_DEFAULT_VOLUME_CM3, totalItemCount * CJ_PROOF_FREIGHT_TIP_DEFAULT_VOLUME_CM3),
+        volume: Math.max(CJ_PROOF_FREIGHT_TIP_DEFAULT_VOLUME_CM3, input.quantity * CJ_PROOF_FREIGHT_TIP_DEFAULT_VOLUME_CM3),
         productProp: ["COMMON"],
         platforms: [CJ_PROOF_FREIGHT_TIP_DEFAULT_PLATFORM],
       },
     ],
   });
 
-  for (const quote of quotes) {
-    if (!isValidFreightTipQuote(quote)) continue;
-    const logisticName = extractFreightTipLogisticName(quote);
-    if (logisticName) {
-      return { logisticName, source: "freight-tip", quoteCount: quotes.length };
-    }
+  const selected = selectFirstValidLogisticsOption(quotes);
+  const logisticName = cleanString(selected?.option.logisticName);
+  if (!selected || !logisticName) {
+    throw new Error("CJ proof harness could not resolve logisticsList[0].logisticName from freightCalculateTip");
   }
 
-  throw new Error("CJ proof harness could not resolve a valid logisticName from freightCalculateTip");
+  return {
+    logisticName,
+    source: "freight-tip-logistics-list",
+    quoteCount: selected.quoteCount,
+    requestedVid,
+    requestedQuantity: input.quantity,
+    requestedDestinationCountryCode: input.destinationCountryCode,
+  };
 }
 
 export async function prepareCjOrderProofHarnessRun(input?: {
@@ -223,7 +235,6 @@ export async function prepareCjOrderProofHarnessRun(input?: {
     destinationCountryCode: shippingCountryCode,
     fromCountryCode,
     productVids,
-    productSkus,
     quantity,
     calculateFreightTip: freightTipResolver,
     queryVariantByVid: variantLookupResolver,
@@ -280,6 +291,9 @@ export async function prepareCjOrderProofHarnessRun(input?: {
       logisticName: logisticResolution.logisticName,
       logisticSource: logisticResolution.source,
       freightTipQuoteCount: logisticResolution.quoteCount,
+      requestedVid: logisticResolution.requestedVid,
+      requestedQuantity: logisticResolution.requestedQuantity,
+      requestedDestinationCountryCode: logisticResolution.requestedDestinationCountryCode,
       fromCountryCode,
       products: products.map((product) => ({
         vid: "vid" in product ? cleanString(product.vid) : null,
@@ -295,7 +309,7 @@ export async function prepareCjOrderProofHarnessRun(input?: {
       "manual-operator-trigger-only",
       "no-customer-data",
       "no-balance-payment",
-      "freight-tip-derived-logistic-selection",
+      "freight-tip-derived-logisticsList-selection",
       "immediate-order-detail-follow-up",
       "operator-visible-secret-safe-audit",
       "not-invocable-from-normal-customer-flows",

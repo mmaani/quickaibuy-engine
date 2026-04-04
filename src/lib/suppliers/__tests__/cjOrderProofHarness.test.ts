@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { prepareCjOrderProofHarnessRun } from "@/lib/suppliers/cj/orderProofHarness";
 
-test("CJ proof harness derives logisticName from first valid freight tip quote by default", async () => {
+test("CJ proof harness derives logisticName from logisticsList[0] for the same vid, quantity, and destination", async () => {
   const prepared = await prepareCjOrderProofHarnessRun({
     argv: [],
     now: new Date("2026-04-04T19:20:00.000Z"),
@@ -22,20 +22,30 @@ test("CJ proof harness derives logisticName from first valid freight tip quote b
       CJ_PROOF_INTERNAL_EMAIL: "internal-proof@quickaibuy.com",
       CJ_PROOF_INTERNAL_FROM_COUNTRY_CODE: "CN",
       CJ_PROOF_TEST_VIDS: "1681189962735165440",
+      CJ_PROOF_TEST_QUANTITY: "2",
     },
     queryVariantByVid: async () => ({ SKU: "CJ-SKU-1" }),
     calculateFreightTip: async () => [
-      { errorEn: "bad route", option: { enName: "Ignored Invalid" } },
-      { option: { enName: "YunExpress Sensitive" } },
-      { option: { enName: "Another Route" } },
+      {
+        logisticsList: [
+          { errorEn: "blocked", logisticName: "Ignored Invalid" },
+          { logisticName: "First Valid Logistics" },
+        ],
+      },
+      {
+        logisticsList: [{ logisticName: "Second Quote Logistics" }],
+      },
     ],
   });
 
   assert.equal(prepared.execute, false);
   assert.equal(prepared.orderInput.platform, "internal-proof");
-  assert.equal(prepared.orderInput.logisticName, "YunExpress Sensitive");
-  assert.equal(prepared.maskedInput.logisticSource, "freight-tip");
-  assert.equal(prepared.maskedInput.freightTipQuoteCount, 3);
+  assert.equal(prepared.orderInput.logisticName, "First Valid Logistics");
+  assert.equal(prepared.maskedInput.logisticSource, "freight-tip-logistics-list");
+  assert.equal(prepared.maskedInput.freightTipQuoteCount, 2);
+  assert.equal(prepared.maskedInput.requestedVid, "1681189962735165440");
+  assert.equal(prepared.maskedInput.requestedQuantity, 2);
+  assert.equal(prepared.maskedInput.requestedDestinationCountryCode, "US");
   assert.match(prepared.orderInput.orderNumber, /^CJ-PROOF-INTERNAL-/);
   assert.equal(prepared.maskedInput.balancePaymentAttempted, false);
   assert.equal(Array.isArray(prepared.orderInput.products), true);

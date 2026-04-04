@@ -39,6 +39,15 @@ export type CjFreightCalculateTipQuote = {
   message?: string;
   error?: string;
   errorEn?: string;
+  logisticsList?: Array<{
+    logisticName?: string;
+    arrivalTime?: string;
+    discountFee?: number | string;
+    postage?: number | string;
+    wrapPostage?: number | string;
+    error?: string;
+    errorEn?: string;
+  }>;
 };
 
 function cleanString(value: unknown): string | null {
