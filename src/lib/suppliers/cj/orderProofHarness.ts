@@ -1,4 +1,14 @@
+import { calculateCjFreightTip, type CjFreightCalculateTipQuote } from "./logistics";
+import { queryCjVariantByVid } from "./products";
+import type { CjVariantRecord } from "./products";
 import type { CjCreateOrderInput } from "./types";
+
+const CJ_PROOF_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS = 200;
+const CJ_PROOF_FREIGHT_TIP_DEFAULT_VOLUME_CM3 = 1000;
+const CJ_PROOF_FREIGHT_TIP_DEFAULT_PLATFORM = "Shopify";
+
+type FreightTipResolver = (input: { reqDTOS: Array<Record<string, unknown>> }) => Promise<CjFreightCalculateTipQuote[]>;
+type VariantLookupResolver = (vid: string) => Promise<CjVariantRecord | null>;
 
 export type CjProofHarnessPreparedRun = {
   execute: boolean;
@@ -58,11 +68,105 @@ function assertInternalOnly(value: string, label: string, marker: string): void 
   }
 }
 
-export function prepareCjOrderProofHarnessRun(input?: {
+function extractVariantSku(row: CjVariantRecord | null): string | null {
+  if (!row) return null;
+  for (const key of ["sku", "SKU", "productSku", "variantSku"]) {
+    const value = cleanString(row[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function extractFreightTipLogisticName(quote: CjFreightCalculateTipQuote | null): string | null {
+  if (!quote) return null;
+  for (const value of [quote.option?.enName, quote.channel?.enName, quote.option?.cnName, quote.channel?.cnName]) {
+    const cleaned = cleanString(value);
+    if (cleaned) return cleaned;
+  }
+  return null;
+}
+
+function isValidFreightTipQuote(quote: CjFreightCalculateTipQuote | null): boolean {
+  if (!quote) return false;
+  return !cleanString(quote.error) && !cleanString(quote.errorEn) && Boolean(extractFreightTipLogisticName(quote));
+}
+
+async function resolveFreightTipSkus(input: {
+  productVids: string[];
+  productSkus: string[];
+  queryVariantByVid: VariantLookupResolver;
+}): Promise<Array<{ sku: string; vid?: string; skuQuantity: number }>> {
+  const explicitSkuEntries = input.productSkus.map((sku) => ({ sku, skuQuantity: 1 }));
+  const variantEntries = await Promise.all(
+    input.productVids.map(async (vid) => {
+      const variant = await input.queryVariantByVid(vid);
+      const sku = extractVariantSku(variant);
+      if (!sku) throw new Error(`CJ proof harness could not resolve sku for vid ${vid}`);
+      return { sku, vid, skuQuantity: 1 };
+    })
+  );
+  return [...explicitSkuEntries, ...variantEntries];
+}
+
+async function resolveProofHarnessLogisticName(input: {
+  env: Record<string, string | undefined>;
+  destinationCountryCode: string;
+  fromCountryCode: string;
+  productVids: string[];
+  productSkus: string[];
+  quantity: number;
+  calculateFreightTip: FreightTipResolver;
+  queryVariantByVid: VariantLookupResolver;
+}): Promise<{ logisticName: string; source: "manual-override" | "freight-tip"; quoteCount: number }> {
+  const manualOverride = cleanString(input.env.CJ_PROOF_INTERNAL_LOGISTIC_NAME);
+  if (manualOverride) {
+    return { logisticName: manualOverride, source: "manual-override", quoteCount: 0 };
+  }
+
+  const skuEntries = await resolveFreightTipSkus({
+    productVids: input.productVids,
+    productSkus: input.productSkus,
+    queryVariantByVid: input.queryVariantByVid,
+  });
+  const totalItemCount = Math.max(1, skuEntries.reduce((sum, entry) => sum + entry.skuQuantity, 0) * input.quantity);
+  const quotes = await input.calculateFreightTip({
+    reqDTOS: [
+      {
+        srcAreaCode: input.fromCountryCode,
+        destAreaCode: input.destinationCountryCode,
+        skuList: skuEntries.map((entry) => entry.sku),
+        freightTrialSkuList: skuEntries.map((entry) => ({
+          sku: entry.sku,
+          vid: entry.vid,
+          skuQuantity: entry.skuQuantity * input.quantity,
+        })),
+        weight: Math.max(CJ_PROOF_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS, totalItemCount * CJ_PROOF_FREIGHT_TIP_DEFAULT_WEIGHT_GRAMS),
+        wrapWeight: 0,
+        volume: Math.max(CJ_PROOF_FREIGHT_TIP_DEFAULT_VOLUME_CM3, totalItemCount * CJ_PROOF_FREIGHT_TIP_DEFAULT_VOLUME_CM3),
+        productProp: ["COMMON"],
+        platforms: [CJ_PROOF_FREIGHT_TIP_DEFAULT_PLATFORM],
+      },
+    ],
+  });
+
+  for (const quote of quotes) {
+    if (!isValidFreightTipQuote(quote)) continue;
+    const logisticName = extractFreightTipLogisticName(quote);
+    if (logisticName) {
+      return { logisticName, source: "freight-tip", quoteCount: quotes.length };
+    }
+  }
+
+  throw new Error("CJ proof harness could not resolve a valid logisticName from freightCalculateTip");
+}
+
+export async function prepareCjOrderProofHarnessRun(input?: {
   env?: Record<string, string | undefined>;
   argv?: string[];
   now?: Date;
-}): CjProofHarnessPreparedRun {
+  calculateFreightTip?: FreightTipResolver;
+  queryVariantByVid?: VariantLookupResolver;
+}): Promise<CjProofHarnessPreparedRun> {
   const env = input?.env ?? process.env;
   const argv = input?.argv ?? process.argv.slice(2);
   const now = input?.now ?? new Date();
@@ -93,7 +197,6 @@ export function prepareCjOrderProofHarnessRun(input?: {
   const shippingCountryCode = requireEnv("CJ_PROOF_INTERNAL_COUNTRY_CODE", env);
   const shippingPhone = requireEnv("CJ_PROOF_INTERNAL_PHONE", env);
   const email = cleanString(env.CJ_PROOF_INTERNAL_EMAIL);
-  const logisticName = requireEnv("CJ_PROOF_INTERNAL_LOGISTIC_NAME", env);
   const fromCountryCode = requireEnv("CJ_PROOF_INTERNAL_FROM_COUNTRY_CODE", env);
   const productVids = splitCsv(cleanString(env.CJ_PROOF_TEST_VIDS));
   const productSkus = splitCsv(cleanString(env.CJ_PROOF_TEST_SKUS));
@@ -112,6 +215,19 @@ export function prepareCjOrderProofHarnessRun(input?: {
       throw new Error("CJ_PROOF_INTERNAL_EMAIL must be an internal mailbox");
     }
   }
+
+  const freightTipResolver = input?.calculateFreightTip ?? calculateCjFreightTip;
+  const variantLookupResolver = input?.queryVariantByVid ?? queryCjVariantByVid;
+  const logisticResolution = await resolveProofHarnessLogisticName({
+    env,
+    destinationCountryCode: shippingCountryCode,
+    fromCountryCode,
+    productVids,
+    productSkus,
+    quantity,
+    calculateFreightTip: freightTipResolver,
+    queryVariantByVid: variantLookupResolver,
+  });
 
   const runId = `cj-proof-${now.toISOString().replace(/[:.]/g, "-")}`;
   const orderNumber = `CJ-PROOF-INTERNAL-${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}-${String(now.getUTCHours()).padStart(2, "0")}${String(now.getUTCMinutes()).padStart(2, "0")}${String(now.getUTCSeconds()).padStart(2, "0")}`;
@@ -136,7 +252,7 @@ export function prepareCjOrderProofHarnessRun(input?: {
     shippingAddress2,
     email,
     remark,
-    logisticName,
+    logisticName: logisticResolution.logisticName,
     fromCountryCode,
     platform: "internal-proof",
     products,
@@ -161,9 +277,15 @@ export function prepareCjOrderProofHarnessRun(input?: {
       province: shippingProvince,
       country: shippingCountry,
       countryCode: shippingCountryCode,
-      logisticName,
+      logisticName: logisticResolution.logisticName,
+      logisticSource: logisticResolution.source,
+      freightTipQuoteCount: logisticResolution.quoteCount,
       fromCountryCode,
-      products: products.map((product) => ({ vid: "vid" in product ? cleanString(product.vid) : null, sku: "sku" in product ? cleanString(product.sku) : null, quantity: product.quantity })),
+      products: products.map((product) => ({
+        vid: "vid" in product ? cleanString(product.vid) : null,
+        sku: "sku" in product ? cleanString(product.sku) : null,
+        quantity: product.quantity,
+      })),
       execute,
       balancePaymentAttempted: false,
     },
@@ -173,6 +295,7 @@ export function prepareCjOrderProofHarnessRun(input?: {
       "manual-operator-trigger-only",
       "no-customer-data",
       "no-balance-payment",
+      "freight-tip-derived-logistic-selection",
       "immediate-order-detail-follow-up",
       "operator-visible-secret-safe-audit",
       "not-invocable-from-normal-customer-flows",

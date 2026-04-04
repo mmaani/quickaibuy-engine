@@ -60,7 +60,9 @@
     "enqueue:listing-optimize": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/enqueue_listing_optimize.ts",
     "worker:railway-env:build": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/build_railway_worker_env.ts",
     "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts",
-    "check:cj-order-create-proof": "node --import tsx scripts/check_cj_order_create_proof.ts"
+    "check:cj-order-create-proof": "node --import tsx scripts/check_cj_order_create_proof.ts",
+    "check:cj-live-suite": "node -r dotenv/config node_modules/tsx/dist/cli.mjs scripts/check_cj_live_suite.ts dotenv_config_path=.env.local",
+    "check_cj_live_suite": "node -r dotenv/config node_modules/tsx/dist/cli.mjs scripts/check_cj_live_suite.ts dotenv_config_path=.env.local"
   },
   "dependencies": {
     "bullmq": "^5.70.2",

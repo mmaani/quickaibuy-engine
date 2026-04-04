@@ -25,7 +25,7 @@ async function writeProofAudit(eventType: string, entityId: string, actorId: str
 }
 
 async function main() {
-  const prepared = prepareCjOrderProofHarnessRun();
+  const prepared = await prepareCjOrderProofHarnessRun();
 
   await writeProofAudit(
     prepared.execute ? "CJ_ORDER_CREATE_PROOF_EXECUTION_REQUESTED" : "CJ_ORDER_CREATE_PROOF_PRECHECK",
@@ -41,23 +41,30 @@ async function main() {
   );
 
   if (!prepared.execute) {
-    console.log(JSON.stringify({
-      ok: true,
-      mode: "DRY_RUN",
-      runId: prepared.runId,
-      actorId: prepared.actorId,
-      entityId: prepared.entityId,
-      guardrails: prepared.guardrails,
-      maskedInput: prepared.maskedInput,
-      balancePaymentAttempted: false,
-      normalFlowProofStateChanged: false,
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          mode: "DRY_RUN",
+          runId: prepared.runId,
+          actorId: prepared.actorId,
+          entityId: prepared.entityId,
+          guardrails: prepared.guardrails,
+          maskedInput: prepared.maskedInput,
+          balancePaymentAttempted: false,
+          normalFlowProofStateChanged: false,
+        },
+        null,
+        2
+      )
+    );
     return;
   }
 
   try {
     const created = await createCjOrder(prepared.orderInput);
-    const createdOrderId = cleanString(created.orderId) ?? cleanString(created.cjOrderId) ?? cleanString(created.orderNum);
+    const createdOrderId =
+      cleanString(created.orderId) ?? cleanString(created.cjOrderId) ?? cleanString(created.orderNum);
     if (!createdOrderId) {
       throw new Error("CJ proof harness createOrder returned no usable order identifier");
     }
