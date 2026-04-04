@@ -1,3 +1,5 @@
+import { getCjProofExplanation, getCjProofRankingPenalty, isCjSupplierKey, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
+
 export type SellabilityScoreInput = {
   title: string | null;
   marketplaceTitle: string | null;
@@ -5,6 +7,8 @@ export type SellabilityScoreInput = {
   price: number | null;
   imageUrl: string | null;
   additionalImageCount: number;
+  supplierKey?: string | null;
+  supplierRawPayload?: unknown;
 };
 
 export type SellabilityScoreResult = {
@@ -16,6 +20,7 @@ export type SellabilityScoreResult = {
   simplicity: number;
   priceRange: number;
   clarity: number;
+  fulfillmentReadiness: number;
   penalties: string[];
   reasons: string[];
 };
@@ -145,14 +150,24 @@ export function scoreSellability(input: SellabilityScoreInput): SellabilityScore
   const simplicity = scoreSimplicity(text);
   const priceRange = scorePriceRange(input.price);
   const clarity = scoreClarity(text);
+  const cjProofState = isCjSupplierKey(input.supplierKey)
+    ? readCjProofStateFromRawPayload(input.supplierRawPayload)
+    : null;
+  const fulfillmentReadiness = cjProofState ? Math.max(0, 20 - getCjProofRankingPenalty(cjProofState)) : 20;
+  const fulfillmentPenalty = 20 - fulfillmentReadiness;
 
-  const score = demand.score + visual.score + simplicity.score + priceRange.score + clarity.score;
+  const score = demand.score + visual.score + simplicity.score + priceRange.score + clarity.score + fulfillmentReadiness - fulfillmentPenalty;
   const penalties = [
     ...visual.penalties,
     ...simplicity.penalties,
     ...priceRange.penalties,
     ...clarity.penalties,
   ];
+  const reasons = [demand.reason];
+  if (cjProofState && fulfillmentPenalty > 0) {
+    penalties.push("CJ proof-state limits fulfillment confidence");
+    reasons.push(getCjProofExplanation(cjProofState));
+  }
 
   return {
     score,
@@ -163,7 +178,8 @@ export function scoreSellability(input: SellabilityScoreInput): SellabilityScore
     simplicity: simplicity.score,
     priceRange: priceRange.score,
     clarity: clarity.score,
+    fulfillmentReadiness,
     penalties,
-    reasons: [demand.reason],
+    reasons,
   };
 }

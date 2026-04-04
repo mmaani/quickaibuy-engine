@@ -16,6 +16,7 @@ import {
 } from "@/lib/dashboard/status";
 import { getPriceGuardThresholds } from "@/lib/profit/priceGuardConfig";
 import { PRODUCT_PIPELINE_MATCH_PREFERRED_MIN } from "@/lib/products/pipelinePolicy";
+import { getCjProofBlockingReason, getCjProofStateSummary, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -57,6 +58,16 @@ export type PipelineMetric = {
 
 export type DashboardData = {
   generatedAt: string;
+  cjProofState: {
+    overall: string;
+    auth: string;
+    freight: string;
+    orderCreate: string;
+    orderDetail: string;
+    tracking: string;
+    blockingReason: string | null;
+    blockedCandidates: number | null;
+  };
   infrastructure: {
     db: { status: HealthState; detail?: string };
     redis: { status: HealthState; detail?: string };
@@ -400,6 +411,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     matchFailedJobTs,
     profitFailedJobTs,
     scheduleVisibility,
+    cjProofPayloadRows,
+    cjProofBlockedCandidateRows,
   ] = await Promise.all([
     getDbHealth().catch((error) => ({
       status: "error" as const,
@@ -876,9 +889,29 @@ export async function getDashboardData(): Promise<DashboardData> {
         repeatableJobs as QueueScheduleEntry[],
         jobSchedulers as QueueScheduleEntry[],
       ] as [QueueScheduleEntry[], QueueScheduleEntry[]]), [[], []] as [QueueScheduleEntry[], QueueScheduleEntry[]]),
+    readOnlyQuery(queryFailures, "cj_proof_payload", "products_raw", () =>
+      runQuery(`
+        select raw_payload as cj_raw_payload
+        from products_raw
+        where lower(coalesce(supplier_key, '')) in ('cj', 'cj dropshipping', 'cjdropshipping')
+        order by snapshot_ts desc nulls last, id desc
+        limit 1
+      `), []),
+    readOnlyQuery(queryFailures, "cj_proof_blocked_candidates", "profitable_candidates", () =>
+      runQuery(`
+        select count(*)::int as count
+        from profitable_candidates
+        where lower(coalesce(supplier_key, '')) = 'cjdropshipping'
+          and (
+            upper(coalesce(listing_block_reason, '')) like '%CJ%'
+            or upper(coalesce(reason, '')) like '%CJ PROOF%'
+          )
+      `), []),
   ]);
 
   const [repeatableJobs, jobSchedulers] = scheduleVisibility as [QueueScheduleEntry[], QueueScheduleEntry[]];
+  const cjProofState = readCjProofStateFromRawPayload(cjProofPayloadRows[0]?.cj_raw_payload) ?? getCjProofStateSummary();
+  const cjBlockedCandidates = toNum(cjProofBlockedCandidateRows[0]?.count);
 
   const hasRepeatable = (jobName: string, everyMs: number) =>
     repeatableJobs.some(
@@ -1227,6 +1260,24 @@ export async function getDashboardData(): Promise<DashboardData> {
       href: buildDashboardAlertHref({ surface: "listings", params: { status: "PUBLISH_FAILED", marketplace: "ebay" } }),
     });
   }
+  if (cjProofState.orderCreate !== "PROVEN") {
+    alerts.push({
+      id: "cj-order-create-proof-missing",
+      tone: "warning",
+      title: "CJ order-create remains unproven",
+      detail: "CJ candidate confidence and purchase automation stay capped until guarded live order-create proof succeeds.",
+      href: buildDashboardAlertHref({ surface: "control", params: { stage: "cj-proof" } }),
+    });
+  }
+  if (cjProofState.tracking !== "PROVEN") {
+    alerts.push({
+      id: "cj-tracking-proof-missing",
+      tone: "warning",
+      title: "CJ tracking remains unproven",
+      detail: "CJ tracking sync stays in partial-proof mode until a real tracking number is validated.",
+      href: buildDashboardAlertHref({ surface: "control", params: { stage: "cj-proof" } }),
+    });
+  }
   if (trendManualSeedSignals === trendTotal && trendTotal > 0) {
     alerts.push({
       id: "manual-seed-trends-only",
@@ -1308,6 +1359,16 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   return {
     generatedAt: new Date().toISOString(),
+    cjProofState: {
+      overall: cjProofState.overall,
+      auth: cjProofState.auth,
+      freight: cjProofState.freight,
+      orderCreate: cjProofState.orderCreate,
+      orderDetail: cjProofState.orderDetail,
+      tracking: cjProofState.tracking,
+      blockingReason: getCjProofBlockingReason(cjProofState),
+      blockedCandidates: cjBlockedCandidates,
+    },
     infrastructure: {
       db: dbHealth,
       redis: redisHealth,

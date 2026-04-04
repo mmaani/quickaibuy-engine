@@ -3,6 +3,7 @@ import {
   LISTING_PACK_LOW_CONFIDENCE_THRESHOLD,
   LISTING_SPECIFIC_KEYS,
   validateListingPackOutput,
+  type ListingPackTrustFlag,
   type ListingPackOutput,
 } from "./schemas";
 
@@ -250,18 +251,30 @@ export async function generateListingPack(input: GenerateListingPackInput): Prom
     }
 
     const confidence = validation.data.confidence;
+    const cjProofState = isCjSupplierKey(cleanString(objectOrNull(input.supplierRawPayload)?.supplierKey))
+      ? readCjProofStateFromRawPayload(input.supplierRawPayload)
+      : null;
+    const cjProofBlockingReason = cjProofState ? getCjProofBlockingReason(cjProofState) : null;
+    const cjTrustFlags: ListingPackTrustFlag[] = cjProofState && cjProofBlockingReason ? ["PRICING_UNCERTAIN"] : [];
     const lowConfidence =
       confidence.overall < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
       confidence.category < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD ||
       confidence.title < LISTING_PACK_LOW_CONFIDENCE_THRESHOLD;
+    const pack = {
+      ...validation.data,
+      trust_flags: Array.from(new Set([...validation.data.trust_flags, ...cjTrustFlags])),
+      review_required: validation.data.review_required || Boolean(cjProofBlockingReason),
+    };
 
     return {
       ok: true,
-      pack: validation.data,
+      pack,
       diagnostics: {
         schemaPassed: true,
         lowConfidence,
         confidence,
+        cjProofBlockingReason,
+        cjProofExplanation: cjProofState ? getCjProofExplanation(cjProofState) : null,
       },
     };
   } catch (error) {
@@ -276,3 +289,4 @@ export async function generateListingPack(input: GenerateListingPackInput): Prom
     };
   }
 }
+import { getCjProofBlockingReason, getCjProofExplanation, isCjSupplierKey, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";

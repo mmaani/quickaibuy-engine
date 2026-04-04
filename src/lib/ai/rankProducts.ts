@@ -1,5 +1,13 @@
+import {
+  getCjProofConfidenceCap,
+  getCjProofRankingPenalty,
+  isCjSupplierKey,
+  readCjProofStateFromRawPayload,
+} from "@/lib/suppliers/cj";
+
 export type RankableProduct = {
   candidateId: string;
+  supplierKey?: string | null;
   supplierTitle: string | null;
   estimatedProfit: unknown;
   marginPct: unknown;
@@ -46,17 +54,25 @@ export function rankProducts<T extends RankableProduct>(products: T[], sellerPro
   const ranked = products
     .map((product) => {
       const title = cleanText(`${product.supplierTitle ?? ""} ${product.marketplaceTitle ?? ""}`);
+      const rawPayload = objectOrNull(product.supplierRawPayload);
+      const supplierKey = cleanText(product.supplierKey ?? String(rawPayload?.supplierKey ?? ""));
+      const cjProofState = isCjSupplierKey(supplierKey) ? readCjProofStateFromRawPayload(rawPayload) : null;
       const visualScore = Math.min(12, countMediaSignals(product.supplierRawPayload) * 2);
       const simplicityBonus = /(decor|home|gift|organizer|lamp|light|storage)/.test(title) ? 8 : 0;
       const technicalPenalty = /(adapter|ic|motherboard|driver|diagnostic|firmware)/.test(title) ? 8 : 0;
       const trustPenalty = riskPenalty(title, feedbackScore);
-      const matchComponent = Math.max(0, Math.min(1, Number(product.matchConfidence ?? 0))) * 25;
+      const matchConfidence = Math.max(0, Math.min(1, Number(product.matchConfidence ?? 0)));
+      const adjustedMatchConfidence = cjProofState
+        ? Math.min(matchConfidence, getCjProofConfidenceCap(cjProofState))
+        : matchConfidence;
+      const cjPenalty = cjProofState ? getCjProofRankingPenalty(cjProofState) : 0;
+      const matchComponent = adjustedMatchConfidence * 25;
       const profitComponent = Math.max(0, Number(product.estimatedProfit ?? 0)) * 0.4;
       const marginComponent = Math.max(0, Number(product.marginPct ?? 0)) * 0.25;
       const roiComponent = Math.max(0, Number(product.roiPct ?? 0)) * 0.12;
 
       const score =
-        matchComponent + profitComponent + marginComponent + roiComponent + visualScore + simplicityBonus - technicalPenalty - trustPenalty;
+        matchComponent + profitComponent + marginComponent + roiComponent + visualScore + simplicityBonus - technicalPenalty - trustPenalty - cjPenalty;
 
       return { product, score };
     })

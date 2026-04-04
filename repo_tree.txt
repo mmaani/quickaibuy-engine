@@ -231,6 +231,7 @@
 │   ├── check_cj_order_tracking_smoke.ts
 │   ├── check_cj_product_fetch.ts
 │   ├── check_cj_settings.ts
+│   ├── check_cj_system_alignment.ts
 │   ├── check_cj_tracking.ts
 │   ├── check_cj_variant_stock.ts
 │   ├── check_codespace_runtime.ts
@@ -853,4 +854,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-129 directories, 725 files
+129 directories, 726 files

@@ -11,6 +11,7 @@ import { getMatchQualitySummary } from "./getMatchQualitySummary";
 import { getScaleRolloutAlertThresholds, getScaleRolloutCaps } from "./scaleRolloutConfig";
 import { getAutoPurchaseRateLimitState } from "@/lib/orders/autoPurchaseRateLimiter";
 import { getOrderOpsScheduleSnapshot } from "@/lib/jobs/enqueueOrderOpsSchedules";
+import { getCjProofBlockingReason, getCjProofStateSummary, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 type Row = Record<string, unknown>;
 type HealthState = "ok" | "error" | "unknown";
@@ -20,6 +21,25 @@ const INVENTORY_RISK_SCAN_FALLBACK_EVERY_MS = 6 * 60 * 60 * 1000;
 
 export type ControlPanelData = {
   generatedAt: string;
+  cjProofState: {
+    summary: {
+      overall: string;
+      auth: string;
+      catalog: string;
+      freight: string;
+      orderCreate: string;
+      orderDetail: string;
+      tracking: string;
+      blockingReason: string | null;
+      proofSource: string;
+    };
+    exposure: {
+      blockedCandidates: number | null;
+      readyCandidates: number | null;
+      purchasePending: number | null;
+      trackingPending: number | null;
+    };
+  };
   health: {
     db: { status: HealthState; detail?: string };
     redis: { status: HealthState; detail?: string };
@@ -810,6 +830,38 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
     getCount("trend_signals", true),
     getCount("trend_candidates", true),
   ]);
+  const cjProofPayloadRow = productsRawExists
+    ? (
+        await runQuery(`
+          select raw_payload as cj_raw_payload
+          from products_raw
+          where lower(coalesce(supplier_key, '')) in ('cj', 'cj dropshipping', 'cjdropshipping')
+          order by snapshot_ts desc nulls last, id desc
+          limit 1
+        `)
+      )[0] ?? null
+    : null;
+  const cjProofState = readCjProofStateFromRawPayload(cjProofPayloadRow?.cj_raw_payload) ?? getCjProofStateSummary();
+  const cjProofBlockedCandidates = profitableCandidatesExists
+    ? toNum((await runQuery(`
+      select count(*)::int as count
+      from profitable_candidates
+      where lower(coalesce(supplier_key, '')) = 'cjdropshipping'
+        and (
+          upper(coalesce(listing_block_reason, '')) like '%CJ%'
+          or upper(coalesce(reason, '')) like '%CJ PROOF%'
+        )
+    `))[0]?.count)
+    : null;
+  const cjReadyCandidates = profitableCandidatesExists
+    ? toNum((await runQuery(`
+      select count(*)::int as count
+      from profitable_candidates
+      where lower(coalesce(supplier_key, '')) = 'cjdropshipping'
+        and upper(coalesce(decision_status, '')) = 'APPROVED'
+        and coalesce(listing_eligible, false) = true
+    `))[0]?.count)
+    : null;
 
   const listingStatuses = listingsExists
     ? await runQuery(`
@@ -1703,6 +1755,32 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
         `)
       )[0] ?? {}
     : {};
+  const cjPurchasePending = ordersExists
+    ? toNum((await runQuery(`
+      select count(*)::int as count
+      from orders o
+      where upper(coalesce(status, '')) in ('PURCHASE_APPROVED', 'READY_FOR_PURCHASE_REVIEW', 'PURCHASE_PLACED')
+        and exists (
+          select 1
+          from order_items oi
+          where oi.order_id = o.id
+            and lower(coalesce(oi.supplier_key, '')) = 'cjdropshipping'
+        )
+    `))[0]?.count)
+    : null;
+  const cjTrackingPending = ordersExists
+    ? toNum((await runQuery(`
+      select count(*)::int as count
+      from orders o
+      where upper(coalesce(status, '')) in ('TRACKING_PENDING', 'TRACKING_RECEIVED')
+        and exists (
+          select 1
+          from order_items oi
+          where oi.order_id = o.id
+            and lower(coalesce(oi.supplier_key, '')) = 'cjdropshipping'
+        )
+    `))[0]?.count)
+    : null;
 
   const recoveryBlockFilter = `
     (
@@ -2424,6 +2502,22 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
       detail: "Operator override is active: CJ auto-purchase flow is paused.",
     });
   }
+  if (cjProofState.orderCreate !== "PROVEN") {
+    futureOrdersAlerts.push({
+      id: "cj-order-create-unproven",
+      tone: "warning",
+      title: "CJ order-create remains unproven",
+      detail: "Auto-purchase must stay fail-closed for CJ until guarded live order-create proof succeeds.",
+    });
+  }
+  if (cjProofState.tracking !== "PROVEN") {
+    futureOrdersAlerts.push({
+      id: "cj-tracking-unproven",
+      tone: "warning",
+      title: "CJ tracking remains unproven",
+      detail: "Tracking sync stays operationally limited until a real CJ tracking number is observed and validated.",
+    });
+  }
 
   if (manualOverrideSnapshot.emergencyReadOnly) {
     publishingSafetyAlerts.push({
@@ -2623,6 +2717,25 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
 
   return {
     generatedAt: new Date().toISOString(),
+    cjProofState: {
+      summary: {
+        overall: cjProofState.overall,
+        auth: cjProofState.auth,
+        catalog: [cjProofState.product, cjProofState.variant, cjProofState.stock].every((value) => value === "PROVEN") ? "PROVEN" : "PARTIALLY_PROVEN",
+        freight: cjProofState.freight,
+        orderCreate: cjProofState.orderCreate,
+        orderDetail: cjProofState.orderDetail,
+        tracking: cjProofState.tracking,
+        blockingReason: getCjProofBlockingReason(cjProofState),
+        proofSource: cjProofState.proofSource,
+      },
+      exposure: {
+        blockedCandidates: cjProofBlockedCandidates,
+        readyCandidates: cjReadyCandidates,
+        purchasePending: cjPurchasePending,
+        trackingPending: cjTrackingPending,
+      },
+    },
     health: {
       db: dbHealth,
       redis: redisHealth,

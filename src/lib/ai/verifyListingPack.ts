@@ -8,6 +8,14 @@ import {
   validateVerifiedListingPackOutput,
 } from "./schemas";
 import { sanitizeTitleForEbay } from "@/lib/listings/optimizeListingTitle";
+import {
+  getCjProofBlockingReason,
+  getCjProofConfidenceCap,
+  getCjProofExplanation,
+  getCjProofRiskFlags,
+  isCjSupplierKey,
+  readCjProofStateFromRawPayload,
+} from "@/lib/suppliers/cj";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
@@ -481,6 +489,10 @@ async function callOpenAi(prompt: string): Promise<unknown> {
 
 export async function verifyListingPack(input: VerifyListingPackInput): Promise<VerifyListingPackResult> {
   const evidence = buildEvidenceCorpus(input);
+  const cjProofState = isCjSupplierKey(cleanString((input.supplierRawPayload as Record<string, unknown> | null)?.supplierKey))
+    ? readCjProofStateFromRawPayload(input.supplierRawPayload)
+    : null;
+  const cjProofBlockingReason = cjProofState ? getCjProofBlockingReason(cjProofState) : null;
   try {
     const prompt = buildVerifyEbayListingPrompt({
       generatedPack: input.generatedPack,
@@ -509,13 +521,22 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
 
     return {
       ok: true,
-      pack: reconciled.data,
+      pack: {
+        ...reconciled.data,
+        risk_flags: Array.from(new Set([...reconciled.data.risk_flags, ...(cjProofState ? getCjProofRiskFlags(cjProofState) : [])])),
+        verification_confidence: cjProofState
+          ? Math.min(reconciled.data.verification_confidence, getCjProofConfidenceCap(cjProofState))
+          : reconciled.data.verification_confidence,
+        review_required: reconciled.data.review_required || Boolean(cjProofBlockingReason),
+      },
       diagnostics: {
         schemaPassed: true,
         correctedFields: reconciled.data.corrected_fields,
         removedClaims: reconciled.data.removed_claims,
         riskFlags: reconciled.data.risk_flags,
         evidenceCount: evidence.summary.length,
+        cjProofBlockingReason,
+        cjProofExplanation: cjProofState ? getCjProofExplanation(cjProofState) : null,
       },
     };
   } catch (error) {
@@ -534,7 +555,14 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
 
     return {
       ok: true,
-      pack: fallback.data,
+      pack: {
+        ...fallback.data,
+        risk_flags: Array.from(new Set([...fallback.data.risk_flags, ...(cjProofState ? getCjProofRiskFlags(cjProofState) : [])])),
+        verification_confidence: cjProofState
+          ? Math.min(fallback.data.verification_confidence, getCjProofConfidenceCap(cjProofState))
+          : fallback.data.verification_confidence,
+        review_required: fallback.data.review_required || Boolean(cjProofBlockingReason),
+      },
       diagnostics: {
         schemaPassed: true,
         fallbackApplied: true,
@@ -543,6 +571,8 @@ export async function verifyListingPack(input: VerifyListingPackInput): Promise<
         removedClaims: fallback.data.removed_claims,
         riskFlags: fallback.data.risk_flags,
         evidenceCount: evidence.summary.length,
+        cjProofBlockingReason,
+        cjProofExplanation: cjProofState ? getCjProofExplanation(cjProofState) : null,
       },
     };
   }

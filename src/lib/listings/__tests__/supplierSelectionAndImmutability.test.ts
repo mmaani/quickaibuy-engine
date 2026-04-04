@@ -65,7 +65,6 @@ function buildRow(overrides: Partial<Row>): Row {
     estimatedProfit: 15,
     marginPct: 40,
     shippingEstimates: [],
-    supplierRawPayload,
     supplierPrice: 8,
     ...rowOverrides,
     supplierRawPayload,

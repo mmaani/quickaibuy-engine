@@ -614,6 +614,13 @@ export async function runProfitEngine(input?: {
       marketPriceSeries.length ? marketPriceSeries : [marketPrice],
       marketPrice
     );
+    const cjProofState =
+      normalizedSupplierKey === "cjdropshipping" ? readCjProofStateFromRawPayload(supplierRawPayload) : null;
+    const cjProofBlockingReason =
+      normalizedSupplierKey === "cjdropshipping" ? getCjProofBlockingReason(cjProofState) : null;
+    const cjProofRiskFlags =
+      normalizedSupplierKey === "cjdropshipping" ? getCjProofRiskFlags(cjProofState) : [];
+    const shippingUnsafe = Boolean(shippingResolution.errorReason || shippingResolution.proofBlockingReason);
     const pipeline = evaluateProductPipelinePolicy({
       title: row.supplierTitle,
       marketplaceTitle: row.marketplaceTitle,
@@ -693,9 +700,10 @@ export async function runProfitEngine(input?: {
     )
       ? 0.15
       : 0;
+    const cjProofPenalty = cjProofState ? Math.min(0.22, cjProofRiskFlags.length * 0.04) : 0;
     const supplierReliabilityScore = Math.max(
       0,
-      Math.min(1, sourceReliabilityComponent * 0.4 + availabilityComponent * 0.45 + (pipeline.score / 100) * 0.15 - rateLimitPressurePenalty)
+      Math.min(1, sourceReliabilityComponent * 0.4 + availabilityComponent * 0.45 + (pipeline.score / 100) * 0.15 - rateLimitPressurePenalty - cjProofPenalty)
     );
     const supplierPolicy = shouldRejectSupplierEarly({
       supplierKey: normalizedSupplierKey,
@@ -726,13 +734,6 @@ export async function runProfitEngine(input?: {
       shippingConfidenceScore: shippingResolution.sourceConfidence ?? 0.4,
       marketNoiseRatio: marketDepth.noiseRatio,
     });
-    const shippingUnsafe = Boolean(shippingResolution.errorReason);
-    const cjProofState =
-      normalizedSupplierKey === "cjdropshipping" ? readCjProofStateFromRawPayload(supplierRawPayload) : null;
-    const cjProofBlockingReason =
-      normalizedSupplierKey === "cjdropshipping" ? getCjProofBlockingReason(cjProofState) : null;
-    const cjProofRiskFlags =
-      normalizedSupplierKey === "cjdropshipping" ? getCjProofRiskFlags(cjProofState) : [];
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const pipelineHardBlocked = pipeline.flags.some((flag) => PIPELINE_HARD_BLOCK_FLAGS.has(flag));
     const matchRoutingStatus = getMatchRoutingStatus(matchConfidence);
@@ -769,7 +770,7 @@ export async function runProfitEngine(input?: {
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
       : shippingResolution.errorReason
-      ? `shipping intelligence unresolved: ${shippingResolution.errorReason}`
+      ? `shipping intelligence unresolved: ${shippingResolution.proofBlockingReason ?? shippingResolution.errorReason}`
       : cjProofBlockingReason
       ? cjProofBlockingReason
       : supplierPolicy.reject
@@ -892,8 +893,11 @@ export async function runProfitEngine(input?: {
         sourceConfidence: shippingResolution.sourceConfidence,
         sourceType: shippingResolution.sourceType,
         shippingErrorReason: shippingResolution.errorReason,
+        shippingProofBlockingReason: shippingResolution.proofBlockingReason,
+        shippingProofRiskFlags: shippingResolution.proofRiskFlags ?? [],
         shippingDriftDetected,
       },
+      cjProofState,
       supplierPolicy: {
         stockClass: supplierPolicy.stockClass,
         stockConfidence: supplierPolicy.stockConfidence,
@@ -934,7 +938,7 @@ export async function runProfitEngine(input?: {
       : supplierDriftExceeded
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
       : shippingResolution.errorReason
-      ? `shipping intelligence failed | reason ${shippingResolution.errorReason} | mode ${shippingResolution.resolutionMode} | quote_age_hours ${shippingResolution.quoteAgeHours ?? "n/a"} | destination ${destinationCountry}`
+      ? `shipping intelligence failed | reason ${shippingResolution.proofBlockingReason ?? shippingResolution.errorReason} | mode ${shippingResolution.resolutionMode} | quote_age_hours ${shippingResolution.quoteAgeHours ?? "n/a"} | destination ${destinationCountry}`
       : cjProofBlockingReason
       ? `CJ proof gate blocked | ${cjProofBlockingReason}`
       : supplierPolicy.reject
@@ -1075,6 +1079,8 @@ export async function runProfitEngine(input?: {
         marketplaceTitle: String(option.row.marketplaceTitle ?? ""),
         ambiguityScore,
         estimatedProfitUsd: option.estimatedProfit,
+        supplierKey: option.normalizedSupplierKey,
+        supplierRawPayload: option.row.supplierRawPayload,
       };
     })
   );

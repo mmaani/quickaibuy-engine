@@ -1,4 +1,4 @@
-import { and, desc, eq, max } from "drizzle-orm";
+import { and, desc, eq, max, sql } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { db } from "@/lib/db";
 import { orderItems, orders, supplierOrders } from "@/lib/db/schema";
@@ -41,9 +41,26 @@ async function assertSupplierMatchesPinnedOrderLinkage(input: { orderId: string;
     .from(orderItems)
     .where(eq(orderItems.orderId, input.orderId));
 
+  const supplierRawPayloads = normalizeSupplierKey(input.supplierKey) === "cjdropshipping"
+    ? await db.execute<{ rawPayload: unknown }>(sql`
+        SELECT latest_pr.raw_payload AS "rawPayload"
+        FROM order_items oi
+        LEFT JOIN LATERAL (
+          SELECT pr.raw_payload
+          FROM products_raw pr
+          WHERE lower(pr.supplier_key) = lower(oi.supplier_key)
+            AND pr.supplier_product_id = oi.supplier_product_id
+          ORDER BY pr.snapshot_ts DESC, pr.id DESC
+          LIMIT 1
+        ) latest_pr ON TRUE
+        WHERE oi.order_id = ${input.orderId}
+          AND lower(coalesce(oi.supplier_key, '')) = 'cjdropshipping'
+      `)
+    : null;
   const blockReason = evaluateSupplierSelectionAgainstPinnedLinkage({
     orderItemLinkages: rows,
     requestedSupplierKey: input.supplierKey,
+    supplierRawPayloads: supplierRawPayloads?.rows?.map((row) => row.rawPayload) ?? [],
   });
   if (blockReason) {
     if (blockReason === "SUPPLIER_SUBSTITUTION_BLOCKED") {
@@ -54,6 +71,9 @@ async function assertSupplierMatchesPinnedOrderLinkage(input: { orderId: string;
     }
     if (blockReason === "SUPPLIER_LINK_NOT_LOCKED") {
       throw new Error("SUPPLIER_LINK_NOT_LOCKED");
+    }
+    if (blockReason === "SUPPLIER_PROOF_REQUIRED") {
+      throw new Error("SUPPLIER_PROOF_REQUIRED: CJ proof-state is not purchase-safe for pinned order items");
     }
     throw new Error(`${blockReason}: order has no pinned order items`);
   }

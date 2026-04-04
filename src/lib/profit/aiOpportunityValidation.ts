@@ -4,12 +4,16 @@ const MAX_AI_VALIDATIONS_PER_RUN = 3;
 const AMBIGUITY_MIN = 0.45;
 const AMBIGUITY_MAX = 0.72;
 
+import { getCjProofBlockingReason, getCjProofExplanation, isCjSupplierKey, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
+
 type ValidationRequest = {
   candidateKey: string;
+  supplierKey?: string | null;
   supplierTitle: string;
   marketplaceTitle: string;
   ambiguityScore: number;
   estimatedProfitUsd: number;
+  supplierRawPayload?: unknown;
 };
 
 export type AiOpportunityValidation = {
@@ -45,11 +49,26 @@ function aiEnabled(): boolean {
 }
 
 function shouldValidate(input: ValidationRequest): boolean {
+  if (isCjSupplierKey(input.supplierKey)) {
+    const snapshot = readCjProofStateFromRawPayload(input.supplierRawPayload);
+    if (getCjProofBlockingReason(snapshot)) return false;
+  }
   return (
     input.ambiguityScore >= AMBIGUITY_MIN &&
     input.ambiguityScore <= AMBIGUITY_MAX &&
     input.estimatedProfitUsd >= 12
   );
+}
+
+function getSkipExplanation(input: ValidationRequest): string {
+  if (isCjSupplierKey(input.supplierKey)) {
+    const snapshot = readCjProofStateFromRawPayload(input.supplierRawPayload);
+    const proofBlock = getCjProofBlockingReason(snapshot);
+    if (proofBlock) {
+      return `Skipped AI validation: ${getCjProofExplanation(snapshot)}`;
+    }
+  }
+  return "Skipped AI validation: deterministic confidence not ambiguous/high-value enough.";
 }
 
 export async function validateAmbiguousTopCandidates(
@@ -71,7 +90,7 @@ export async function validateAmbiguousTopCandidates(
         productFormAligned: null,
         packSpecMismatch: null,
         confidence: null,
-        explanation: "Skipped AI validation: deterministic confidence not ambiguous/high-value enough.",
+        explanation: getSkipExplanation(input),
         source: "skipped",
       };
     }

@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { getShippingConfig } from "@/lib/pricing/shippingConfig";
 import { inferShippingFromEvidence, type SupplierShippingProfile } from "@/lib/pricing/shippingInference";
 import { resolveShipFromOrigin, type OriginValidity } from "@/lib/products/shipFromOrigin";
+import { getCjProofBlockingReason, getCjProofRiskFlags, isCjSupplierKey, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 export type ShippingResolutionMode =
   | "EXACT_QUOTE"
@@ -44,6 +45,8 @@ export type ShippingResolution = {
   shippingTransparencyState: "PRESENT" | "MISSING";
   shippingValidity: "PASS" | "BLOCKED";
   errorReason: ShippingResolutionError;
+  proofBlockingReason?: string | null;
+  proofRiskFlags?: string[];
 };
 
 type SupplierShippingQuoteRow = {
@@ -95,6 +98,9 @@ export async function resolveShippingCost(input: {
   const config = getShippingConfig();
   const destinationCountry = input.destinationCountry.toUpperCase();
   const now = new Date();
+  const cjProofState = isCjSupplierKey(input.supplierKey) ? readCjProofStateFromRawPayload(input.rawPayload) : null;
+  const cjProofBlockingReason = isCjSupplierKey(input.supplierKey) ? getCjProofBlockingReason(cjProofState) : null;
+  const cjProofRiskFlags = isCjSupplierKey(input.supplierKey) ? getCjProofRiskFlags(cjProofState) : [];
 
   const rowsResult = await db.execute<SupplierShippingQuoteRow>(sql`
     SELECT
@@ -281,9 +287,14 @@ export async function resolveShippingCost(input: {
       shippingTransparencyState,
       shippingValidity: "BLOCKED",
       errorReason: "MISSING_SHIPPING_INTELLIGENCE",
+      proofBlockingReason: cjProofBlockingReason,
+      proofRiskFlags: cjProofRiskFlags,
     };
   }
 
+  if (isCjSupplierKey(input.supplierKey) && (!cjProofState || cjProofState.freight !== "PROVEN")) {
+    errorReason = "SHIPPING_COST_UNRESOLVED";
+  }
   if (!originCountry || originValidity === "WEAK_OR_UNRESOLVED") errorReason = "MISSING_SHIP_FROM_COUNTRY";
   if (!errorReason && shippingTransparencyState === "MISSING") {
     errorReason = "MISSING_SHIPPING_TRANSPARENCY";
@@ -325,5 +336,7 @@ export async function resolveShippingCost(input: {
     shippingTransparencyState,
     shippingValidity: errorReason ? "BLOCKED" : "PASS",
     errorReason,
+    proofBlockingReason: cjProofBlockingReason,
+    proofRiskFlags: cjProofRiskFlags,
   };
 }
