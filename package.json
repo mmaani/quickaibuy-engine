@@ -59,7 +59,8 @@
     "ops:listing-phase1-recheck": "node --import tsx scripts/run_listing_phase1_recheck.ts",
     "enqueue:listing-optimize": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/enqueue_listing_optimize.ts",
     "worker:railway-env:build": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/build_railway_worker_env.ts",
-    "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts"
+    "worker:railway-env:validate": "NODE_OPTIONS=--no-deprecation node --import tsx scripts/validate_railway_worker_env.ts",
+    "check:cj-order-create-proof": "node --import tsx scripts/check_cj_order_create_proof.ts"
   },
   "dependencies": {
     "bullmq": "^5.70.2",

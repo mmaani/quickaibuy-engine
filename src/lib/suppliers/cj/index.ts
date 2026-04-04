@@ -3,6 +3,7 @@ export * from "./client";
 export * from "./errors";
 export * from "./logistics";
 export * from "./orders";
+export * from "./orderProofHarness";
 export * from "./policy";
 export * from "./proof";
 export * from "./products";
