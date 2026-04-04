@@ -33,6 +33,7 @@ type BubblewrapProbe = {
   installed: boolean;
   version: string | null;
   runnable: boolean;
+  blockedByContainerPolicy: boolean;
   reason: string;
   detail?: string;
 };
@@ -76,29 +77,32 @@ function parseProbeResult(stdout: string): ControlPageProbeResult {
   };
 }
 
-async function requestStatus(url: string, dotenvPath: string, timeoutMs: number): Promise<ControlPageProbeResult> {
+async function requestStatus(url: string, timeoutMs: number): Promise<ControlPageProbeResult> {
   const { stdout } = await execFileAsync(
-    "bash",
+    "curl",
     [
-      "-lc",
-      "set -a; source \"$DOTENV_PATH\"; set +a; curl -s -o /dev/null -w 'HTTP_STATUS:%{http_code}\n' -u \"$REVIEW_CONSOLE_USERNAME:$REVIEW_CONSOLE_PASSWORD\" --max-time \"$MAX_TIME\" \"$PROBE_URL\"; printf 'CURL_EXIT:%s\n' \"$?\"",
+      "-s",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "-u",
+      `${process.env.REVIEW_CONSOLE_USERNAME ?? ""}:${process.env.REVIEW_CONSOLE_PASSWORD ?? ""}`,
+      "--max-time",
+      String(Math.max(1, Math.ceil(timeoutMs / 1000))),
+      url,
     ],
-    {
-      timeout: timeoutMs,
-      env: {
-        ...process.env,
-        DOTENV_PATH: dotenvPath,
-        MAX_TIME: String(Math.max(1, Math.ceil(timeoutMs / 1000))),
-        PROBE_URL: url,
-      },
-    }
+    { timeout: timeoutMs }
   );
-  return parseProbeResult(stdout);
-}
 
+  const statusText = String(stdout ?? "").trim();
+  return {
+    curlExitCode: 0,
+    httpStatus: /^\d{3}$/.test(statusText) ? Number(statusText) : null,
+  };
+}
 async function probeControlPage(
-  reviewConsole: NonNullable<ReturnType<typeof getReviewConsoleCredentials>> | null,
-  dotenvPath: string
+  reviewConsole: NonNullable<ReturnType<typeof getReviewConsoleCredentials>> | null
 ): Promise<ControlPageProbe> {
   const baseUrl = String(process.env.CODESPACE_LOCAL_APP_URL ?? "http://127.0.0.1:3000").trim().replace(/\/+$/, "");
   const url = `${baseUrl}/admin/control`;
@@ -117,7 +121,6 @@ async function probeControlPage(
   try {
     const result = await requestStatus(
       url,
-      dotenvPath,
       Number(process.env.CODESPACE_CONTROL_PAGE_TIMEOUT_MS ?? 20000)
     );
 
@@ -347,6 +350,7 @@ async function probeBubblewrap(): Promise<BubblewrapProbe> {
         installed: true,
         version,
         runnable: true,
+        blockedByContainerPolicy: false,
         reason: "bubblewrap is installed and namespace creation succeeded.",
       };
     } catch (error) {
@@ -361,8 +365,9 @@ async function probeBubblewrap(): Promise<BubblewrapProbe> {
         installed: true,
         version,
         runnable: false,
+        blockedByContainerPolicy: namespaceBlocked,
         reason: namespaceBlocked
-          ? "bubblewrap is installed but namespace creation is blocked by the workspace/container policy."
+          ? "bubblewrap is installed but namespace creation is blocked by the workspace/container policy; no repo-side fix remains, so rebuild the Codespace or use a runtime that allows unprivileged user namespaces."
           : "bubblewrap is installed but the readiness probe failed.",
         detail,
       };
@@ -376,6 +381,7 @@ async function probeBubblewrap(): Promise<BubblewrapProbe> {
       installed: false,
       version: null,
       runnable: false,
+      blockedByContainerPolicy: false,
       reason: missing
         ? "bubblewrap is not installed in this workspace image."
         : "bubblewrap version probe failed.",
@@ -422,7 +428,7 @@ async function main() {
   const queue = getQueueNamespaceDiagnostics();
   const reviewConsole = getReviewConsoleCredentials();
   const runtimeDiagnostics = await getRuntimeDiagnostics({ includeConnectivity: true });
-  const controlPageProbe = await probeControlPage(reviewConsole, dotenvPath);
+  const controlPageProbe = await probeControlPage(reviewConsole);
   const bubblewrap = await probeBubblewrap();
   const checks: CheckResult[] = [];
 
@@ -497,7 +503,14 @@ async function main() {
           reason: bubblewrap.reason,
           detail: bubblewrap.version ?? undefined,
         }
-      : {
+      : bubblewrap.installed && bubblewrap.blockedByContainerPolicy
+        ? {
+            check: "Codex sandbox namespace readiness",
+            status: "WARN",
+            reason: bubblewrap.reason,
+            detail: bubblewrap.detail ?? bubblewrap.version ?? undefined,
+          }
+        : {
           check: "Codex sandbox namespace readiness",
           status: "FAILED",
           reason: bubblewrap.reason,

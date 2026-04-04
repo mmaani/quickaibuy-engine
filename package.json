@@ -7,7 +7,7 @@
     "env:prod": "node scripts/manage_env.mjs prod",
     "env:status": "node scripts/manage_env.mjs status",
     "db:status": "node scripts/db_target_cli.mjs status",
-    "codespace:check": "node --import tsx scripts/check_codespace_runtime.ts",
+    "codespace:check": "NODE_ENV=production node --import tsx scripts/check_codespace_runtime.ts",
     "scripts:check": "node --import tsx scripts/check_scripts_catalog.ts",
     "scripts:smoke": "node --import tsx scripts/check_scripts_runtime_smoke.ts",
     "db:assert-dev": "node scripts/db_target_cli.mjs assert-dev",
