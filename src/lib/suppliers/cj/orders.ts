@@ -27,7 +27,7 @@ function pickLookupId(row: Record<string, unknown> | null): string | null {
 function shouldResolveOrderDetailFallback(error: unknown): boolean {
   return (
     error instanceof CjError &&
-    (error.category === "UPSTREAM_UNAVAILABLE" || error.category === "PARAM_INVALID" || error.category === "UNKNOWN")
+    (error.category === "UPSTREAM_DOWN" || error.category === "ORDER_FAILED" || error.category === "UNKNOWN")
   );
 }
 

@@ -95,7 +95,7 @@ async function acquireAuthRequestSlot(): Promise<void> {
 }
 
 function shouldRetryAuthError(error: unknown): boolean {
-  return error instanceof CjError && (error.category === "RATE_LIMITED" || error.category === "UPSTREAM_UNAVAILABLE");
+  return error instanceof CjError && (error.category === "RATE_LIMITED" || error.category === "UPSTREAM_DOWN");
 }
 
 async function requestAuth(mode: "getAccessToken" | "refreshAccessToken", payload: Record<string, string>) {

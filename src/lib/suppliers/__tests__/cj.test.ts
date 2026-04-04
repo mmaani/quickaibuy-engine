@@ -6,6 +6,9 @@ import {
   cjRequest,
   CjError,
   createCjOrder,
+  getCjProofRiskFlags,
+  getCjProofStateSummary,
+  readCjProofStateFromRawPayload,
   extractTrackingCarrier,
   extractTrackingNumber,
   getCjOrderDetail,
@@ -253,4 +256,32 @@ test("runtime failure classifier marks CJ rate limits as retryable upstream inci
   assert.equal(classified.class, "infrastructure");
   assert.equal(classified.service, "runtime");
   assert.equal(classified.retryable, true);
+});
+
+
+test("CJ proof-state summary stays fail-closed for order creation", () => {
+  const summary = getCjProofStateSummary({
+    raw: null,
+    qpsLimit: 100,
+    quotaLimit: 1000,
+    quotaRemaining: 997,
+    userLevel: null,
+    salesLevel: null,
+    sandbox: false,
+    operationalState: "verified-like",
+  });
+
+  assert.equal(summary.auth, "PROVEN");
+  assert.equal(summary.freight, "PROVEN");
+  assert.equal(summary.orderCreate, "UNPROVEN");
+  assert.equal(summary.orderDetail, "PARTIALLY_PROVEN");
+  assert.equal(summary.tracking, "UNPROVEN");
+  assert.ok(getCjProofRiskFlags(summary).includes("CJ_ORDER_CREATE_UNPROVEN"));
+  assert.ok(getCjProofRiskFlags(summary).includes("CJ_TRACKING_UNPROVEN"));
+
+  const parsed = readCjProofStateFromRawPayload({ cjProofState: summary });
+  assert.equal(parsed?.orderCreate, "UNPROVEN");
+  assert.equal(parsed?.orderDetail, "PARTIALLY_PROVEN");
+  assert.equal(parsed?.stock, "PROVEN");
+  assert.equal(parsed?.tracking, "UNPROVEN");
 });

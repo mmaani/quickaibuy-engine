@@ -961,6 +961,11 @@ export default async function ReviewPage({
                       />
                       <KeyValue label="Supplier Policy Reason" value={detail.candidate.supplierPolicyReason ?? "-"} />
                       <KeyValue label="Supplier Policy Message" value={detail.candidate.supplierPolicyMessage ?? "-"} />
+                      <KeyValue label="CJ Proof Overall" value={detail.candidate.cjProofOverall ?? "-"} />
+                      <KeyValue label="CJ Order Create Proof" value={detail.candidate.cjProofOrderCreate ?? "-"} />
+                      <KeyValue label="CJ Order Detail Proof" value={detail.candidate.cjProofOrderDetail ?? "-"} />
+                      <KeyValue label="CJ Tracking Proof" value={detail.candidate.cjProofTracking ?? "-"} />
+                      <KeyValue label="CJ Proof Codes" value={detail.candidate.cjProofCodes.length ? detail.candidate.cjProofCodes.join(", ") : "-"} />
                       <KeyValue label="AI Validation" value={detail.candidate.aiValidationUsed ? `used (${detail.candidate.aiValidationStatus ?? "unknown"})` : "not used"} />
                       <KeyValue label="Match Confidence" value={detail.match?.confidence?.toFixed(4) ?? "-"} />
                       <KeyValue label="Calculated" value={formatDateTime(detail.candidate.calcTs)} />

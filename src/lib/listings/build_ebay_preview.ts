@@ -13,6 +13,11 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function extractCjProofState(rawPayload: unknown): Record<string, unknown> | null {
+  const payload = objectOrNull(rawPayload);
+  return objectOrNull(payload?.cjProofState);
+}
+
 function extractMatchPenalties(evidence: unknown): Record<string, number> | null {
   const root = objectOrNull(evidence);
   const penalties = objectOrNull(root?.penalties);
@@ -264,6 +269,7 @@ export async function buildEbayPreview(input: ListingPreviewInput): Promise<List
       shippingSignal: shipFromMetadata.shippingSignal,
       shippingConfidence: shipFromMetadata.shippingConfidence,
       shippingStability: shipFromMetadata.shippingStability,
+      cjProofState: extractCjProofState(input.supplierRawPayload),
     },
     matchedMarketplace: {
       marketplaceKey: input.marketplaceKey,

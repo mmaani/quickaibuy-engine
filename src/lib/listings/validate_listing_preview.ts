@@ -1,4 +1,5 @@
 import type { ListingPreviewOutput } from "./types";
+import { getCjProofBlockingReason, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 function isHttpUrl(value: unknown): boolean {
   return typeof value === "string" && /^https?:\/\//i.test(value.trim());
@@ -101,6 +102,16 @@ export function validateListingPreview(preview: ListingPreviewOutput) {
     if (!String(source?.candidateId ?? "").trim()) errors.push("ebay source candidateId required");
     if (!String(source?.supplierKey ?? "").trim()) errors.push("ebay source supplierKey required");
     if (!String(source?.supplierProductId ?? "").trim()) errors.push("ebay source supplierProductId required");
+    const supplierKey = String(source?.supplierKey ?? "").trim().toLowerCase();
+    if (supplierKey === "cjdropshipping") {
+      const cjProofState = readCjProofStateFromRawPayload({ cjProofState: source?.cjProofState ?? null });
+      const cjProofBlockingReason = getCjProofBlockingReason(cjProofState);
+      if (!cjProofState) {
+        errors.push("ebay CJ source proof-state required");
+      } else if (cjProofBlockingReason) {
+        errors.push(`ebay CJ proof gate failed: ${cjProofBlockingReason}`);
+      }
+    }
     if (!String(matchedMarketplace?.marketplaceListingId ?? "").trim()) {
       errors.push("ebay matched marketplace listing id required");
     }

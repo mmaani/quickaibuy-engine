@@ -1,4 +1,5 @@
 import { computeSupplierIntelligenceSignal, shouldRejectSupplierEarly } from "@/lib/suppliers/intelligence";
+import { getCjProofBlockingReason, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 type SupplierSelectionRow = {
   candidateId: string;
@@ -37,6 +38,7 @@ function parseSupplierPayload(row: SupplierSelectionRow): Record<string, unknown
 
 export function computeSupplierSelectionScore(row: SupplierSelectionRow): number {
   const payload = parseSupplierPayload(row);
+  const normalizedSupplierKey = String(row.supplierKey ?? payload?.supplierKey ?? "").trim().toLowerCase();
   const supplierPrice = toPositiveNumber(row.supplierPrice) ?? 0;
   const marginPct = toNum(row.marginPct) ?? 0;
   const mediaQuality = toNum(payload?.mediaQualityScore) ?? 0.5;
@@ -66,6 +68,8 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
       ? 0
       : Math.max(0, Math.min(0.22, (trustScore > 1 ? trustScore / 100 : trustScore) * 0.22));
   const trustPenalty = trustBand === "BLOCK" ? 0.2 : trustBand === "REVIEW" ? 0.08 : 0;
+  const cjProofState = normalizedSupplierKey === "cjdropshipping" ? readCjProofStateFromRawPayload(payload) : null;
+  const cjProofBlockingReason = normalizedSupplierKey === "cjdropshipping" ? getCjProofBlockingReason(cjProofState) : null;
   const intelligence = computeSupplierIntelligenceSignal({
     supplierKey: String(row.supplierKey ?? payload?.supplierKey ?? ""),
     destinationCountry,
@@ -94,6 +98,9 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   if (earlyReject.reject) {
     return Number((-1 - intelligence.reliabilityScore).toFixed(6));
   }
+  if (normalizedSupplierKey === "cjdropshipping" && cjProofBlockingReason) {
+    return Number((-1.25 - intelligence.reliabilityScore).toFixed(6));
+  }
   const supplierIntelligenceComponent = intelligence.reliabilityScore * 0.32;
   const originComponent = intelligence.originAvailabilityRate * 0.18;
   const shippingComponent = intelligence.shippingTransparencyRate * 0.14;
@@ -101,6 +108,10 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
   const rateLimitPenalty = intelligence.rateLimitPressure * 0.14;
   const aliExpressPenalty = intelligence.shouldDeprioritize ? 0.22 : 0;
   const lowStockPenalty = earlyReject.warning ? 0.18 : 0;
+  const cjLifecyclePenalty =
+    normalizedSupplierKey === "cjdropshipping"
+      ? (cjProofState?.orderDetail === "PROVEN" ? 0 : 0.05) + (cjProofState?.tracking === "PROVEN" ? 0 : 0.05)
+      : 0;
 
   return Number(
     (
@@ -115,6 +126,7 @@ export function computeSupplierSelectionScore(row: SupplierSelectionRow): number
       shippingComponent +
       usPriorityComponent -
       lowStockPenalty -
+      cjLifecyclePenalty -
       trustPenalty -
       shippingPenalty -
       aliExpressPenalty

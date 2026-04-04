@@ -16,6 +16,7 @@ import {
   type SupplierTelemetrySignal,
 } from "@/lib/products/supplierQuality";
 import { readSupplierPolicySurface } from "@/lib/suppliers/policySurface";
+import { getCjProofRiskFlags, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 export const REVIEW_ROUTE = "/admin/review";
 export const REVIEW_STATUSES = ["PENDING", "APPROVED", "MANUAL_REVIEW", "REJECTED", "RECHECK", "LISTED", "EXPIRED"] as const;
@@ -54,6 +55,12 @@ export const BLOCKING_RISK_FLAGS = new Set([
   "SUPPLIER_SIGNAL_INSUFFICIENT",
   "UNKNOWN_AVAILABILITY",
   "LOW_CONFIDENCE_AVAILABILITY",
+  "CJ_AUTH_UNPROVEN",
+  "CJ_PROOF_STATE_MISSING",
+  "CJ_FREIGHT_UNPROVEN",
+  "CJ_STOCK_UNPROVEN",
+  "CJ_ORDER_CREATE_UNPROVEN",
+  "CJ_ORDER_DETAIL_UNPROVEN",
 ]);
 
 type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -125,6 +132,11 @@ export type ReviewListItem = {
   shippingOriginCountry: string | null;
   shippingOriginConfidence: number | null;
   shippingOriginValidity: string | null;
+  cjProofOverall: string | null;
+  cjProofOrderCreate: string | null;
+  cjProofOrderDetail: string | null;
+  cjProofTracking: string | null;
+  cjProofCodes: string[];
   nominalProfit: number | null;
   reliabilityAdjustedProfit: number | null;
   aiValidationUsed: boolean;
@@ -569,6 +581,8 @@ function deriveRiskFlags(row: CandidateRow): string[] {
   const canonicalEvidence = canonicalEvidenceFromFees(row.estimated_fees);
   const policySurface = readSupplierPolicySurface(row.estimated_fees);
   const joinedTitle = `${row.supplier_title ?? ""} ${row.marketplace_title ?? ""}`.trim();
+  const normalizedSupplierKey = String(row.supplier_key ?? "").trim().toLowerCase();
+  const cjProofState = normalizedSupplierKey === "cjdropshipping" ? readCjProofStateFromRawPayload(row.latest_supplier_raw_payload) : null;
 
   if (confidence != null && confidence < LOW_MATCH_CONFIDENCE_THRESHOLD) {
     flags.add("LOW_MATCH_CONFIDENCE");
@@ -705,6 +719,11 @@ function deriveRiskFlags(row: CandidateRow): string[] {
     flags.delete("MEDIA_PRESENT_QUALITY_WEAK");
   }
 
+  if (normalizedSupplierKey === "cjdropshipping") {
+    const cjFlags = getCjProofRiskFlags(cjProofState);
+    for (const flag of cjFlags) flags.add(flag);
+  }
+
   return Array.from(flags);
 }
 
@@ -811,6 +830,10 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
   const availabilityConfidence = availability.confidence;
   const riskFlags = deriveRiskFlags(row);
   const policySurface = readSupplierPolicySurface(row.estimated_fees);
+  const cjProofState =
+    String(row.supplier_key ?? "").trim().toLowerCase() === "cjdropshipping"
+      ? readCjProofStateFromRawPayload(row.latest_supplier_raw_payload)
+      : null;
   const eligibility = computeListingEligibility({
     decisionStatus: row.decision_status,
     estimatedProfit,
@@ -878,6 +901,11 @@ function mapRowToListItem(row: CandidateRow): ReviewListItem {
     shippingOriginCountry: policySurface.shippingOriginCountry,
     shippingOriginConfidence: policySurface.shippingOriginConfidence,
     shippingOriginValidity: policySurface.shippingOriginValidity,
+    cjProofOverall: cjProofState?.overall ?? null,
+    cjProofOrderCreate: cjProofState?.orderCreate ?? null,
+    cjProofOrderDetail: cjProofState?.orderDetail ?? null,
+    cjProofTracking: cjProofState?.tracking ?? null,
+    cjProofCodes: cjProofState?.codes ?? [],
     nominalProfit: toNumber(row.nominal_profit),
     reliabilityAdjustedProfit: toNumber(row.reliability_adjusted_profit),
     aiValidationUsed: Boolean(row.ai_validation_used),

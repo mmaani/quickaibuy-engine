@@ -5,6 +5,7 @@ import { evaluatePinnedSupplierSafety, normalizeSupplierStockStatus } from "@/li
 import { hasExactPinnedSupplierIdentityMatch } from "./pinnedSupplierIdentity";
 import { createOrderEvent } from "./orderEvents";
 import { getAdminOrderDetail, type AdminOrderDetail } from "./getAdminOrdersPageData";
+import { getCjProofBlockingReason, isCjProofPurchaseSafe, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 export type OrderPurchaseSafetyStatusCode =
   | "VALIDATION_NEEDED"
@@ -12,6 +13,7 @@ export type OrderPurchaseSafetyStatusCode =
   | "BLOCKED_STALE_DATA"
   | "BLOCKED_SUPPLIER_DRIFT"
   | "BLOCKED_ECONOMICS_OUT_OF_BOUNDS"
+  | "BLOCKED_CJ_PROOF_REQUIRED"
   | "MANUAL_REVIEW_REQUIRED"
   | "READY_FOR_PURCHASE_REVIEW";
 
@@ -85,6 +87,15 @@ function statusFromReasons(reasons: string[]): OrderPurchaseSafetyStatusCode {
     reasons.includes("MISSING_FEE_ASSUMPTIONS");
   if (hasEconomicsBlock) return "BLOCKED_ECONOMICS_OUT_OF_BOUNDS";
 
+  const hasCjProofBlock =
+    reasons.includes("CJ_PROOF_STATE_MISSING") ||
+    reasons.includes("CJ_FREIGHT_UNPROVEN") ||
+    reasons.includes("CJ_STOCK_UNPROVEN") ||
+    reasons.includes("CJ_ORDER_CREATE_UNPROVEN") ||
+    reasons.includes("CJ_ORDER_DETAIL_UNPROVEN") ||
+    reasons.includes("CJ_PROOF_PURCHASE_BLOCK");
+  if (hasCjProofBlock) return "BLOCKED_CJ_PROOF_REQUIRED";
+
   if (reasons.length > 0) return "MANUAL_REVIEW_REQUIRED";
   return "READY_FOR_PURCHASE_REVIEW";
 }
@@ -142,6 +153,16 @@ function mapStatusPresentation(status: OrderPurchaseSafetyStatusCode): {
       technicalLabel: "ECONOMICS_BLOCK",
       hint: "Manual review required.",
       secondaryHint: "Do not approve purchase until economics are safe.",
+      manualReviewRequired: true,
+    };
+  }
+
+  if (status === "BLOCKED_CJ_PROOF_REQUIRED") {
+    return {
+      label: "Blocked - CJ proof required",
+      technicalLabel: "CJ_PROOF_BLOCK",
+      hint: "CJ purchase proof is incomplete, so supplier purchase must stay blocked.",
+      secondaryHint: "Do not approve purchase until CJ freight, stock, and order-create proof are established.",
       manualReviewRequired: true,
     };
   }
@@ -254,12 +275,13 @@ async function evaluateStrictOrderItemSafety(detail: AdminOrderDetail): Promise<
     const supplierProductId = String(item.supplierProductId ?? "").trim();
     if (!supplierKey || !supplierProductId) continue;
 
-    const fetched = await db.execute<{ supplierKey: string; supplierProductId: string; availabilityStatus: string | null; snapshotTs: Date | null; stockQty: number | null }>(sql`
+    const fetched = await db.execute<{ supplierKey: string; supplierProductId: string; availabilityStatus: string | null; snapshotTs: Date | null; stockQty: number | null; rawPayload: unknown }>(sql`
       SELECT
         pr.supplier_key AS "supplierKey",
         pr.supplier_product_id AS "supplierProductId",
         pr.availability_status AS "availabilityStatus",
         pr.snapshot_ts AS "snapshotTs",
+        pr.raw_payload AS "rawPayload",
         COALESCE(
           NULLIF(pr.raw_payload ->> 'supplierStockQty', '')::integer,
           NULLIF(pr.raw_payload ->> 'stockCount', '')::integer,
@@ -301,6 +323,18 @@ async function evaluateStrictOrderItemSafety(detail: AdminOrderDetail): Promise<
       requiredQty: item.quantity,
     });
     reasons.push(...liveSafetyReasons);
+
+    if (supplierKey.toLowerCase() === "cjdropshipping") {
+      const cjProofState = readCjProofStateFromRawPayload(row.rawPayload);
+      const cjProofBlockingReason = getCjProofBlockingReason(cjProofState);
+      if (!isCjProofPurchaseSafe(cjProofState) || cjProofBlockingReason) {
+        reasons.push(...(cjProofState ? cjProofState.blockingReasons : ["CJ_PROOF_STATE_MISSING"]));
+        if (cjProofState?.orderCreate !== "PROVEN") reasons.push("CJ_ORDER_CREATE_UNPROVEN");
+        if (cjProofState?.stock !== "PROVEN") reasons.push("CJ_STOCK_UNPROVEN");
+        if (cjProofState?.freight !== "PROVEN") reasons.push("CJ_FREIGHT_UNPROVEN");
+        reasons.push("CJ_PROOF_PURCHASE_BLOCK");
+      }
+    }
   }
 
   return uniqueStrings(reasons);

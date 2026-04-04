@@ -28,6 +28,7 @@ import {
   assertControlledMutationContext,
   assertLearningHubReady,
 } from "@/lib/enforcement/runtimeSovereignty";
+import { getCjProofBlockingReason, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 export type MarkListingReadyInput = {
   listingId: string;
@@ -190,6 +191,11 @@ export async function markListingReadyToPublish(
   const stockCheckRequired = Boolean(row.stockCheckRequired);
   const payloadSupplierKey = String(payloadSource?.supplierKey ?? "").trim() || null;
   const payloadSupplierProductId = String(payloadSource?.supplierProductId ?? "").trim() || null;
+  const cjProofState =
+    payloadSupplierKey?.toLowerCase() === "cjdropshipping"
+      ? readCjProofStateFromRawPayload({ cjProofState: payloadSource?.cjProofState ?? null })
+      : null;
+  const cjProofBlockingReason = payloadSupplierKey?.toLowerCase() === "cjdropshipping" ? getCjProofBlockingReason(cjProofState) : null;
   const decisionStatus = String(row.decisionStatus ?? "");
   const listingEligible = Boolean(row.listingEligible);
   const matchStatus = String(row.matchStatus ?? "").trim().toUpperCase() || null;
@@ -268,6 +274,17 @@ export async function markListingReadyToPublish(
       marketplaceKey,
       previousStatus,
       reason: "LINKED_SUPPLIER_PRODUCT_MISMATCH",
+    };
+  }
+
+  if (cjProofBlockingReason) {
+    return {
+      ok: false,
+      listingId: input.listingId,
+      candidateId,
+      marketplaceKey,
+      previousStatus,
+      reason: `CJ proof gate blocked READY_TO_PUBLISH promotion: ${cjProofBlockingReason}`,
     };
   }
 

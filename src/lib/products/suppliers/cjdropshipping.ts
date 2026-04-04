@@ -1,6 +1,7 @@
 import type { ProductVariant, ShippingEstimate, SupplierProduct } from "./types";
 import { normalizeShipFromCountry } from "@/lib/products/shipFromCountry";
 import {
+  buildCjProofStateSnapshot,
   calculateCjFreight,
   calculateCjFreightTip,
   getCjDirectProductSnapshot,
@@ -928,6 +929,12 @@ function mapSearchProductToSupplierProduct(product: CjSearchProduct, keyword: st
         optionValues: [variant.value],
       })),
       telemetrySignals: primaryImage ? ["parsed"] : ["parsed", "low_quality"],
+      cjProofState: buildCjProofStateSnapshot({
+        hasProductEvidence: true,
+        hasVariantEvidence: normalizeCjSearchVariants(product).length > 0,
+        hasStockEvidence: toFiniteNumber(product.warehouseInventoryNum) != null,
+        hasFreightEvidence: shippingEstimates.length > 0,
+      }),
     },
   };
 }
@@ -1173,6 +1180,12 @@ export async function fetchCjDirectProduct(sourceUrl: string): Promise<CjDirectP
       propertyEn: toNonEmptyString(detail.PROPERTYEN),
       variantKeyEn: toNonEmptyString(detail.VARIANTKEYEN),
       goodsJsonSearch: detail.goodsJsonSearch ?? null,
+      cjProofState: buildCjProofStateSnapshot({
+        hasProductEvidence: true,
+        hasVariantEvidence: variantMapping.length > 0,
+        hasStockEvidence: stockCount != null,
+        hasFreightEvidence: shippingEvidence.estimates.length > 0,
+      }),
       videos: videoUrls,
       videoUrls,
       videoCount: videoUrls.length,

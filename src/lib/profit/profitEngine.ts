@@ -18,6 +18,7 @@ import {
 } from "@/lib/products/pipelinePolicy";
 import { deriveCanonicalMediaTruth, deriveCanonicalShippingTruth } from "@/lib/products/canonicalTruth";
 import { sql } from "drizzle-orm";
+import { getCjProofBlockingReason, getCjProofRiskFlags, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 import { calculateRealProfit } from "./realProfitCalculator";
 import { getPriceGuardThresholds } from "./priceGuardConfig";
 import { resolvePricingDestinationForMarketplace } from "@/lib/pricing/destinationResolver";
@@ -726,6 +727,12 @@ export async function runProfitEngine(input?: {
       marketNoiseRatio: marketDepth.noiseRatio,
     });
     const shippingUnsafe = Boolean(shippingResolution.errorReason);
+    const cjProofState =
+      normalizedSupplierKey === "cjdropshipping" ? readCjProofStateFromRawPayload(supplierRawPayload) : null;
+    const cjProofBlockingReason =
+      normalizedSupplierKey === "cjdropshipping" ? getCjProofBlockingReason(cjProofState) : null;
+    const cjProofRiskFlags =
+      normalizedSupplierKey === "cjdropshipping" ? getCjProofRiskFlags(cjProofState) : [];
     const marginOrRoiFailed = marginPct < minMarginPct || roiPct < minRoiPct;
     const pipelineHardBlocked = pipeline.flags.some((flag) => PIPELINE_HARD_BLOCK_FLAGS.has(flag));
     const matchRoutingStatus = getMatchRoutingStatus(matchConfidence);
@@ -735,6 +742,7 @@ export async function runProfitEngine(input?: {
       !supplierDriftExceeded &&
       !supplierEvidence.manualReview &&
       !shippingUnsafe &&
+      !cjProofBlockingReason &&
       !marginOrRoiFailed &&
       hardGate.allow &&
       !pipelineHardBlocked &&
@@ -744,7 +752,7 @@ export async function runProfitEngine(input?: {
         ? "REJECTED"
         : matchRoutingStatus === "MANUAL_REVIEW"
           ? "MANUAL_REVIEW"
-        : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview || shippingUnsafe || supplierPolicy.reject
+        : staleMarketplaceSnapshot || supplierDriftExceeded || supplierEvidence.manualReview || shippingUnsafe || supplierPolicy.reject || Boolean(cjProofBlockingReason)
         ? "MANUAL_REVIEW"
         : marginOrRoiFailed || pipelineHardBlocked || !hardGate.allow
           ? "MANUAL_REVIEW"
@@ -762,6 +770,8 @@ export async function runProfitEngine(input?: {
       ? `supplier drift ${supplierPriceDriftPct}% exceeds ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% tolerance`
       : shippingResolution.errorReason
       ? `shipping intelligence unresolved: ${shippingResolution.errorReason}`
+      : cjProofBlockingReason
+      ? cjProofBlockingReason
       : supplierPolicy.reject
       ? `supplier policy block: ${supplierPolicy.reason}`
       : !hardGate.allow
@@ -812,7 +822,7 @@ export async function runProfitEngine(input?: {
               : Array.isArray(supplierRawPayload.videos)
                 ? supplierRawPayload.videos.length
                 : null),
-          mediaQualityScore: canonicalMedia.mediaQualityScore,
+          cjProofState,
           media:
             supplierRawPayload.media && typeof supplierRawPayload.media === "object" && !Array.isArray(supplierRawPayload.media)
               ? {
@@ -842,6 +852,8 @@ export async function runProfitEngine(input?: {
           ? ["SUPPLIER_PRICE_DRIFT_EXCEEDS_15_PCT"]
           : shippingResolution.errorReason
             ? [shippingResolution.errorReason]
+          : cjProofBlockingReason
+            ? cjProofRiskFlags
           : supplierEvidenceCodes.length
             ? Array.from(new Set([...supplierEvidenceCodes, ...pipeline.flags]))
           : marginOrRoiFailed
@@ -849,7 +861,7 @@ export async function runProfitEngine(input?: {
                 : !hardGate.allow
                   ? [...hardGate.reasonCodes]
                   : pipeline.flags;
-    const mergedRiskFlags = Array.from(new Set([...riskFlags, ...supplierPolicy.riskFlags]));
+    const mergedRiskFlags = Array.from(new Set([...riskFlags, ...cjProofRiskFlags, ...supplierPolicy.riskFlags]));
     const estimatedFeesJson = {
       feePct: economics.assumptions.ebayFeeRatePct,
       feeUsd: estimatedFees,
@@ -923,6 +935,8 @@ export async function runProfitEngine(input?: {
       ? `supplier drift ${supplierPriceDriftPct}% > ${SUPPLIER_DRIFT_MANUAL_REVIEW_PCT}% | supplier_snapshot_age_hours ${supplierSnapshotAgeHours ?? "n/a"}`
       : shippingResolution.errorReason
       ? `shipping intelligence failed | reason ${shippingResolution.errorReason} | mode ${shippingResolution.resolutionMode} | quote_age_hours ${shippingResolution.quoteAgeHours ?? "n/a"} | destination ${destinationCountry}`
+      : cjProofBlockingReason
+      ? `CJ proof gate blocked | ${cjProofBlockingReason}`
       : supplierPolicy.reject
       ? `supplier policy blocked | reason ${supplierPolicy.reason} | stock_class ${supplierPolicy.stockClass} | monitoring ${supplierPolicy.monitoringPriority}`
       : !hardGate.allow

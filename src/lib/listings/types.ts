@@ -122,6 +122,7 @@ export type EbayListingPreviewPayload = {
     shippingSignal?: string | null;
     shippingConfidence?: number | null;
     shippingStability?: string | null;
+    cjProofState?: Record<string, unknown> | null;
   };
   matchedMarketplace: {
     marketplaceKey: string;

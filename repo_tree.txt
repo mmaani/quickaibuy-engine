@@ -24,6 +24,7 @@
 │   ├── code-review-2026-03-13.md
 │   ├── codespaces-resume.md
 │   ├── codespaces-secrets-policy.md
+│   ├── codex-handoff.md
 │   ├── control-plane-architecture.md
 │   ├── database-migrations.md
 │   ├── data-quality-supplier-intelligence-learning-signal-audit-2026-03-30.md
@@ -222,6 +223,16 @@
 │   ├── check_active_missing_external_id_rows.mjs
 │   ├── check_approval_readiness_pipeline_static.mjs
 │   ├── check_audit_log.mjs
+│   ├── check_cj_auth_health.ts
+│   ├── check_cj_connectivity.ts
+│   ├── check_cj_freight.ts
+│   ├── check_cj_live_suite.ts
+│   ├── check_cj_order_detail.ts
+│   ├── check_cj_order_tracking_smoke.ts
+│   ├── check_cj_product_fetch.ts
+│   ├── check_cj_settings.ts
+│   ├── check_cj_tracking.ts
+│   ├── check_cj_variant_stock.ts
 │   ├── check_codespace_runtime.ts
 │   ├── check_controlled_listing_gate_v1.mjs
 │   ├── check-db-tables.mjs
@@ -688,6 +699,7 @@
 │   │   │   │   └── normalizeWarehouseCountry.ts
 │   │   │   ├── ebayAuthEnv.ts
 │   │   │   ├── ebayImageHosting.ts
+│   │   │   ├── ebayOAuthCallback.ts
 │   │   │   ├── ebayPublish.ts
 │   │   │   ├── ebay.ts
 │   │   │   ├── match.ts
@@ -798,6 +810,17 @@
 │   │   │   └── supplierLinkage.ts
 │   │   ├── server
 │   │   ├── suppliers
+│   │   │   ├── cj
+│   │   │   │   ├── auth.ts
+│   │   │   │   ├── client.ts
+│   │   │   │   ├── errors.ts
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── logistics.ts
+│   │   │   │   ├── orders.ts
+│   │   │   │   ├── products.ts
+│   │   │   │   ├── proof.ts
+│   │   │   │   ├── settings.ts
+│   │   │   │   └── types.ts
 │   │   │   ├── cjApi.ts
 │   │   │   ├── cjTracking.ts
 │   │   │   ├── discoveryWave.ts
@@ -805,6 +828,7 @@
 │   │   │   ├── policySurface.ts
 │   │   │   ├── telemetry.ts
 │   │   │   └── __tests__
+│   │   │       ├── cj.test.ts
 │   │   │       ├── discoveryWave.test.ts
 │   │   │       ├── intelligence.test.ts
 │   │   │       └── policySurface.test.ts
@@ -829,4 +853,4 @@
 ├── tsconfig.json
 └── tsconfig.tsbuildinfo
 
-128 directories, 702 files
+129 directories, 725 files

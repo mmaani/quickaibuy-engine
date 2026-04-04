@@ -57,7 +57,7 @@ async function acquireRequestSlot(): Promise<void> {
 }
 
 function shouldRetryRequestError(error: unknown): boolean {
-  return error instanceof CjError && (error.category === "RATE_LIMITED" || error.category === "UPSTREAM_UNAVAILABLE");
+  return error instanceof CjError && (error.category === "RATE_LIMITED" || error.category === "UPSTREAM_DOWN");
 }
 
 async function execute<T>(input: CjRequestOptions, accessToken: string): Promise<CjWrappedResponse<T>> {

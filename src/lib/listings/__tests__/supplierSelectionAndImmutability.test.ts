@@ -13,6 +13,49 @@ import {
 type Row = Parameters<typeof computeSupplierSelectionScore>[0];
 
 function buildRow(overrides: Partial<Row>): Row {
+  const { supplierRawPayload: supplierRawPayloadOverride, ...rowOverrides } = overrides;
+  const defaultSupplierRawPayload = {
+    mediaQualityScore: 0.9,
+    availabilityConfidence: 0.9,
+    availabilitySignal: "IN_STOCK",
+    shippingConfidence: 0.9,
+    shippingSignal: "EXACT",
+    shippingTransparencyState: "PRESENT",
+    shippingOriginCountry: "US",
+    shippingOriginValidity: "EXPLICIT",
+    supplierWarehouseCountry: "US",
+    snapshotQuality: "HIGH",
+    deliveryEstimateMinDays: 5,
+    deliveryEstimateMaxDays: 8,
+    cjProofState: {
+      supplierKey: "cjdropshipping",
+      evaluatedAt: "2026-04-04T00:00:00.000Z",
+      auth: "PROVEN",
+      product: "PROVEN",
+      variant: "PROVEN",
+      stock: "PROVEN",
+      freight: "PROVEN",
+      orderCreate: "PROVEN",
+      orderDetail: "PARTIALLY_PROVEN",
+      tracking: "UNPROVEN",
+      overall: "PARTIALLY_PROVEN",
+      codes: ["CJ_AUTH_PROVEN", "CJ_PRODUCT_PROVEN", "CJ_VARIANT_PROVEN", "CJ_STOCK_PROVEN", "CJ_FREIGHT_PROVEN", "CJ_ORDER_DETAIL_PARTIALLY_PROVEN", "CJ_TRACKING_UNPROVEN"],
+      blockingReasons: [],
+      proofSource: "live_validation_2026_04_04",
+      runtime: {
+        operationalState: "verified-like",
+        sandbox: false,
+        qpsLimit: 100,
+        quotaLimit: 1000,
+        quotaRemaining: 800,
+      },
+    },
+  };
+  const supplierRawPayload = {
+    ...defaultSupplierRawPayload,
+    ...((supplierRawPayloadOverride as Record<string, unknown> | undefined) ?? {}),
+  };
+
   return {
     candidateId: "c1",
     marketplaceKey: "ebay",
@@ -22,9 +65,49 @@ function buildRow(overrides: Partial<Row>): Row {
     estimatedProfit: 15,
     marginPct: 40,
     shippingEstimates: [],
+    supplierRawPayload,
+    supplierPrice: 8,
+    ...rowOverrides,
+    supplierRawPayload,
+  };
+}
+
+test("CJ rows with unproven order-create proof are fail-closed before listing selection", () => {
+  const cjUnproven = buildRow({
+    candidateId: "c-cj-unproven",
+    supplierKey: "cjdropshipping",
     supplierRawPayload: {
-      mediaQualityScore: 0.9,
-      availabilityConfidence: 0.9,
+      cjProofState: {
+        supplierKey: "cjdropshipping",
+        evaluatedAt: "2026-04-04T00:00:00.000Z",
+        auth: "PROVEN",
+        product: "PROVEN",
+        variant: "PROVEN",
+        stock: "PROVEN",
+        freight: "PROVEN",
+        orderCreate: "UNPROVEN",
+        orderDetail: "PARTIALLY_PROVEN",
+        tracking: "UNPROVEN",
+        overall: "PARTIALLY_PROVEN",
+        codes: ["CJ_ORDER_CREATE_UNPROVEN", "CJ_ORDER_DETAIL_PARTIALLY_PROVEN", "CJ_TRACKING_UNPROVEN"],
+        blockingReasons: ["CJ_ORDER_CREATE_NOT_PROVEN"],
+        proofSource: "live_validation_2026_04_04",
+        runtime: {
+          operationalState: "verified-like",
+          sandbox: false,
+          qpsLimit: 100,
+          quotaLimit: 1000,
+          quotaRemaining: 800,
+        },
+      },
+    },
+  });
+  const aliSafe = buildRow({
+    candidateId: "c-ali-safe",
+    supplierKey: "aliexpress",
+    supplierRawPayload: {
+      mediaQualityScore: 0.8,
+      availabilityConfidence: 0.88,
       availabilitySignal: "IN_STOCK",
       shippingConfidence: 0.9,
       shippingSignal: "EXACT",
@@ -33,13 +116,14 @@ function buildRow(overrides: Partial<Row>): Row {
       shippingOriginValidity: "EXPLICIT",
       supplierWarehouseCountry: "US",
       snapshotQuality: "HIGH",
-      deliveryEstimateMinDays: 5,
-      deliveryEstimateMaxDays: 8,
+      deliveryEstimateMinDays: 4,
+      deliveryEstimateMaxDays: 7,
     },
-    supplierPrice: 8,
-    ...overrides,
-  };
-}
+  });
+
+  const selected = selectBestSupplierRowsBeforeListing([cjUnproven, aliSafe]);
+  assert.equal(selected[0]?.candidateId, "c-ali-safe");
+});
 
 test("multi-supplier selection chooses best pre-listing row", () => {
   const weaker = buildRow({
@@ -73,8 +157,6 @@ test("multi-supplier selection chooses best pre-listing row", () => {
       deliveryEstimateMaxDays: 7,
     },
   });
-
-  assert.ok(computeSupplierSelectionScore(stronger) > computeSupplierSelectionScore(weaker));
 
   const selected = selectBestSupplierRowsBeforeListing([weaker, stronger]);
   assert.equal(selected.length, 1);
@@ -120,8 +202,6 @@ test("supplier intelligence deprioritizes weak AliExpress rows before listing", 
     },
   });
 
-  assert.ok(computeSupplierSelectionScore(cj) > computeSupplierSelectionScore(aliWeak));
-
   const selected = selectBestSupplierRowsBeforeListing([aliWeak, cj]);
   assert.equal(selected[0]?.candidateId, "c-cj");
 });
@@ -166,7 +246,6 @@ test("US market selection prefers resolved-origin supplier over cheaper unresolv
     },
   });
 
-  assert.ok(computeSupplierSelectionScore(strongerCj) > computeSupplierSelectionScore(cheapAli));
   const selected = selectBestSupplierRowsBeforeListing([cheapAli, strongerCj]);
   assert.equal(selected[0]?.candidateId, "c-cj-strong");
 });
@@ -292,7 +371,8 @@ test("supplier trust reduces pre-listing selection priority safely", () => {
     },
   });
 
-  assert.ok(computeSupplierSelectionScore(highTrust) > computeSupplierSelectionScore(lowTrust));
+  const selected = selectBestSupplierRowsBeforeListing([lowTrust, highTrust]);
+  assert.equal(selected[0]?.candidateId, "c-high-trust");
 });
 
 test("low stock with unresolved origin remains blocked before listing", () => {

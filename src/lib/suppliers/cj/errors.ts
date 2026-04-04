@@ -5,20 +5,20 @@ const CATEGORY_BY_CODE = new Map<number, CjErrorCategory>([
   [1600002, "AUTH_INVALID"],
   [1600003, "REFRESH_INVALID"],
   [1600031, "AUTH_INVALID"],
-  [1600100, "PARAM_INVALID"],
+  [1600100, "ORDER_FAILED"],
   [1600200, "RATE_LIMITED"],
   [1600201, "QUOTA_EXHAUSTED"],
-  [1600300, "UPSTREAM_UNAVAILABLE"],
-  [1603000, "ORDER_CREATE_FAILED"],
-  [1603001, "ORDER_CREATE_FAILED"],
-  [1603003, "ORDER_DUPLICATE"],
+  [1600300, "UPSTREAM_DOWN"],
+  [1603000, "ORDER_FAILED"],
+  [1603001, "ORDER_FAILED"],
+  [1603003, "ORDER_FAILED"],
   [1603102, "INVENTORY_FAILED"],
-  [1605001, "LOGISTIC_INVALID"],
-  [1606000, "WEBHOOK_INVALID"],
-  [1606001, "WEBHOOK_INVALID"],
-  [1607000, "WEBHOOK_INVALID"],
-  [1607001, "WEBHOOK_INVALID"],
-  [1607002, "WEBHOOK_INVALID"],
+  [1605001, "LOGISTIC_FAILED"],
+  [1606000, "UPSTREAM_DOWN"],
+  [1606001, "UPSTREAM_DOWN"],
+  [1607000, "UPSTREAM_DOWN"],
+  [1607001, "UPSTREAM_DOWN"],
+  [1607002, "UPSTREAM_DOWN"],
 ]);
 
 export class CjError extends Error {
@@ -63,7 +63,7 @@ export function mapCjErrorCategory(input: {
   code: number | null;
 }): CjErrorCategory {
   if (input.status === 429) return "RATE_LIMITED";
-  if (input.status >= 500) return "UPSTREAM_UNAVAILABLE";
+  if (input.status >= 500) return "UPSTREAM_DOWN";
   if (input.code != null && CATEGORY_BY_CODE.has(input.code)) {
     return CATEGORY_BY_CODE.get(input.code)!;
   }
@@ -122,7 +122,7 @@ export function buildCjError<T>(input: {
   const retryable =
     category === "RATE_LIMITED" ||
     category === "QUOTA_EXHAUSTED" ||
-    category === "UPSTREAM_UNAVAILABLE";
+    category === "UPSTREAM_DOWN";
 
   return new CjError({
     message: `${input.operation} failed: ${category}${code != null ? ` (${code})` : ""}`,
