@@ -268,6 +268,17 @@ export const WORKER_OPTIONAL_OVERRIDE_GROUPS: EnvGroup[] = [
     description: "Safety flags that should remain explicitly fail-closed for this worker env.",
     keys: ["ENABLE_EBAY_LIVE_PUBLISH", "ENABLE_EBAY_TRACKING_SYNC"],
   },
+  {
+    id: "lead_notifications",
+    bucket: "optional_override",
+    description: "Optional lead notification sender/recipient overrides used by worker-side notifications.",
+    keys: [
+      "LEAD_NOTIFICATION_EMAIL_FROM",
+      "LEAD_NOTIFICATION_EMAIL_TO",
+      "LEAD_NOTIFICATION_WHATSAPP_TO",
+      "RESEND_FROM_EMAIL",
+    ],
+  },
 ];
 
 export const WORKER_SAFE_ALIAS_GROUPS: EnvGroup[] = [
