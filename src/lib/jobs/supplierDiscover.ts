@@ -18,6 +18,7 @@ import {
   getSupplierWaveBudget,
   shouldRejectSupplierEarly,
 } from "@/lib/suppliers/intelligence";
+import { isCjSupplierKey } from "@/lib/suppliers/cj";
 import {
   buildDiscoveryWaveSourcePlan,
   computeDiscoveryPersistPriority,
@@ -274,7 +275,7 @@ function shouldDeprioritizeSupplier(item: SupplierProduct): boolean {
 
 function getSearchVariantsForSource(source: string, keyword: string): string[] {
   const variants = buildSupplierSearchKeywordVariants(keyword);
-  if (source === "cjdropshipping" || source === "temu") return variants.slice(0, 5);
+  if (isCjSupplierKey(source) || source === "temu") return variants.slice(0, 5);
   if (source === "alibaba") return variants.slice(0, 4);
   return variants.slice(0, 2);
 }
@@ -285,7 +286,7 @@ async function fetchRowsForSource(source: string, keyword: string, searchLimit: 
 
   for (const variant of variants) {
     const rows =
-      source === "cjdropshipping"
+      isCjSupplierKey(source)
         ? await searchCjByKeyword(variant, searchLimit)
         : source === "temu"
           ? await searchTemuByKeyword(variant, searchLimit)

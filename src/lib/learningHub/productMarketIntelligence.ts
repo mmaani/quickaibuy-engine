@@ -6,6 +6,7 @@ import {
   computeStockEvidenceStrength,
   supplierBasePriorityScore,
 } from "@/lib/suppliers/intelligence";
+import { getCjProofConfidenceCap, getCjProofRiskFlags, isCjSupplierKey, readCjProofStateFromRawPayload } from "@/lib/suppliers/cj";
 
 type RawIntelligenceRow = {
   candidateId: string;
@@ -900,13 +901,19 @@ function buildDerivedDrafts(rows: RawIntelligenceRow[], supplierLearning: Map<st
       rawPayload: row.supplierRawPayload,
     });
     const supplierFeature = supplierLearning.get(supplierKey);
-    const supplierReliability = clamp01(
+    const cjProofState = isCjSupplierKey(supplierKey) ? readCjProofStateFromRawPayload(row.supplierRawPayload) : null;
+    const cjProofConfidenceCap = cjProofState ? getCjProofConfidenceCap(cjProofState) : 1;
+    const supplierReliability = clamp01(Math.min(
       (supplierFeature?.supplierReliability != null ? Number(supplierFeature.supplierReliability) : supplierBasePriorityScore(supplierKey)) * 0.55 +
         stockEvidence * 0.2 +
         shippingEvidence * 0.2 +
-        (supplierFeature?.publishability != null ? Number(supplierFeature.publishability) : 0.5) * 0.05
-    );
-    const blockedReasons = buildBlockedReasons(row);
+        (supplierFeature?.publishability != null ? Number(supplierFeature.publishability) : 0.5) * 0.05,
+      cjProofConfidenceCap
+    ));
+    const blockedReasons = Array.from(new Set([
+      ...buildBlockedReasons(row),
+      ...(cjProofState ? getCjProofRiskFlags(cjProofState) : []),
+    ]));
     const listingEligible = Boolean(row.listingEligible);
     const publishSuccess = String(row.listingStatus ?? "").toUpperCase() === "ACTIVE" || Boolean(row.publishedExternalId);
     const performance = extractListingPerformance(row.listingResponse);
@@ -917,12 +924,12 @@ function buildDerivedDrafts(rows: RawIntelligenceRow[], supplierLearning: Map<st
     const priceCompetitiveness = computePriceCompetitiveness(estimatedProfit, marginPct, roiPct);
     const freshnessHours = getFreshnessHours(row.calcTs, row.supplierSnapshotTs, row.marketplaceSnapshotTs, row.listingUpdatedAt);
     const attributeCompleteness = computeAttributeCompleteness(taxonomy.profileKey, itemSpecifics);
-    const publishabilityScore = computePublishability({
+    const publishabilityScore = Math.min(cjProofConfidenceCap, computePublishability({
       decisionStatus: row.decisionStatus,
       listingEligible,
       listingStatus: row.listingStatus,
       blockedReasons,
-    });
+    }));
     const failurePressure = computeFailurePressure({
       blockedReasons,
       decisionStatus: row.decisionStatus,
