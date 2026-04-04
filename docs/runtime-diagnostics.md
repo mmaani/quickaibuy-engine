@@ -83,7 +83,7 @@ This is the preferred validation command for this repository's PROD-targeted Cod
 - Codex sandbox namespace readiness via `bwrap --ro-bind / / true`
 - live DB and Redis runtime probes
 
-If the `Codex sandbox namespace readiness` check fails because `bubblewrap` is missing, rebuild the container so the updated devcontainer image is applied. If `bubblewrap` is installed but namespace creation is denied, treat the remaining issue as Codespaces/container policy rather than application runtime drift.
+If the `Codex sandbox namespace readiness` check fails because `bubblewrap` is missing, rebuild the container so the updated devcontainer image is applied. If `bubblewrap` is already installed but namespace creation is denied, rebuilding is unlikely to help; treat the remaining issue as Codespaces/container policy rather than application runtime drift.
 
 Transient infrastructure DNS/TCP failures in Codespaces, such as `EAI_AGAIN`, are reported as warnings so attach validation stays focused on repo/runtime correctness instead of failing on external networking jitter.
 
@@ -157,11 +157,12 @@ Verify Upstash DNS:
 node -e "require('dns').lookup('YOUR_UPSTASH_HOST', console.log)"
 ```
 
-Verify Vercel auth/link:
+Verify Vercel auth/link/env access:
 
 ```bash
 vercel whoami
-vercel link
+test -f .vercel/project.json
+node --import tsx scripts/check_vercel_env_access.ts production
 ```
 
 ## Safe rerun order

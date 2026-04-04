@@ -201,7 +201,7 @@ Example local workflow in Codespaces:
 
 ```bash
 pnpm worker:railway-env:build -- --from .env.prod,.env.vercel --out railway_worker.env
-pnpm worker:railway-env:validate railway_worker.env
+pnpm worker:railway-env:validate
 ```
 
 The builder reads local env files, keeps only approved worker-scoped keys, and writes a clean candidate file without transforming secret values. The validator checks:
@@ -224,7 +224,7 @@ It also warns when supplier-provider credentials are absent, because worker star
 
 ```bash
 pnpm worker:railway-env:build -- --from .env.prod,.env.vercel --out railway_worker.env
-pnpm worker:railway-env:validate railway_worker.env
+pnpm worker:railway-env:validate
 ```
 
 6. Open Railway service `Variables`.
@@ -263,7 +263,7 @@ Run the standard validation chain plus worker env checks:
 pnpm lint
 pnpm build
 pnpm exec tsc --noEmit
-pnpm worker:railway-env:validate railway_worker.env
+pnpm worker:railway-env:validate
 DOTENV_CONFIG_PATH=.env.prod node --import dotenv/config --import tsx scripts/check_worker_run_truth.ts
 DOTENV_CONFIG_PATH=.env.prod node --import dotenv/config --import tsx scripts/check_upstream_schedules.ts
 DOTENV_CONFIG_PATH=.env.prod node --import dotenv/config --import tsx scripts/check_revenue_enablement_truth.ts
@@ -283,7 +283,6 @@ These were found in local env files but are not consumed by the `jobs.worker` ru
 
 - `APP_URL`
 - `NEXT_PUBLIC_APP_URL`
-- `REVIEW_CONSOLE_TOKEN`
 - `REVIEW_CONSOLE_USERNAME`
 - `REVIEW_CONSOLE_PASSWORD`
 - `MARKETPLACE_FEE_PCT`

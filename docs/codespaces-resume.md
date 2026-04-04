@@ -27,5 +27,5 @@ Operator rule:
 
 - Use this Codespace for prod visibility and diagnostics.
 - Do not enable prod mutation overrides unless explicitly required for an intentional guarded action.
-- If `Codex sandbox namespace readiness` fails, rebuild the container first so the new devcontainer image installs `bubblewrap`; if the failure persists, treat it as a Codespaces/container policy issue rather than a repo bug.
+- If `Codex sandbox namespace readiness` fails because `bubblewrap` is missing, rebuild the container so the new devcontainer image installs it. If `bubblewrap` is already present and the probe still reports namespace denial, treat it as a Codespaces/container policy issue rather than a repo bug.
 - End-to-end Codespaces validation fixes were completed and re-verified on 2026-04-04.
