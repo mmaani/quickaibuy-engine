@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import RefreshButton from "@/app/_components/RefreshButton";
 import { getControlPanelData } from "@/lib/control/getControlPanelData";
+import { getCjAuthSnapshot, getCjSettingsSummary } from "@/lib/suppliers/cj";
 import { getControlPlaneOverview } from "@/lib/controlPlane/getControlPlaneOverview";
 import { classifyRuntimeFailure } from "@/lib/operations/runtimeFailure";
 import { ControlPlaneOverviewPanel } from "@/components/admin/ControlPlaneOverviewPanel";
@@ -466,6 +467,8 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
     },
   ];
   const sourceHealthCards = buildSourceHealthCards(data);
+  const cjAuth = getCjAuthSnapshot();
+  const cjSettings = await getCjSettingsSummary().catch(() => null);
 
   return (
     <main className="relative min-h-screen bg-app text-white">
@@ -526,6 +529,33 @@ export default async function ControlPage({ searchParams }: { searchParams?: Pro
             <Link href="/admin/listings" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/listings</Link>
             <Link href="/admin/review" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/review</Link>
             <Link href="/admin/orders" className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm">Open /admin/orders</Link>
+          </div>
+        </Section>
+
+        <Section title="CJ Integration Health">
+          <div className="grid gap-3 lg:grid-cols-3">
+            <StatCard label="Auth health" value={cjAuth.hasApiKey ? (cjAuth.tokenFresh ? "healthy" : "needs refresh") : "missing CJ_API_KEY"} />
+            <StatCard label="Quota / tier" value={cjSettings ? [cjSettings.operationalState, cjSettings.qpsLimit != null ? String(cjSettings.qpsLimit) + " qps" : null].filter(Boolean).join(" | ") : "not available"} />
+            <StatCard label="Sandbox" value={yesNoUnknown(cjSettings?.sandbox ?? null)} />
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/75">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/50">Current CJ state</div>
+              <div className="mt-3 space-y-2">
+                <div>Token freshness: {cjAuth.tokenFresh ? "fresh" : cjAuth.hasApiKey ? "stale or not fetched yet" : "not configured"}</div>
+                <div>Platform token configured: {yesNoUnknown(cjAuth.hasPlatformToken)}</div>
+                <div>Quota remaining: {cjSettings?.quotaRemaining ?? "unknown"}</div>
+                <div>Quota limit: {cjSettings?.quotaLimit ?? "unknown"}</div>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/75">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-white/50">Operator guidance</div>
+              <div className="mt-3 space-y-2">
+                <div>Low-tier CJ accounts are treated as fail-closed and throttled to 1 authenticated request per second by default.</div>
+                <div>If auth is missing or stale, shipping refresh, order create, and tracking checks should stay paused until the backend token path is healthy.</div>
+                <div>The supplier-specific manual override remains the authoritative stop switch for CJ purchasing.</div>
+              </div>
+            </div>
           </div>
         </Section>
 

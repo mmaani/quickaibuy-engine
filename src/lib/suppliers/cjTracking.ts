@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { supplierOrders } from "@/lib/db/schema";
 import { recordSupplierTracking } from "@/lib/orders/manualPurchaseFlow";
 import { syncTrackingToEbay } from "@/lib/orders/syncTrackingToEbay";
-import { getOrderStatus, type CjOrderStatusResult } from "./cjApi";
+import { extractTrackingCarrier, extractTrackingNumber, getCjOrderDetail, getCjTrackingInfo } from "@/lib/suppliers/cj";
 
 type CandidateRow = {
   supplierOrderId: string;
@@ -41,64 +41,6 @@ function clean(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
-function asObject(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function findStringDeep(value: unknown, wantedKeys: Set<string>, depth = 0): string | null {
-  if (depth > 6 || value == null) return null;
-  if (typeof value === "string") return null;
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = findStringDeep(entry, wantedKeys, depth + 1);
-      if (found) return found;
-    }
-    return null;
-  }
-  const obj = asObject(value);
-  if (!obj) return null;
-
-  for (const [key, raw] of Object.entries(obj)) {
-    const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-    if (wantedKeys.has(normalized)) {
-      const found = clean(raw);
-      if (found) return found;
-    }
-  }
-
-  for (const raw of Object.values(obj)) {
-    const found = findStringDeep(raw, wantedKeys, depth + 1);
-    if (found) return found;
-  }
-
-  return null;
-}
-
-function extractTrackingNumber(status: CjOrderStatusResult): string | null {
-  return (
-    clean(status.trackNumber) ??
-    findStringDeep(status.raw, new Set(["tracknumber", "trackingnumber", "trackno", "trackingno"]))
-  );
-}
-
-function extractCarrier(status: CjOrderStatusResult): string | null {
-  return (
-    clean(status.logisticName) ??
-    findStringDeep(
-      status.raw,
-      new Set([
-        "logisticname",
-        "logisticsname",
-        "trackingcarrier",
-        "carrier",
-        "shippingcarrier",
-        "shippingmethod",
-      ])
-    )
-  );
-}
-
 function mapTrackingStatus(orderStatus: string | null): "LABEL_CREATED" | "IN_TRANSIT" | "DELIVERED" {
   const normalized = clean(orderStatus)?.toUpperCase() ?? "";
   if (normalized.includes("DELIVER")) return "DELIVERED";
@@ -120,12 +62,7 @@ async function fetchCandidates(input?: { orderId?: string; limit?: number }): Pr
         trackingSyncedAt: supplierOrders.trackingSyncedAt,
       })
       .from(supplierOrders)
-      .where(
-        and(
-          eq(supplierOrders.orderId, input.orderId),
-          eq(supplierOrders.supplierKey, "cjdropshipping")
-        )
-      )
+      .where(and(eq(supplierOrders.orderId, input.orderId), eq(supplierOrders.supplierKey, "cjdropshipping")))
       .orderBy(desc(supplierOrders.attemptNo), desc(supplierOrders.updatedAt), desc(supplierOrders.createdAt))
       .limit(1);
 
@@ -145,12 +82,7 @@ async function fetchCandidates(input?: { orderId?: string; limit?: number }): Pr
       trackingSyncedAt: supplierOrders.trackingSyncedAt,
     })
     .from(supplierOrders)
-    .where(
-      and(
-        eq(supplierOrders.supplierKey, "cjdropshipping"),
-        inArray(supplierOrders.purchaseStatus, ["SUBMITTED", "CONFIRMED"])
-      )
-    )
+    .where(and(eq(supplierOrders.supplierKey, "cjdropshipping"), inArray(supplierOrders.purchaseStatus, ["SUBMITTED", "CONFIRMED"])))
     .orderBy(desc(supplierOrders.updatedAt), desc(supplierOrders.createdAt))
     .limit(limit);
 }
@@ -182,6 +114,26 @@ async function syncIfPossible(candidate: CandidateRow, actorId: string): Promise
       trackingCarrier: candidate.trackingCarrier,
     };
   }
+}
+
+async function resolveTracking(candidate: CandidateRow) {
+  const status = await getCjOrderDetail(candidate.supplierOrderRef!);
+  const trackingNumber = clean(status.trackNumber) ?? extractTrackingNumber(status.raw);
+  const trackingCarrier = clean(status.logisticName) ?? extractTrackingCarrier(status.raw);
+  if (!trackingNumber) {
+    return {
+      orderStatus: status.orderStatus,
+      trackingNumber: null,
+      trackingCarrier,
+    };
+  }
+
+  const trackingInfo = await getCjTrackingInfo(trackingNumber).catch(() => null);
+  return {
+    orderStatus: status.orderStatus,
+    trackingNumber,
+    trackingCarrier: clean(trackingInfo?.logisticName) ?? trackingCarrier,
+  };
 }
 
 async function processCandidate(candidate: CandidateRow, actorId: string): Promise<CjTrackingPollOrderResult> {
@@ -222,18 +174,15 @@ async function processCandidate(candidate: CandidateRow, actorId: string): Promi
     return syncIfPossible(candidate, actorId);
   }
 
-  const status = await getOrderStatus(candidate.supplierOrderRef!);
-  const trackingNumber = extractTrackingNumber(status);
-  const trackingCarrier = extractCarrier(status);
-
-  if (!trackingNumber || !trackingCarrier) {
+  const resolved = await resolveTracking(candidate);
+  if (!resolved.trackingNumber || !resolved.trackingCarrier) {
     return {
       orderId: candidate.orderId,
       supplierOrderId: candidate.supplierOrderId,
       outcome: "skipped",
       reason: "CJ tracking not available yet",
-      trackingNumber,
-      trackingCarrier,
+      trackingNumber: resolved.trackingNumber,
+      trackingCarrier: resolved.trackingCarrier,
     };
   }
 
@@ -241,9 +190,9 @@ async function processCandidate(candidate: CandidateRow, actorId: string): Promi
     orderId: candidate.orderId,
     supplierKey: candidate.supplierKey,
     supplierOrderId: candidate.supplierOrderId,
-    trackingNumber,
-    trackingCarrier,
-    trackingStatus: mapTrackingStatus(status.orderStatus),
+    trackingNumber: resolved.trackingNumber,
+    trackingCarrier: resolved.trackingCarrier,
+    trackingStatus: mapTrackingStatus(resolved.orderStatus),
     manualNote: "Tracking fetched automatically from CJ",
     actorId,
   });
@@ -251,8 +200,8 @@ async function processCandidate(candidate: CandidateRow, actorId: string): Promi
   const sync = await syncIfPossible(
     {
       ...candidate,
-      trackingNumber,
-      trackingCarrier,
+      trackingNumber: resolved.trackingNumber,
+      trackingCarrier: resolved.trackingCarrier,
     },
     actorId
   );
@@ -266,8 +215,8 @@ async function processCandidate(candidate: CandidateRow, actorId: string): Promi
     supplierOrderId: candidate.supplierOrderId,
     outcome: "tracking-recorded",
     reason: sync.reason,
-    trackingNumber,
-    trackingCarrier,
+    trackingNumber: resolved.trackingNumber,
+    trackingCarrier: resolved.trackingCarrier,
   };
 }
 
